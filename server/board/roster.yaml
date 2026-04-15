@@ -1,0 +1,77 @@
+stage_profiles:
+  pre_pmf:
+    active: [chairperson, strategist, product, researcher, critic, architect, builder]
+    optional: [guardian, operator]
+  live_product:
+    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator]
+    optional: []
+  revenue:
+    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator]
+    optional: [finance, legal]
+
+members:
+  chairperson:
+    governance_seat: CEO
+    capabilities: [synthesis, decision_making, conflict_resolution, company_direction]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  strategist:
+    governance_seat: CSO
+    capabilities: [market_strategy, competitive_analysis, evidence_assessment, go_to_market]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  product:
+    governance_seat: CPO
+    capabilities: [product_strategy, mvp_scope, value_proposition, product_market_fit]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  researcher:
+    governance_seat: Acting CCO
+    capabilities: [customer_research, interviews, jobs_to_be_done, persona_synthesis]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  critic:
+    governance_seat: Independent Risk Director
+    capabilities: [risk_challenge, premortem, assumption_audit, dissent]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  architect:
+    governance_seat: CTO
+    capabilities: [technical_feasibility, architecture, build_vs_buy, integration_assessment]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
+  builder:
+    governance_seat: VP Engineering / Execution Feasibility
+    capabilities: [execution_feasibility, implementation_planning, effort_estimation, validation]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: true
+  guardian:
+    governance_seat: CISO
+    capabilities: [threat_modeling, data_privacy, compliance, attack_surface]
+    activation:
+      default_stage: live_product
+      can_be_optional: true
+  operator:
+    governance_seat: COO / Operations
+    capabilities: [operations, release_readiness, monitoring, incident_response]
+    activation:
+      default_stage: live_product
+      can_be_optional: true
+
+decision_types:
+  strategic: [market_strategy, evidence_assessment, risk_challenge, synthesis]
+  product: [product_strategy, customer_research, market_strategy, synthesis]
+  customer: [customer_research, product_strategy, evidence_assessment, synthesis]
+  technical: [technical_feasibility, execution_feasibility, product_strategy, synthesis]
+  security: [threat_modeling, data_privacy, technical_feasibility, risk_challenge, synthesis]
+  operational: [operations, release_readiness, execution_feasibility, synthesis]
+  finance: [financial_analysis, pricing, runway, synthesis]
+  legal: [legal_review, compliance, risk_challenge, synthesis]
+  full-board: [company_direction, market_strategy, product_strategy, customer_research, technical_feasibility, execution_feasibility, risk_challenge, synthesis]
