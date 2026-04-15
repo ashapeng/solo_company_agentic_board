@@ -3,7 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from server.board.harness_config import HarnessConfig
+from server.board.harness_config import HarnessConfig, get_config
+from server.board.ledger import init_db, query_outcomes, LedgerError
 from server.board.llm import LLMResponse
 from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
 from server.board.verification import verify_synthesis
@@ -57,6 +58,65 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
                 # Score 8 < threshold 9 → should NOT pass
                 self.assertFalse(result.passed)
+
+
+class LedgerWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmpdir = TemporaryDirectory()
+        self.db_path = Path(self.tmpdir.name) / "test_ledger.db"
+        init_db(self.db_path)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    async def test_deliberate_records_ledger_entry(self):
+        """After deliberate() completes, a ledger row should exist."""
+        orchestrator = BoardOrchestrator()
+        synthesis = MemberResponse(
+            member_id="chairperson", stage=3,
+            content="### Executive Summary\nLaunch.\n\n### SOTB Update\n- None.",
+            model="chair", elapsed_seconds=0.1,
+        )
+
+        with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[
+            MemberResponse(member_id="strategist", stage=1, content="A.", model="m", elapsed_seconds=0.1),
+        ])):
+            with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
+                with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
+                    with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
+                        with patch("server.board.orchestrator._LEDGER_DB_PATH", self.db_path):
+                            session = await orchestrator.deliberate(
+                                "Should we launch?",
+                                skip_classify=True,
+                                session_id="ledger_test",
+                            )
+
+        rows = query_outcomes(db_path=self.db_path)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["session_id"], "ledger_test")
+        self.assertEqual(rows[0]["harness_config_version"], get_config().version)
+
+    async def test_ledger_entry_has_null_query_type_when_classifier_skipped(self):
+        orchestrator = BoardOrchestrator()
+        synthesis = MemberResponse(
+            member_id="chairperson", stage=3,
+            content="### Executive Summary\nDecision.\n\n### SOTB Update\n- None.",
+            model="chair", elapsed_seconds=0.1,
+        )
+
+        with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
+            with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
+                with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
+                    with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
+                        with patch("server.board.orchestrator._LEDGER_DB_PATH", self.db_path):
+                            session = await orchestrator.deliberate(
+                                "Test query",
+                                skip_classify=True,
+                                session_id="no_classify_test",
+                            )
+
+        rows = query_outcomes(db_path=self.db_path)
+        self.assertIsNone(rows[0]["query_type"])
 
 
 if __name__ == "__main__":

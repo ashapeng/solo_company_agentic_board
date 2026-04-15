@@ -19,6 +19,7 @@ from pathlib import Path
 from .compaction import compact_stage1_responses, compact_stage2_responses
 from .config import BoardMember, get_board_members, get_members_by_id, get_chairman_model, get_council_models
 from .harness_config import get_config
+from .ledger import record_session as _record_to_ledger
 from .llm import query_llm, LLMResponse
 from .memory import read_sotb
 from .memory_review import propose_memory_update
@@ -27,6 +28,8 @@ from .prompts import format_stage1, format_stage2, format_stage3
 from .schemas import project_board_decision, verification_to_dict
 
 logger = logging.getLogger(__name__)
+
+_LEDGER_DB_PATH = None  # Use default; tests can patch this
 
 
 class BoardDeliberationError(Exception):
@@ -500,4 +503,11 @@ class BoardOrchestrator:
 
         session.total_elapsed = round(time.monotonic() - t0, 2)
         session.save()
+
+        # Record to harness ledger
+        try:
+            _record_to_ledger(session, config_version=get_config().version, db_path=_LEDGER_DB_PATH)
+        except Exception:
+            logger.warning("Failed to record session to harness ledger", exc_info=True)
+
         return session
