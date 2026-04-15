@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,6 +9,7 @@ from server.board.ledger import init_db, query_outcomes, LedgerError
 from server.board.llm import LLMResponse
 from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
 from server.board.verification import verify_synthesis
+from server.api import feedback, FeedbackRequest
 
 
 class ConfigWiringContractTest(unittest.TestCase):
@@ -117,6 +119,76 @@ class LedgerWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
         rows = query_outcomes(db_path=self.db_path)
         self.assertIsNone(rows[0]["query_type"])
+
+
+class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmpdir = TemporaryDirectory()
+        self.db_path = Path(self.tmpdir.name) / "test_ledger.db"
+        init_db(self.db_path)
+        self._old_remote = os.environ.get("AGENTIC_BOARD_ALLOW_REMOTE")
+        os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = "1"
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+        if self._old_remote is None:
+            os.environ.pop("AGENTIC_BOARD_ALLOW_REMOTE", None)
+        else:
+            os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = self._old_remote
+
+    async def test_valid_feedback_returns_200(self):
+        from server.board.ledger import record_session
+        from tests.test_ledger_contract import _make_session
+
+        record_session(_make_session("fb_test"), config_version=1, db_path=self.db_path)
+
+        with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
+            result = await feedback("fb_test", FeedbackRequest(rating="positive", note="Good"))
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["session_id"], "fb_test")
+
+    async def test_invalid_rating_raises_422(self):
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as ctx:
+            with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
+                await feedback("any_id", FeedbackRequest(rating="meh"))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    async def test_nonexistent_session_raises_404(self):
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as ctx:
+            with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
+                await feedback("no_such", FeedbackRequest(rating="positive"))
+
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_note_exceeding_500_chars_raises_422(self):
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as ctx:
+            with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
+                await feedback("any_id", FeedbackRequest(rating="positive", note="x" * 501))
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    async def test_second_feedback_overwrites_first(self):
+        from server.board.ledger import record_session
+        from tests.test_ledger_contract import _make_session
+
+        record_session(_make_session("fb_overwrite"), config_version=1, db_path=self.db_path)
+
+        with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
+            await feedback("fb_overwrite", FeedbackRequest(rating="negative", note="Bad"))
+            await feedback("fb_overwrite", FeedbackRequest(rating="positive", note="Changed mind"))
+
+        rows = query_outcomes(db_path=self.db_path)
+        row = next(r for r in rows if r["session_id"] == "fb_overwrite")
+        self.assertEqual(row["feedback_rating"], "positive")
+        self.assertEqual(row["feedback_note"], "Changed mind")
 
 
 if __name__ == "__main__":

@@ -22,12 +22,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from server.board.config import BOARD_MEMBERS
+from server.board.ledger import record_feedback, LedgerError
 from server.board.memory import read_sotb, SOTB_PATH
 from server.board.memory_review import review_sotb_update
 from server.board.orchestrator import BoardDeliberationError, BoardOrchestrator
 from server.board.role_gap import review_role_gap
 from server.board.roster import load_roster
 from server.board.schemas import BoardErrorCode, adapt_session_record
+
+_FEEDBACK_DB_PATH = None  # Use default; tests can patch this
 
 UI_DIR = Path("ui")
 UI_DIST_DIR = UI_DIR / "dist"
@@ -106,6 +109,11 @@ class RoleGapReviewRequest(BaseModel):
     query: str | None = None
     stage_profile: str = "pre_pmf"
     recurrence_count: int = 1
+
+
+class FeedbackRequest(BaseModel):
+    rating: str
+    note: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +279,22 @@ async def get_session_adapter(session_id: str):
         if filepath.exists():
             return adapt_session_record(json.loads(filepath.read_text()))
     raise HTTPException(404, "Session not found")
+
+
+@app.post("/sessions/{session_id}/feedback")
+async def feedback(session_id: str, req: FeedbackRequest):
+    """Record founder feedback for a session."""
+    if req.rating not in ("positive", "negative"):
+        raise HTTPException(422, detail="rating must be 'positive' or 'negative'")
+    if req.note and len(req.note) > 500:
+        raise HTTPException(422, detail="note must be 500 characters or fewer")
+
+    try:
+        record_feedback(session_id, req.rating, note=req.note, db_path=_FEEDBACK_DB_PATH)
+    except LedgerError:
+        raise HTTPException(404, detail=f"Session not found: {session_id}")
+
+    return {"status": "recorded", "session_id": session_id}
 
 
 # ---------------------------------------------------------------------------
