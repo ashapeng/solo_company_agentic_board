@@ -1,0 +1,18 @@
+{
+  "stage1_max_tokens": 1200,
+  "stage2_max_tokens": 800,
+  "stage3_max_tokens": 4000,
+  "revision_max_tokens": 2500,
+  "min_stage1_responses": 3,
+  "min_stage2_responses": 2,
+  "verification_threshold": 7.0,
+  "max_revision_attempts": 1,
+  "complexity_multipliers": {
+    "simple": 0.6,
+    "moderate": 1.0,
+    "complex": 1.5
+  },
+  "per_query_type": {},
+  "version": 1,
+  "last_modified": ""
+}
