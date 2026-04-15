@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .compaction import compact_stage1_responses, compact_stage2_responses
 from .config import BoardMember, get_board_members, get_members_by_id, get_chairman_model, get_council_models
+from .harness_config import get_config
 from .llm import query_llm, LLMResponse
 from .memory import read_sotb
 from .memory_review import propose_memory_update
@@ -26,18 +27,6 @@ from .prompts import format_stage1, format_stage2, format_stage3
 from .schemas import project_board_decision, verification_to_dict
 
 logger = logging.getLogger(__name__)
-
-# Maximum successful responses required per stage. Focused routes may use fewer.
-MAX_STAGE1_REQUIRED_RESPONSES = 3
-MAX_STAGE2_REQUIRED_RESPONSES = 2
-
-# Stage-specific output caps. Query-specific complexity can tune these later.
-STAGE_MAX_TOKENS = {
-    1: 1200,
-    2: 800,
-    3: 4000,
-    "revision": 2500,
-}
 
 
 class BoardDeliberationError(Exception):
@@ -200,11 +189,19 @@ class BoardOrchestrator:
         model = self.model_assignments.get(member.id, get_council_models()[0])
         messages = [{"role": "user", "content": prompt}]
 
+        cfg = get_config()
+        stage_tokens = {
+            1: cfg.stage1_max_tokens,
+            2: cfg.stage2_max_tokens,
+            3: cfg.stage3_max_tokens,
+        }
+        max_tokens = stage_tokens.get(stage, cfg.stage3_max_tokens)
+
         llm_resp = await query_llm(
             model,
             messages,
             system=member.system_prompt,
-            max_tokens=STAGE_MAX_TOKENS.get(stage, 4096),
+            max_tokens=max_tokens,
         )
 
         self._record_metrics(member.id, stage, llm_resp)
@@ -245,7 +242,7 @@ class BoardOrchestrator:
 
         minimum_required = _minimum_required_responses(
             len(self.council),
-            MAX_STAGE1_REQUIRED_RESPONSES,
+            get_config().min_stage1_responses,
         )
         if len(responses) < minimum_required:
             raise BoardDeliberationError(
@@ -299,7 +296,7 @@ class BoardOrchestrator:
 
         minimum_required = _minimum_required_responses(
             len(self.council),
-            MAX_STAGE2_REQUIRED_RESPONSES,
+            get_config().min_stage2_responses,
         )
         if len(responses) < minimum_required:
             raise BoardDeliberationError(
@@ -338,7 +335,7 @@ class BoardOrchestrator:
         llm_resp = await query_llm(
             self.chairman_model, messages,
             system=self.chairman.system_prompt,
-            max_tokens=STAGE_MAX_TOKENS[3],
+            max_tokens=get_config().stage3_max_tokens,
         )
 
         self._record_metrics(self.chairman.id, 3, llm_resp)
@@ -471,7 +468,7 @@ class BoardOrchestrator:
                         {"role": "user", "content": revision_prompt},
                     ],
                     system=self.chairman.system_prompt,
-                    max_tokens=STAGE_MAX_TOKENS["revision"],
+                    max_tokens=get_config().revision_max_tokens,
                 )
 
                 session.stage3_synthesis = MemberResponse(

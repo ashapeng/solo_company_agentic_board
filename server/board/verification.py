@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from dataclasses import asdict
 
+from .harness_config import get_config
 from .llm import query_llm
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ async def verify_synthesis(
 
         return VerificationResult(
             score=score,
-            passed=score >= 7,
+            passed=score >= get_config().verification_threshold,
             deficiencies=deficiencies,
             suggestions=suggestions,
         )
