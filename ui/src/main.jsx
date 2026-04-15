@@ -430,7 +430,10 @@ function DecisionRecord({ session }) {
   if (!hasStructuredDecision) {
     const synthesis = getSynthesis(session);
     return (
-      <div className="decision-wide" dangerouslySetInnerHTML={{ __html: renderMarkdown(synthesis?.content || 'No decision returned.') }} />
+      <>
+        <div className="decision-wide" dangerouslySetInnerHTML={{ __html: renderMarkdown(synthesis?.content || 'No decision returned.') }} />
+        <FeedbackWidget sessionId={session?.session_id} />
+      </>
     );
   }
 
@@ -467,6 +470,62 @@ function DecisionRecord({ session }) {
         <p>{memory.proposed_sotb_update || 'No memory update proposed.'}</p>
         {memory.requires_approval && <p>Human approval required before durable memory changes.</p>}
       </article>
+
+      <FeedbackWidget sessionId={session?.session_id} />
+    </div>
+  );
+}
+
+function FeedbackWidget({ sessionId }) {
+  const [rating, setRating] = useState(null);
+  const [note, setNote] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!sessionId) return null;
+
+  const submit = async (selectedRating) => {
+    setRating(selectedRating);
+    setError('');
+    try {
+      const res = await fetch(`${API}/sessions/${sessionId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: selectedRating, note: note || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.detail || 'Failed to submit feedback');
+        return;
+      }
+      setSubmitted(true);
+    } catch (err) {
+      setError('Network error');
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="feedback-widget feedback-done">
+        {rating === 'positive' ? '\u25B2' : '\u25BC'} Feedback recorded.
+      </div>
+    );
+  }
+
+  return (
+    <div className="feedback-widget">
+      <span className="feedback-label">Rate this decision:</span>
+      <button className="feedback-btn feedback-up" onClick={() => submit('positive')} title="Good decision">{'\u25B2'}</button>
+      <button className="feedback-btn feedback-down" onClick={() => submit('negative')} title="Needs improvement">{'\u25BC'}</button>
+      <input
+        className="feedback-note"
+        type="text"
+        placeholder="What could be better?"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={500}
+      />
+      {error && <span className="feedback-error">{error}</span>}
     </div>
   );
 }
