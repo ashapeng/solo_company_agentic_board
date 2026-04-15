@@ -21,3 +21,6 @@ node_modules/
 .coverage
 .DS_Store
 Thumbs.db
+
+# Override global gitignore for project docs
+!docs/superpowers/plans/
