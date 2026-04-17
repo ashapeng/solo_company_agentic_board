@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -11,11 +12,22 @@ from server.api import (
     QueryRequest,
     SotbReviewRequest,
     deliberate,
+    delegated_task,
     enforce_local_only,
+    execution_agent,
+    execution_agents,
     get_session_adapter,
+    get_session_delegation_plan,
     list_members,
+    approve_task,
+    plan_task,
     review_sotb,
+    TaskApprovalRequest,
+    TaskPlanRequest,
+    TaskStatusRequest,
+    update_task_status,
 )
+from server.board.execution import parse_delegation_plan, record_delegation_plan
 from server.board.orchestrator import BoardDeliberationError, BoardSession
 
 
@@ -123,6 +135,78 @@ class ApiLocalOnlyContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(403, response.status_code)
         self.assertIn(b"remote_access_disabled", response.body)
+
+
+class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmpdir.name) / "ledger.db"
+        from server.board import execution
+
+        self._old_db_path = execution._DEFAULT_DB_PATH
+        execution._DEFAULT_DB_PATH = self.db_path
+        self.plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "title": "Build the prototype path",
+    "objective": "Plan and verify the engineering slice.",
+    "execution_unit_id": "engineering",
+    "manager_agent_id": "technical_lead",
+    "accountable_board_member_id": "architect",
+    "priority": "p1",
+    "acceptance_criteria": ["Plan exists"],
+    "dependencies": [],
+    "approval_required": true
+  }]
+}
+```
+""",
+            session_id="api_execution_contract",
+        )
+        record_delegation_plan(self.plan)
+        self.task_id = self.plan["tasks"][0]["id"]
+
+    def tearDown(self):
+        from server.board import execution
+
+        execution._DEFAULT_DB_PATH = self._old_db_path
+        self.tmpdir.cleanup()
+
+    async def test_execution_agent_routes_expose_manager_agents(self):
+        agents = await execution_agents()
+        agent_ids = {agent["id"] for agent in agents}
+
+        self.assertIn("technical_lead", agent_ids)
+        agent = await execution_agent("technical_lead")
+        self.assertEqual("engineering", agent["execution_unit_id"])
+
+    async def test_delegated_task_routes_are_approval_and_manager_gated(self):
+        task = await delegated_task(self.task_id)
+        self.assertEqual("proposed", task["status"])
+
+        with self.assertRaises(HTTPException):
+            await plan_task(self.task_id, TaskPlanRequest(manager_agent_id="technical_lead"))
+
+        approved = await approve_task(self.task_id, TaskApprovalRequest())
+        self.assertEqual("approved", approved["status"])
+
+        planned = await plan_task(self.task_id, TaskPlanRequest(manager_agent_id="technical_lead"))
+        self.assertEqual("running", planned["status"])
+        self.assertEqual("technical_lead", planned["subtask_plan"]["manager_agent_id"])
+
+        with self.assertRaises(HTTPException):
+            await update_task_status(
+                self.task_id,
+                TaskStatusRequest(status="completed", manager_agent_id="research_lead"),
+            )
+
+    async def test_session_delegation_plan_route_returns_persisted_tasks(self):
+        plan = await get_session_delegation_plan("api_execution_contract")
+
+        self.assertEqual(self.task_id, plan["tasks"][0]["id"])
+        self.assertTrue(plan["requires_approval"])
 
 
 if __name__ == "__main__":

@@ -16,4 +16,6 @@ Current artifacts:
 - `skills/agentic-board/SKILL.md`: call the board and read session JSON.
 - `skills/board-memory-update/SKILL.md`: review proposed SOTB updates before approval.
 - `skills/role-gap-review/SKILL.md`: decide whether blind spots need a skill or board role.
+- `skills/board-decision-to-sprint/SKILL.md`: route approved delegated tasks to manager agents.
+- `skills/*-lead-execution/SKILL.md`: manager-agent execution playbooks.
 - `plugins/agentic_board/`: local-only plugin scaffold for a later Hermes registration step.

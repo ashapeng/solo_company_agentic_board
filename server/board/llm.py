@@ -43,12 +43,16 @@ NATIVE_PROVIDER_PREFIXES = {
 }
 
 QWEN_BASE_URLS = {
-    "international": "https://dashscope-intl.aliyuncs.com/api/v1",
-    "singapore": "https://dashscope-intl.aliyuncs.com/api/v1",
-    "us": "https://dashscope-us.aliyuncs.com/api/v1",
-    "cn": "https://dashscope.aliyuncs.com/api/v1",
-    "hongkong": "https://cn-hongkong.dashscope.aliyuncs.com/api/v1",
-    "hk": "https://cn-hongkong.dashscope.aliyuncs.com/api/v1",
+    "international": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "singapore": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "global": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+    "us": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+    "virginia": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+    "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "china": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "beijing": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "hongkong": "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
+    "hk": "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
 }
 
 
@@ -105,6 +109,31 @@ def _get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _env_bool(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"enabled", "true", "1", "yes", "on"}:
+        return True
+    if normalized in {"disabled", "false", "0", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be one of enabled/disabled, true/false, 1/0.")
+
+
+def _read_optional_int_env(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise RuntimeError(f"{name} must be an integer.") from e
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be a non-negative integer.")
+    return parsed
 
 
 def _choice_message_content(response: Any) -> str:
@@ -260,15 +289,7 @@ async def _send_native_request(
             max_tokens,
             timeout,
         )
-    elif provider == "qwen":
-        response = await asyncio.to_thread(
-            _send_qwen_request_sync,
-            provider_model,
-            full_messages,
-            temperature,
-            max_tokens,
-        )
-    elif provider in {"deepseek", "kimi"}:
+    elif provider in {"qwen", "deepseek", "kimi"}:
         response = await asyncio.to_thread(
             _send_openai_compatible_request_sync,
             provider,
@@ -318,38 +339,6 @@ def _send_zai_request_sync(
     return client.chat.completions.create(**kwargs)
 
 
-def _send_qwen_request_sync(
-    model: str,
-    messages: list[dict[str, str]],
-    temperature: float,
-    max_tokens: int,
-) -> Any:
-    try:
-        import dashscope
-    except ImportError as e:
-        raise RuntimeError("dashscope is not installed. Run `uv add dashscope`.") from e
-
-    api_key = _read_required_env("DASHSCOPE_API_KEY", "Qwen/DashScope")
-    region = os.getenv("DASHSCOPE_REGION", "international").lower()
-    base_url = os.getenv("DASHSCOPE_BASE_URL") or QWEN_BASE_URLS.get(region)
-    if base_url:
-        dashscope.base_http_api_url = base_url
-
-    response = dashscope.Generation.call(
-        api_key=api_key,
-        model=model,
-        messages=messages,
-        result_format="message",
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    status_code = _get_attr_or_item(response, "status_code")
-    if status_code and int(status_code) >= 400:
-        error_message = _get_attr_or_item(response, "message", "Qwen request failed")
-        raise RuntimeError(f"Qwen request failed ({status_code}): {error_message}")
-    return response
-
-
 def _send_openai_compatible_request_sync(
     provider: str,
     model: str,
@@ -369,12 +358,38 @@ def _send_openai_compatible_request_sync(
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if model != "deepseek-reasoner":
+            kwargs["temperature"] = temperature
+    elif provider == "qwen":
+        api_key = _read_required_env("DASHSCOPE_API_KEY", "Qwen/DashScope")
+        region = os.getenv("DASHSCOPE_REGION", "cn").lower()
+        base_url = os.getenv("DASHSCOPE_BASE_URL") or QWEN_BASE_URLS.get(region)
+        if not base_url:
+            raise RuntimeError(
+                f"Unsupported DASHSCOPE_REGION '{region}'. "
+                "Set DASHSCOPE_BASE_URL or use one of: "
+                f"{', '.join(sorted(QWEN_BASE_URLS))}."
+            )
+        kwargs = {
+            "model": model,
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        extra_body: dict[str, Any] = {}
+        qwen_thinking = _env_bool("QWEN_THINKING")
+        if qwen_thinking is not None:
+            extra_body["enable_thinking"] = qwen_thinking
+        qwen_thinking_budget = _read_optional_int_env("QWEN_THINKING_BUDGET")
+        if qwen_thinking_budget is not None:
+            extra_body["thinking_budget"] = qwen_thinking_budget
+        if extra_body:
+            kwargs["extra_body"] = extra_body
     elif provider == "kimi":
         api_key = _read_required_env("MOONSHOT_API_KEY", "Kimi/Moonshot")
-        base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1")
+        base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1")
         kwargs = {
             "model": model,
             "messages": messages,
@@ -382,11 +397,14 @@ def _send_openai_compatible_request_sync(
         }
         # Kimi K2.5 enforces fixed sampling values. Do not pass temperature unless
         # the caller explicitly opts into provider-specific override handling.
-        if not model.startswith("kimi-k2.5"):
+        if model.startswith("kimi-k2-thinking"):
+            kwargs["temperature"] = 1.0
+        elif not model.startswith("kimi-k2.5"):
             kwargs["temperature"] = temperature
-        thinking = os.getenv("KIMI_THINKING")
-        if thinking in {"enabled", "disabled"}:
-            kwargs["extra_body"] = {"thinking": {"type": thinking}}
+        thinking = _env_bool("KIMI_THINKING")
+        if thinking is not None:
+            thinking_type = "enabled" if thinking else "disabled"
+            kwargs["extra_body"] = {"thinking": {"type": thinking_type}}
     else:
         raise ValueError(f"Unsupported OpenAI-compatible native provider: {provider}")
 

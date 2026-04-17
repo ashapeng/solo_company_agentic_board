@@ -23,4 +23,4 @@ node_modules/
 Thumbs.db
 
 # Override global gitignore for project docs
-!docs/superpowers/plans/
+!docs/architecture/

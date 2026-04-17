@@ -56,6 +56,7 @@ or a durable company memory proposal.
    - `decision.executive_summary`
    - `decision.strategic_direction`
    - `decision.next_steps`
+   - `delegation_plan.tasks`
    - `decision.risk_register`
    - `decision.dissenting_views`
    - `verification`
@@ -64,7 +65,7 @@ or a durable company memory proposal.
 7. Treat `memory.proposed_sotb_update` as a proposal only. Ask the user before applying durable memory.
 8. Do not call `PUT /sotb`, `apply_sotb_update`, or write `server/memory/sotb.md` unless the user explicitly approves the exact update.
 9. If the board output identifies `classification.unavailable_capabilities` or `classification.role_gap_memo`, surface it as a role-gap signal rather than silently ignoring it.
-10. Convert approved next steps into an operating workflow only after the user approves the board decision.
+10. Convert approved `delegation_plan.tasks` into manager-agent operating workflows only after the user approves execution.
 
 ## Stage Profiles
 
@@ -103,6 +104,17 @@ Expected stable fields:
     "next_steps": ["..."],
     "risk_register": ["..."],
     "dissenting_views": ["..."]
+  },
+  "delegation_plan": {
+    "tasks": [
+      {
+        "id": "board_..._task_1",
+        "manager_agent_id": "technical_lead",
+        "execution_unit_id": "engineering",
+        "status": "proposed",
+        "approval_required": true
+      }
+    ]
   },
   "verification": {
     "score": 8,

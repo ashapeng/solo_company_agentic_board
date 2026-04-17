@@ -5,6 +5,10 @@ Usage:
     uv run python -m server.cli "Should we build a SaaS or open-source this?"
     uv run python -m server.cli --interactive
     uv run python -m server.cli --list-members
+    uv run python -m server.cli --tune
+    uv run python -m server.cli --tune-verification
+    uv run python -m server.cli --tune-routing
+    uv run python -m server.cli --tune-models
 """
 
 from __future__ import annotations
@@ -28,6 +32,16 @@ from server.board.config import BOARD_MEMBERS, BoardMember
 from server.board.memory import read_sotb
 from server.board.metrics import SessionMetrics, _estimate_cost
 from server.board.orchestrator import BoardOrchestrator, BoardDeliberationError, BoardSession, MemberResponse
+from server.board.phase_d import (
+    MIN_PHASE_D_SESSIONS_PER_QUERY_TYPE,
+    tune_routing_and_compaction,
+)
+from server.board.phase_e import MIN_MODEL_SAMPLES, tune_model_assignments
+from server.board.tuner import (
+    MIN_FEEDBACK_SESSIONS_PER_QUERY_TYPE,
+    tune_token_budgets,
+    tune_verification_thresholds,
+)
 
 console = Console()
 
@@ -156,6 +170,239 @@ def show_stage1_detail(session: BoardSession):
         ))
 
 
+def run_tuner(*, dry_run: bool = False, json_output: bool = False):
+    """Run the Phase B token budget tuner."""
+    report = tune_token_budgets(dry_run=dry_run)
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return report
+
+    console.print()
+    console.rule("[bold yellow]Token Budget Tuner[/bold yellow]")
+    console.print(
+        f"  Examined segments: {report.examined_segments} "
+        f"({report.eligible_segments} eligible)"
+    )
+
+    if not report.changes:
+        console.print("  [dim]No budget changes recommended.[/dim]")
+        return report
+
+    table = Table(show_lines=True)
+    table.add_column("Query Type", style="cyan")
+    table.add_column("Complexity", style="green")
+    table.add_column("Stage", justify="right")
+    table.add_column("Usage", justify="right")
+    table.add_column("Previous", justify="right")
+    table.add_column("New", justify="right")
+    table.add_column("Direction", style="yellow")
+
+    for change in report.changes:
+        table.add_row(
+            change.query_type,
+            change.complexity,
+            str(change.stage),
+            f"{change.median_usage:.0f}",
+            str(change.previous_budget),
+            str(change.new_budget),
+            change.direction,
+        )
+
+    console.print(table)
+    if report.saved:
+        console.print(f"  [green]Saved harness config version {report.config_version}.[/green]")
+    elif report.dry_run:
+        console.print("  [yellow]Dry run only; config was not changed.[/yellow]")
+    return report
+
+
+def run_verification_tuner(
+    *,
+    dry_run: bool = False,
+    json_output: bool = False,
+    min_feedback_sessions: int = MIN_FEEDBACK_SESSIONS_PER_QUERY_TYPE,
+):
+    """Run the Phase C verification threshold tuner."""
+    report = tune_verification_thresholds(
+        dry_run=dry_run,
+        min_feedback_sessions=min_feedback_sessions,
+    )
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return report
+
+    console.print()
+    console.rule("[bold yellow]Verification Threshold Tuner[/bold yellow]")
+    console.print(
+        f"  Examined query types: {report.examined_query_types} "
+        f"({report.eligible_query_types} eligible)"
+    )
+
+    if not report.changes:
+        console.print("  [dim]No threshold changes recommended.[/dim]")
+        return report
+
+    table = Table(show_lines=True)
+    table.add_column("Query Type", style="cyan")
+    table.add_column("Feedback", justify="right")
+    table.add_column("False Passes", justify="right")
+    table.add_column("False Fails", justify="right")
+    table.add_column("Previous", justify="right")
+    table.add_column("New", justify="right")
+    table.add_column("Direction", style="yellow")
+
+    for change in report.changes:
+        table.add_row(
+            change.query_type,
+            str(change.feedback_count),
+            str(change.false_passes),
+            str(change.false_fails),
+            f"{change.previous_threshold:.1f}",
+            f"{change.new_threshold:.1f}",
+            change.direction,
+        )
+
+    console.print(table)
+    if report.saved:
+        console.print(f"  [green]Saved harness config version {report.config_version}.[/green]")
+    elif report.dry_run:
+        console.print("  [yellow]Dry run only; config was not changed.[/yellow]")
+    return report
+
+
+def run_phase_d_tuner(
+    *,
+    dry_run: bool = False,
+    json_output: bool = False,
+    min_sessions: int = MIN_PHASE_D_SESSIONS_PER_QUERY_TYPE,
+):
+    """Run the Phase D routing and compaction tuner."""
+    report = tune_routing_and_compaction(
+        dry_run=dry_run,
+        min_sessions=min_sessions,
+    )
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return report
+
+    console.print()
+    console.rule("[bold yellow]Routing & Compaction Tuner[/bold yellow]")
+    console.print(
+        f"  Analyzed sessions: {report.analyzed_sessions}; "
+        f"query types: {report.examined_query_types} "
+        f"({report.eligible_query_types} eligible)"
+    )
+
+    if report.routing_changes:
+        table = Table(title="Routing Changes", show_lines=True)
+        table.add_column("Query Type", style="cyan")
+        table.add_column("Member", style="green")
+        table.add_column("Routed", justify="right")
+        table.add_column("Cited", justify="right")
+        table.add_column("Rate", justify="right")
+        table.add_column("Action", style="yellow")
+        for change in report.routing_changes:
+            table.add_row(
+                change.query_type,
+                change.member_id,
+                str(change.routed_count),
+                str(change.cited_count),
+                f"{change.citation_rate:.2f}",
+                change.action,
+            )
+        console.print(table)
+
+    if report.compaction_changes:
+        table = Table(title="Compaction Changes", show_lines=True)
+        table.add_column("Query Type", style="cyan")
+        table.add_column("Section", style="green")
+        table.add_column("Observed", justify="right")
+        table.add_column("Used", justify="right")
+        table.add_column("Rate", justify="right")
+        table.add_column("Action", style="yellow")
+        for change in report.compaction_changes:
+            table.add_row(
+                change.query_type,
+                change.section,
+                str(change.observed_count),
+                str(change.used_count),
+                f"{change.usage_rate:.2f}",
+                change.action,
+            )
+        console.print(table)
+
+    if not report.routing_changes and not report.compaction_changes:
+        console.print("  [dim]No routing or compaction changes recommended.[/dim]")
+        return report
+
+    if report.saved:
+        console.print(f"  [green]Saved harness config version {report.config_version}.[/green]")
+    elif report.dry_run:
+        console.print("  [yellow]Dry run only; config was not changed.[/yellow]")
+    return report
+
+
+def run_model_tuner(
+    *,
+    dry_run: bool = False,
+    json_output: bool = False,
+    min_samples: int = MIN_MODEL_SAMPLES,
+):
+    """Run the Phase E model assignment tuner."""
+    report = tune_model_assignments(
+        dry_run=dry_run,
+        min_samples=min_samples,
+    )
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return report
+
+    console.print()
+    console.rule("[bold yellow]Model Assignment Tuner[/bold yellow]")
+    console.print(
+        f"  Examined assignments: {report.examined_assignments} "
+        f"({report.eligible_assignments} eligible)"
+    )
+
+    if not report.changes:
+        console.print("  [dim]No model preference changes recommended.[/dim]")
+        return report
+
+    table = Table(show_lines=True)
+    table.add_column("Query Type", style="cyan")
+    table.add_column("Member", style="green")
+    table.add_column("Previous")
+    table.add_column("New", style="yellow")
+    table.add_column("New Score", justify="right")
+    table.add_column("Runner Up", justify="right")
+    table.add_column("Samples", justify="right")
+
+    for change in report.changes:
+        runner = ""
+        if change.runner_up_model and change.runner_up_score is not None:
+            runner = f"{change.runner_up_model} ({change.runner_up_score:.2f})"
+        table.add_row(
+            change.query_type,
+            change.member_id,
+            change.previous_model or "",
+            change.new_model,
+            f"{change.new_score:.2f}",
+            runner,
+            str(change.sample_count),
+        )
+
+    console.print(table)
+    if report.saved:
+        console.print(f"  [green]Saved harness config version {report.config_version}.[/green]")
+    elif report.dry_run:
+        console.print("  [yellow]Dry run only; config was not changed.[/yellow]")
+    return report
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -271,7 +518,64 @@ def cli():
     parser.add_argument("--verify", action="store_true", help="Enable Stage 4 verification on synthesis")
     parser.add_argument("--budget", action="store_true", help="Show token usage and cost breakdown")
     parser.add_argument("--json", action="store_true", help="Emit session JSON only")
+    parser.add_argument("--tune", action="store_true", help="Run Phase B token budget tuner from the ledger")
+    parser.add_argument("--tune-verification", action="store_true", help="Run Phase C verification threshold tuner")
+    parser.add_argument(
+        "--tune-routing",
+        "--tune-routing-compaction",
+        dest="tune_routing",
+        action="store_true",
+        help="Run Phase D routing and compaction tuner",
+    )
+    parser.add_argument("--tune-models", action="store_true", help="Run Phase E model assignment tuner")
+    parser.add_argument("--dry-run", action="store_true", help="Preview tuner changes without saving config")
+    parser.add_argument(
+        "--min-feedback-sessions",
+        type=int,
+        default=MIN_FEEDBACK_SESSIONS_PER_QUERY_TYPE,
+        help="Minimum feedback-bearing sessions per query type for --tune-verification",
+    )
+    parser.add_argument(
+        "--min-phase-d-sessions",
+        type=int,
+        default=MIN_PHASE_D_SESSIONS_PER_QUERY_TYPE,
+        help="Minimum saved sessions per query type for --tune-routing",
+    )
+    parser.add_argument(
+        "--min-model-samples",
+        type=int,
+        default=MIN_MODEL_SAMPLES,
+        help="Minimum sessions per candidate model for --tune-models",
+    )
     args = parser.parse_args()
+
+    if args.tune:
+        run_tuner(dry_run=args.dry_run, json_output=args.json)
+        return
+
+    if args.tune_verification:
+        run_verification_tuner(
+            dry_run=args.dry_run,
+            json_output=args.json,
+            min_feedback_sessions=args.min_feedback_sessions,
+        )
+        return
+
+    if args.tune_routing:
+        run_phase_d_tuner(
+            dry_run=args.dry_run,
+            json_output=args.json,
+            min_sessions=args.min_phase_d_sessions,
+        )
+        return
+
+    if args.tune_models:
+        run_model_tuner(
+            dry_run=args.dry_run,
+            json_output=args.json,
+            min_samples=args.min_model_samples,
+        )
+        return
 
     if args.list_members:
         show_members()

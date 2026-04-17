@@ -2,13 +2,19 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
 from server.board.config import BoardMember
 from server.board.loader import load_members
-from server.board.llm import LLMResponse, _native_provider_for_model, _send_llm_request, query_llm
+from server.board.llm import (
+    LLMResponse,
+    _native_provider_for_model,
+    _send_llm_request,
+    _send_openai_compatible_request_sync,
+    query_llm,
+)
 from server.board.metrics import CallMetrics, SessionMetrics
 from server.board.orchestrator import BoardOrchestrator
 
@@ -219,6 +225,120 @@ class InfrastructureAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(("qwen", "qwen3-max"), _native_provider_for_model("qwen/qwen3-max"))
         self.assertEqual(("kimi", "kimi-k2.5"), _native_provider_for_model("kimi/kimi-k2.5"))
         self.assertIsNone(_native_provider_for_model("openrouter:deepseek/deepseek-chat"))
+
+    def test_qwen_uses_china_openai_compatible_endpoint_by_default(self):
+        provider_response = MagicMock()
+
+        with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "dash-key"}, clear=True):
+            with patch("openai.OpenAI") as mock_openai:
+                mock_openai.return_value.chat.completions.create.return_value = provider_response
+
+                response = _send_openai_compatible_request_sync(
+                    "qwen",
+                    "qwen3-max",
+                    [{"role": "user", "content": "hello"}],
+                    0.7,
+                    2048,
+                    12.0,
+                )
+
+        self.assertIs(provider_response, response)
+        mock_openai.assert_called_once_with(
+            api_key="dash-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            timeout=12.0,
+        )
+        mock_openai.return_value.chat.completions.create.assert_called_once_with(
+            model="qwen3-max",
+            messages=[{"role": "user", "content": "hello"}],
+            temperature=0.7,
+            max_tokens=2048,
+        )
+
+    def test_qwen_supports_region_and_thinking_env_options(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DASHSCOPE_API_KEY": "dash-key",
+                "DASHSCOPE_REGION": "hongkong",
+                "QWEN_THINKING": "enabled",
+                "QWEN_THINKING_BUDGET": "8192",
+            },
+            clear=True,
+        ):
+            with patch("openai.OpenAI") as mock_openai:
+                _send_openai_compatible_request_sync(
+                    "qwen",
+                    "qwen3-max",
+                    [{"role": "user", "content": "hello"}],
+                    0.6,
+                    4096,
+                    30.0,
+                )
+
+        mock_openai.assert_called_once_with(
+            api_key="dash-key",
+            base_url="https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1",
+            timeout=30.0,
+        )
+        mock_openai.return_value.chat.completions.create.assert_called_once_with(
+            model="qwen3-max",
+            messages=[{"role": "user", "content": "hello"}],
+            temperature=0.6,
+            max_tokens=4096,
+            extra_body={"enable_thinking": True, "thinking_budget": 8192},
+        )
+
+    def test_kimi_defaults_to_china_endpoint_and_uses_thinking_extra_body(self):
+        with patch.dict(
+            os.environ,
+            {"MOONSHOT_API_KEY": "moon-key", "KIMI_THINKING": "disabled"},
+            clear=True,
+        ):
+            with patch("openai.OpenAI") as mock_openai:
+                _send_openai_compatible_request_sync(
+                    "kimi",
+                    "kimi-k2.5",
+                    [{"role": "user", "content": "hello"}],
+                    0.7,
+                    4096,
+                    30.0,
+                )
+
+        mock_openai.assert_called_once_with(
+            api_key="moon-key",
+            base_url="https://api.moonshot.cn/v1",
+            timeout=30.0,
+        )
+        mock_openai.return_value.chat.completions.create.assert_called_once_with(
+            model="kimi-k2.5",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=4096,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+
+    def test_deepseek_reasoner_omits_unsupported_temperature(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "deep-key"}, clear=True):
+            with patch("openai.OpenAI") as mock_openai:
+                _send_openai_compatible_request_sync(
+                    "deepseek",
+                    "deepseek-reasoner",
+                    [{"role": "user", "content": "hello"}],
+                    0.7,
+                    4096,
+                    30.0,
+                )
+
+        mock_openai.assert_called_once_with(
+            api_key="deep-key",
+            base_url="https://api.deepseek.com",
+            timeout=30.0,
+        )
+        mock_openai.return_value.chat.completions.create.assert_called_once_with(
+            model="deepseek-reasoner",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=4096,
+        )
 
 
 if __name__ == "__main__":

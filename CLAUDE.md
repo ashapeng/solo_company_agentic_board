@@ -6,33 +6,35 @@ A council of world-expert AI agents that deliberate as a company board of direct
 
 ```
 ├── server/                  ← Backend
-│   ├── api.py               FastAPI server (SSE streaming)
+│   ├── api/                 FastAPI app + route modules by domain
 │   ├── cli.py               CLI entry point
-│   ├── board/               Deliberation engine
-│   │   ├── orchestrator.py  4-stage pipeline
+│   ├── board/               Governance deliberation domain
+│   │   ├── deliberation/    4-stage pipeline, routing, compaction, verification
+│   │   ├── roster/          Stage profiles and capability routing
 │   │   ├── config.py        Model config, member loading
 │   │   ├── llm.py           OpenRouter API client
-│   │   ├── classifier.py    Query classification & routing
-│   │   ├── compaction.py    Token reduction between stages
-│   │   ├── memory.py        SOTB read/write
-│   │   ├── verification.py  Stage 4 quality gate
 │   │   ├── metrics.py       Token and cost tracking
-│   │   ├── prompts.py       Stage protocol templates
+│   │   ├── projection.py    Stable session adapter/projection
 │   │   └── loader.py        Member markdown parser
+│   ├── harness/             Learning loop: config, ledger, tuners, reviews
+│   ├── execution/           Execution units, manager agents, delegated tasks
 │   ├── members/             Member definitions (*.md)
 │   ├── protocols/           Stage templates (*.md)
 │   └── memory/              SOTB (institutional memory)
 │
 ├── ui/                      ← Frontend
 │   ├── index.html           Single-page app
-│   ├── style.css            Styles
-│   └── app.js               SSE streaming + rendering
+│   └── src/                 React app, domain entrypoints, shared API/types
 │
 ├── data/                    ← Runtime (gitignored)
 │   └── sessions/            Saved deliberation JSON
 │
 └── docs/                    ← Documentation
+    └── architecture/         Domain map, runtime flow, extension guide
 ```
+
+See `docs/architecture/README.md` for the current domain boundaries and
+extension rules.
 
 ## Architecture
 

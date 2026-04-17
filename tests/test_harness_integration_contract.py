@@ -4,11 +4,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
+from server.board.classifier import QueryClassification
 from server.board.harness_config import HarnessConfig, get_config
 from server.board.ledger import init_db, query_outcomes, LedgerError
 from server.board.llm import LLMResponse
 from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
-from server.board.verification import verify_synthesis
+from server.board.verification import VerificationResult, verify_synthesis
 from server.api import feedback, FeedbackRequest
 
 
@@ -45,6 +46,34 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                     call_kwargs = mock_llm.call_args
                     self.assertEqual(call_kwargs.kwargs.get("max_tokens"), 999)
 
+    async def test_orchestrator_uses_tuned_query_complexity_token_budget(self):
+        with patch("server.board.orchestrator.get_config") as mock_cfg:
+            mock_cfg.return_value = HarnessConfig(per_query_type={
+                "strategic": {
+                    "token_budgets": {
+                        "complex": {"stage1_max_tokens": 1777},
+                    },
+                },
+            })
+            with patch("server.board.orchestrator.query_llm", new_callable=AsyncMock) as mock_llm:
+                mock_llm.return_value = LLMResponse(
+                    content="Analysis.", model="test", input_tokens=1,
+                    output_tokens=1, latency_seconds=0.1,
+                )
+                orchestrator = BoardOrchestrator()
+                if orchestrator.council:
+                    member = orchestrator.council[0]
+                    await orchestrator._query_member(
+                        member,
+                        "test prompt",
+                        stage=1,
+                        query_type="strategic",
+                        complexity="complex",
+                    )
+
+                    call_kwargs = mock_llm.call_args
+                    self.assertEqual(call_kwargs.kwargs.get("max_tokens"), 1777)
+
     async def test_verification_uses_config_threshold(self):
         """verify_synthesis should use config's verification_threshold."""
         with patch("server.board.verification.get_config") as mock_cfg:
@@ -60,6 +89,65 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
                 # Score 8 < threshold 9 → should NOT pass
                 self.assertFalse(result.passed)
+
+    async def test_verification_uses_tuned_query_type_threshold(self):
+        with patch("server.board.verification.get_config") as mock_cfg:
+            mock_cfg.return_value = HarnessConfig(
+                verification_threshold=7.0,
+                per_query_type={"strategic": {"verification_threshold": 9.0}},
+            )
+            with patch("server.board.verification.query_llm", new_callable=AsyncMock) as mock_llm:
+                mock_llm.return_value = LLMResponse(
+                    content='{"score": 8, "deficiencies": [], "suggestions": []}',
+                    model="verifier", input_tokens=1, output_tokens=1,
+                    latency_seconds=0.1,
+                )
+
+                result = await verify_synthesis(
+                    "summary",
+                    "peer review",
+                    "query",
+                    query_type="strategic",
+                )
+
+        self.assertFalse(result.passed)
+
+    async def test_deliberate_passes_query_type_to_verification(self):
+        orchestrator = BoardOrchestrator()
+        synthesis = MemberResponse(
+            member_id="chairperson", stage=3,
+            content="### Executive Summary\nLaunch.\n\n### SOTB Update\n- None.",
+            model="chair", elapsed_seconds=0.1,
+        )
+        classification = QueryClassification(
+            query_type="strategic",
+            complexity="complex",
+            relevant_member_ids=["strategist", "chairperson"],
+            reasoning="Strategic launch decision.",
+        )
+
+        with patch("server.board.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
+            with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
+                with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
+                    with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
+                        with patch("server.board.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
+                            with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
+                                with patch("server.board.orchestrator._record_to_ledger"):
+                                    mock_classify.return_value = classification
+                                    mock_verify.return_value = VerificationResult(
+                                        score=8,
+                                        passed=True,
+                                        deficiencies=[],
+                                        suggestions=[],
+                                    )
+
+                                    await orchestrator.deliberate(
+                                        "Should we launch?",
+                                        verify=True,
+                                        session_id="verification_query_type",
+                                    )
+
+        self.assertEqual("strategic", mock_verify.await_args.kwargs["query_type"])
 
 
 class LedgerWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):

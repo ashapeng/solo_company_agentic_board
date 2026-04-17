@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from server.board.harness_config import HarnessConfig, load_config, save_config
+from server.board.harness_config import (
+    HarnessConfig,
+    load_config,
+    resolve_stage_max_tokens,
+    resolve_verification_threshold,
+    save_config,
+)
 
 
 class HarnessConfigContractTest(unittest.TestCase):
@@ -98,6 +104,70 @@ class HarnessConfigContractTest(unittest.TestCase):
 
         self.assertNotEqual(loaded.last_modified, "")
         self.assertIn("T", loaded.last_modified)  # ISO 8601
+
+    def test_resolve_stage_max_tokens_uses_defaults_without_override(self):
+        cfg = HarnessConfig()
+
+        self.assertEqual(resolve_stage_max_tokens(1, config=cfg), 1200)
+        self.assertEqual(resolve_stage_max_tokens(2, config=cfg), 800)
+        self.assertEqual(resolve_stage_max_tokens(3, config=cfg), 4000)
+
+    def test_resolve_stage_max_tokens_prefers_query_complexity_override(self):
+        cfg = HarnessConfig(per_query_type={
+            "strategic": {
+                "stage1_max_tokens": 1000,
+                "token_budgets": {
+                    "complex": {"stage1_max_tokens": 1800},
+                },
+            },
+        })
+
+        self.assertEqual(
+            resolve_stage_max_tokens(
+                1,
+                query_type="strategic",
+                complexity="complex",
+                config=cfg,
+            ),
+            1800,
+        )
+
+    def test_resolve_stage_max_tokens_supports_query_type_override(self):
+        cfg = HarnessConfig(per_query_type={
+            "product": {"stage2_max_tokens": 900},
+        })
+
+        self.assertEqual(
+            resolve_stage_max_tokens(
+                2,
+                query_type="product",
+                complexity="simple",
+                config=cfg,
+            ),
+            900,
+        )
+
+    def test_resolve_verification_threshold_uses_global_default(self):
+        cfg = HarnessConfig(verification_threshold=7.5)
+
+        self.assertEqual(resolve_verification_threshold(config=cfg), 7.5)
+        self.assertEqual(
+            resolve_verification_threshold(query_type="strategic", config=cfg),
+            7.5,
+        )
+
+    def test_resolve_verification_threshold_prefers_query_type_override(self):
+        cfg = HarnessConfig(
+            verification_threshold=7.0,
+            per_query_type={
+                "strategic": {"verification_threshold": 8.5},
+            },
+        )
+
+        self.assertEqual(
+            resolve_verification_threshold(query_type="strategic", config=cfg),
+            8.5,
+        )
 
 
 if __name__ == "__main__":
