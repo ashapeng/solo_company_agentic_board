@@ -16,6 +16,7 @@ from typing import Any
 from .model_assignment import tune_model_assignments
 from .routing_compaction import tune_routing_and_compaction
 from .tuning import tune_token_budgets, tune_verification_thresholds
+from .ledger import query_outcomes
 
 
 _REVIEWS_DIR = Path("data/harness_reviews")
@@ -85,6 +86,10 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
                 summary=f"{name} review failed.",
                 details={"error": str(exc)},
             ))
+
+    reliability = _reliability_recommendation()
+    if reliability:
+        recommendations.append(reliability)
 
     review = HarnessReview(
         id=f"harness_review_{time.time_ns()}",
@@ -159,4 +164,47 @@ def _change_count(report: dict[str, Any]) -> int:
     return sum(
         len(report.get(key) or [])
         for key in ("changes", "routing_changes", "compaction_changes")
+    )
+
+
+def _reliability_recommendation() -> HarnessRecommendation | None:
+    try:
+        rows = query_outcomes(limit=50)
+    except Exception as exc:
+        return HarnessRecommendation(
+            category="reliability",
+            summary="Reliability review failed.",
+            details={"error": str(exc)},
+        )
+    if not rows:
+        return None
+
+    parse_failures = sum(1 for row in rows if row.get("structured_output_failed"))
+    truncations = sum(1 for row in rows if row.get("truncation_detected"))
+    blank_responses = sum(1 for row in rows if row.get("blank_member_responses") not in {None, "", "[]"})
+    negative_feedback = sum(1 for row in rows if row.get("feedback_rating") == "negative")
+    if not any((parse_failures, truncations, blank_responses, negative_feedback)):
+        return None
+
+    recommendations = []
+    if truncations:
+        recommendations.append("Review Stage 3/delegation token budgets for recurrent truncation.")
+    if parse_failures:
+        recommendations.append("Keep structured delegation generation on JSON-only retry path.")
+    if blank_responses:
+        recommendations.append("Review model assignments for members returning blank responses.")
+    if negative_feedback:
+        recommendations.append("Inspect negative feedback before applying tuner changes.")
+
+    return HarnessRecommendation(
+        category="reliability",
+        summary=f"{len(recommendations)} reliability signal(s) need review.",
+        details={
+            "recent_sessions": len(rows),
+            "parse_failures": parse_failures,
+            "truncations": truncations,
+            "blank_response_sessions": blank_responses,
+            "negative_feedback_sessions": negative_feedback,
+            "recommendations": recommendations,
+        },
     )

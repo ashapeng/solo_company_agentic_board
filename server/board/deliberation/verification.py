@@ -9,6 +9,7 @@ from dataclasses import asdict
 
 from server.harness.config import get_config, resolve_verification_threshold
 
+from ..config import get_verification_model
 from ..llm import query_llm
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def verify_synthesis(
 ) -> VerificationResult:
     """Evaluate chairman synthesis quality.
 
-    Uses a Sonnet-class model (separate from the chairman).
+    Uses a configured evaluator model separate from the chairman.
     Returns VerificationResult with score and deficiencies.
     """
     prompt = VERIFICATION_PROMPT.format(
@@ -80,7 +81,7 @@ async def verify_synthesis(
 
     try:
         resp = await query_llm(
-            model="anthropic/claude-sonnet-4",
+            model=get_verification_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,  # near-deterministic for evaluation
             max_tokens=500,

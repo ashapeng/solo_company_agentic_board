@@ -36,6 +36,14 @@ _SECTION_ALIASES = {
 
 @dataclass
 class BoardDecisionProjection:
+    prepared_by: str = ""
+    decision_authority: str = ""
+    participants: list[str] = field(default_factory=list)
+    decision_date: str = ""
+    session_id: str = ""
+    status: str = ""
+    assumptions: list[str] = field(default_factory=list)
+    accountable_owners: list[str] = field(default_factory=list)
     executive_summary: str = ""
     critical_findings: list[str] = field(default_factory=list)
     strategic_direction: str = ""

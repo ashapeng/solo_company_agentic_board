@@ -10,13 +10,13 @@ from dataclasses import dataclass, field
 # Model defaults (overridable via env vars)
 # ---------------------------------------------------------------------------
 
-DEFAULT_CHAIRMAN_MODEL = "anthropic/claude-opus-4"
+DEFAULT_CHAIRMAN_MODEL = "kimi/kimi-k2.5"
 DEFAULT_COUNCIL_MODELS = [
-    "anthropic/claude-sonnet-4",
-    "google/gemini-2.5-pro",
-    "openai/gpt-4.1",
-    "x-ai/grok-3",
+    "deepseek/deepseek-chat",
+    "kimi/kimi-k2.5",
 ]
+DEFAULT_CLASSIFIER_MODEL = "deepseek/deepseek-chat"
+DEFAULT_VERIFICATION_MODEL = "kimi/kimi-k2.5"
 
 
 def get_chairman_model() -> str:
@@ -28,6 +28,14 @@ def get_council_models() -> list[str]:
     if raw:
         return [m.strip() for m in raw.split(",") if m.strip()]
     return DEFAULT_COUNCIL_MODELS
+
+
+def get_classifier_model() -> str:
+    return os.getenv("CLASSIFIER_MODEL", DEFAULT_CLASSIFIER_MODEL)
+
+
+def get_verification_model() -> str:
+    return os.getenv("VERIFICATION_MODEL", DEFAULT_VERIFICATION_MODEL)
 
 
 # ---------------------------------------------------------------------------

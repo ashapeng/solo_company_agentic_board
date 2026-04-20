@@ -64,6 +64,8 @@ class LLMResponse:
     input_tokens: int       # -1 if missing from response
     output_tokens: int      # -1 if missing from response
     latency_seconds: float
+    finish_reason: str | None = None
+    response_id: str | None = None
 
 
 def _full_messages(messages: list[dict[str, str]], system: str | None) -> list[dict[str, str]]:
@@ -103,6 +105,21 @@ def _read_required_env(name: str, provider: str) -> str:
     if not value:
         raise RuntimeError(f"{name} not set. Required for native {provider} SDK calls.")
     return value
+
+
+def _read_openrouter_api_key() -> str:
+    api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY not set. "
+            "Copy .env.example to .env and add your key from https://openrouter.ai/keys"
+        )
+    if "..." in api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY still contains the placeholder. "
+            "Replace it with a real key from https://openrouter.ai/keys"
+        )
+    return api_key
 
 
 def _get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
@@ -151,6 +168,21 @@ def _choice_message_content(response: Any) -> str:
     return content or ""
 
 
+def _choice_finish_reason(response: Any) -> str | None:
+    choices = _get_attr_or_item(response, "choices")
+    if not choices:
+        output = _get_attr_or_item(response, "output", {})
+        choices = _get_attr_or_item(output, "choices", [])
+    if not choices:
+        return None
+    return _get_attr_or_item(choices[0], "finish_reason", None)
+
+
+def _response_id(response: Any) -> str | None:
+    value = _get_attr_or_item(response, "id", None)
+    return str(value) if value else None
+
+
 def _usage_tokens(response: Any) -> tuple[int, int]:
     """Extract token counts from OpenAI-like or DashScope-like usage objects."""
     usage = _get_attr_or_item(response, "usage", {})
@@ -185,12 +217,7 @@ async def _send_llm_request(
     if backoff_seconds is None:
         backoff_seconds = BACKOFF_SECONDS
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY not set. "
-            "Copy .env.example to .env and add your key from https://openrouter.ai/keys"
-        )
+    api_key = _read_openrouter_api_key()
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -234,6 +261,8 @@ async def _send_llm_request(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 latency_seconds=latency,
+                finish_reason=data["choices"][0].get("finish_reason"),
+                response_id=data.get("id"),
             )
 
         except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
@@ -310,6 +339,8 @@ async def _send_native_request(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         latency_seconds=latency,
+        finish_reason=_choice_finish_reason(response),
+        response_id=_response_id(response),
     )
 
 
@@ -422,12 +453,12 @@ async def query_llm(
     timeout: float = 120.0,
     fallback: bool = True,
 ) -> LLMResponse:
-    """Send a chat completion request to OpenRouter and return an LLMResponse.
+    """Send a chat completion request to the configured provider and return an LLMResponse.
 
     Parameters
     ----------
     model : str
-        The model identifier (e.g. ``anthropic/claude-sonnet-4``).
+        The model identifier (e.g. ``deepseek/deepseek-chat`` or ``kimi/kimi-k2.5``).
     messages : list[dict]
         Conversation messages (role/content dicts).
     system : str | None

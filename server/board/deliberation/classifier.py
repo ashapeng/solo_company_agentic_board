@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ..config import get_classifier_model
 from ..llm import query_llm
 from ..roster import (
     decision_capabilities,
@@ -72,7 +73,7 @@ async def classify_query(query: str) -> QueryClassification:
 
     try:
         resp = await query_llm(
-            model="anthropic/claude-haiku-3.5",
+            model=get_classifier_model(),
             messages=[{
                 "role": "user",
                 "content": CLASSIFICATION_PROMPT.format(
@@ -90,14 +91,16 @@ async def classify_query(query: str) -> QueryClassification:
             resp.content,
             valid_decision_types=valid_decision_types,
         )
-        if not required_capabilities:
-            required_capabilities = decision_capabilities(query_type, roster=roster)
-        else:
-            required_capabilities = [
+        default_capabilities = decision_capabilities(query_type, roster=roster)
+        if required_capabilities:
+            parsed_capabilities = [
                 capability
                 for capability in required_capabilities
                 if capability in valid_capabilities
-            ] or decision_capabilities(query_type, roster=roster)
+            ]
+            required_capabilities = _dedupe([*default_capabilities, *parsed_capabilities])
+        else:
+            required_capabilities = default_capabilities
 
         selection = select_members_for_capabilities(
             required_capabilities,
@@ -166,3 +169,13 @@ def parse_classification(
             reasoning = line.split(":", 1)[1].strip()
 
     return query_type, complexity, capabilities, reasoning
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result

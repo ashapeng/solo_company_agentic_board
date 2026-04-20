@@ -24,6 +24,7 @@ from .routes.execution import (
     delegated_task,
     execution_agent,
     execution_agents,
+    execution_web_search,
     execution_units,
     plan_task,
     read_evidence,
@@ -51,6 +52,7 @@ from .schemas import (
     TaskArtifactRequest,
     TaskPlanRequest,
     TaskStatusRequest,
+    WebSearchRequest,
 )
 
 _FEEDBACK_DB_PATH = state._FEEDBACK_DB_PATH
@@ -78,6 +80,7 @@ __all__ = [
     "TaskArtifactRequest",
     "TaskPlanRequest",
     "TaskStatusRequest",
+    "WebSearchRequest",
     "_FEEDBACK_DB_PATH",
     "app",
     "apply_harness_review_endpoint",
@@ -91,6 +94,7 @@ __all__ = [
     "enforce_local_only",
     "execution_agent",
     "execution_agents",
+    "execution_web_search",
     "execution_units",
     "feedback",
     "get_session",

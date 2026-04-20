@@ -16,7 +16,15 @@ class AdaptiveRoutingContractTest(unittest.TestCase):
         roster = load_roster()
 
         self.assertEqual(
-            ["market_strategy", "evidence_assessment", "risk_challenge", "synthesis"],
+            [
+                "market_strategy",
+                "customer_research",
+                "product_strategy",
+                "technical_feasibility",
+                "evidence_assessment",
+                "risk_challenge",
+                "synthesis",
+            ],
             decision_capabilities("strategic", roster=roster),
         )
         self.assertIn("technical_feasibility", decision_capabilities("technical", roster=roster))
@@ -67,10 +75,18 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
             classification = await classify_query("What is the MVP?")
 
+        self.assertEqual("deepseek/deepseek-chat", mock_query.await_args.kwargs["model"])
         self.assertEqual("product", classification.query_type)
         self.assertEqual("moderate", classification.complexity)
         self.assertEqual(
-            ["product_strategy", "customer_research", "market_strategy", "synthesis"],
+            [
+                "product_strategy",
+                "customer_research",
+                "market_strategy",
+                "technical_feasibility",
+                "risk_challenge",
+                "synthesis",
+            ],
             classification.required_capabilities,
         )
         self.assertIn("chairperson", classification.relevant_member_ids)

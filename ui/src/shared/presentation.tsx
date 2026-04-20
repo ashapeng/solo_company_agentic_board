@@ -25,6 +25,7 @@ import type {
 } from './types';
 
 export const STAGE_NAMES: Record<number, string> = {
+  0: 'Board intake',
   1: 'Independent analysis',
   2: 'Peer review',
   3: 'Chair synthesis',
@@ -264,4 +265,3 @@ export function metricsByStage(metrics: SessionMetrics) {
     };
   });
 }
-

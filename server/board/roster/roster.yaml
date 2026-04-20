@@ -66,9 +66,9 @@ members:
       can_be_optional: true
 
 decision_types:
-  strategic: [market_strategy, evidence_assessment, risk_challenge, synthesis]
-  product: [product_strategy, customer_research, market_strategy, synthesis]
-  customer: [customer_research, product_strategy, evidence_assessment, synthesis]
+  strategic: [market_strategy, customer_research, product_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis]
+  product: [product_strategy, customer_research, market_strategy, technical_feasibility, risk_challenge, synthesis]
+  customer: [customer_research, product_strategy, market_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis]
   technical: [technical_feasibility, execution_feasibility, product_strategy, synthesis]
   security: [threat_modeling, data_privacy, technical_feasibility, risk_challenge, synthesis]
   operational: [operations, release_readiness, execution_feasibility, synthesis]

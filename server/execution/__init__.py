@@ -21,6 +21,7 @@ from .tasks import (
     parse_delegation_plan,
 )
 from .units import ExecutionUnit, list_execution_units
+from .web_search import WebSearchError, web_search
 
 _DEFAULT_DB_PATH: Path | None = _tasks.DEFAULT_DB_PATH
 _EVIDENCE_DIR = _evidence._EVIDENCE_DIR
@@ -86,6 +87,7 @@ __all__ = [
     "ExecutionAgent",
     "ExecutionError",
     "ExecutionUnit",
+    "WebSearchError",
     "SubAgentTemplate",
     "Subtask",
     "SubtaskPlan",
@@ -104,4 +106,5 @@ __all__ = [
     "record_delegation_plan",
     "save_delegated_task",
     "update_delegated_task_status",
+    "web_search",
 ]

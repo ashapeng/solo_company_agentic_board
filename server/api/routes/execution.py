@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import time
+from collections import deque
+
 from fastapi import APIRouter, HTTPException
 
 from server.execution import (
@@ -16,6 +20,7 @@ from server.execution import (
     list_execution_units,
     plan_delegated_task,
     update_delegated_task_status,
+    web_search,
 )
 
 from ..schemas import (
@@ -24,10 +29,12 @@ from ..schemas import (
     TaskArtifactRequest,
     TaskPlanRequest,
     TaskStatusRequest,
+    WebSearchRequest,
 )
 
 
 router = APIRouter()
+_WEB_SEARCH_REQUESTS: deque[float] = deque()
 
 
 @router.get("/execution-units")
@@ -118,3 +125,41 @@ async def read_evidence(packet_id: str):
     if not packet:
         raise HTTPException(404, detail=f"Evidence packet not found: {packet_id}")
     return packet
+
+
+@router.post("/web-search")
+async def execution_web_search(req: WebSearchRequest):
+    if not req.query.strip():
+        raise HTTPException(422, detail="query is required")
+    _enforce_web_search_rate_limit()
+    return await web_search(
+        req.query,
+        provider=req.provider,
+        max_results=req.max_results,
+    )
+
+
+def _enforce_web_search_rate_limit() -> None:
+    limit = _positive_int_env("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT", 20)
+    window_seconds = _positive_int_env("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS", 60)
+    if limit <= 0:
+        return
+
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    while _WEB_SEARCH_REQUESTS and _WEB_SEARCH_REQUESTS[0] <= cutoff:
+        _WEB_SEARCH_REQUESTS.popleft()
+    if len(_WEB_SEARCH_REQUESTS) >= limit:
+        raise HTTPException(
+            429,
+            detail=f"web search rate limit exceeded: {limit} request(s) per {window_seconds} seconds",
+        )
+    _WEB_SEARCH_REQUESTS.append(now)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(0, value)

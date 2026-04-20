@@ -107,6 +107,8 @@ class DelegationPlan:
     tasks: list[DelegatedTask] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     requires_approval: bool = True
+    structured_output_failed: bool = False
+    truncated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +116,8 @@ class DelegationPlan:
             "tasks": [task.to_dict() for task in self.tasks],
             "warnings": self.warnings,
             "requires_approval": self.requires_approval,
+            "structured_output_failed": self.structured_output_failed,
+            "truncated": self.truncated,
         }
 
 
@@ -133,9 +137,12 @@ def parse_delegation_plan(
 
     payload = _parse_delegation_json(section)
     if payload is None:
+        truncated = _looks_truncated_json(section)
         return DelegationPlan(
             session_id=session_id,
             warnings=["Delegation Plan section did not contain parseable JSON."],
+            structured_output_failed=True,
+            truncated=truncated,
         ).to_dict()
 
     raw_tasks = payload.get("tasks") if isinstance(payload, dict) else payload
@@ -143,6 +150,7 @@ def parse_delegation_plan(
         return DelegationPlan(
             session_id=session_id,
             warnings=["Delegation Plan JSON must be an object with tasks or a task array."],
+            structured_output_failed=True,
         ).to_dict()
 
     tasks: list[DelegatedTask] = []
@@ -419,6 +427,18 @@ def _parse_delegation_json(section: str) -> Any | None:
         except json.JSONDecodeError:
             continue
     return None
+
+
+def _looks_truncated_json(section: str) -> bool:
+    text = section.strip()
+    if "```" in text and not re.search(r"```\s*$", text):
+        return True
+    raw = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
+    if raw.count("{") > raw.count("}") or raw.count("[") > raw.count("]"):
+        return True
+    if raw.count('"') % 2 == 1:
+        return True
+    return False
 
 
 def _extract_markdown_section(markdown: str, heading: str) -> str:

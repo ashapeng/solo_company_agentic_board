@@ -12,7 +12,7 @@ A council of world-expert AI agents that deliberate as a company board of direct
 │   │   ├── deliberation/    4-stage pipeline, routing, compaction, verification
 │   │   ├── roster/          Stage profiles and capability routing
 │   │   ├── config.py        Model config, member loading
-│   │   ├── llm.py           OpenRouter API client
+│   │   ├── llm.py           Native provider/OpenRouter API client
 │   │   ├── metrics.py       Token and cost tracking
 │   │   ├── projection.py    Stable session adapter/projection
 │   │   └── loader.py        Member markdown parser
@@ -109,10 +109,10 @@ uv run uvicorn server.api:app --reload --port 8000
 
 ## Config
 
-- Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`
+- Copy `.env.example` to `.env` and set `DEEPSEEK_API_KEY` and `MOONSHOT_API_KEY`
 - Edit `server/board/config.py` to customize models
 - Native SDK routing is supported with explicit prefixes:
   `glm/<model>` or `zai/<model>` uses Z.AI, `qwen/<model>` uses DashScope,
   `deepseek/<model>` uses DeepSeek via the OpenAI SDK, and `kimi/<model>` uses Kimi via the OpenAI SDK.
-  Use `openrouter:<model_id>` to force OpenRouter for a provider-shaped model ID.
+  Defaults use `deepseek/deepseek-chat` and `kimi/kimi-k2.5`. Use `openrouter:<model_id>` to force OpenRouter for a provider-shaped model ID.
 - Add/edit members in `server/members/*.md`

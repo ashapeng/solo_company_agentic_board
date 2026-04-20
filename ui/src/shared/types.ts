@@ -47,6 +47,14 @@ export type Classification = {
 };
 
 export type Decision = {
+  prepared_by?: string;
+  decision_authority?: string;
+  participants?: string[];
+  decision_date?: string;
+  session_id?: string;
+  status?: string;
+  assumptions?: string[];
+  accountable_owners?: string[];
   executive_summary?: string;
   critical_findings?: string[];
   strategic_direction?: string;
@@ -158,6 +166,14 @@ export type BoardSession = {
     source?: string;
     warnings?: string[];
   };
+  status?: string;
+  intake_cards?: Array<Record<string, unknown>>;
+  clarification?: {
+    status?: string;
+    questions?: Array<Record<string, unknown>>;
+    answers?: Record<string, unknown>;
+  };
+  structured_output_warnings?: string[];
   metrics?: SessionMetrics;
   stage3?: { content?: string };
   stage3_synthesis?: { content?: string };

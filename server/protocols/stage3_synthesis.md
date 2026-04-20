@@ -50,22 +50,6 @@ Any strong objections that were overruled, and why.
 ### Next Steps
 The first 3 concrete actions to take NOW.
 
-### Delegation Plan
-Return a JSON object inside a fenced ```json block. It must contain a `tasks`
-array. Each task must include:
-- `title`
-- `objective`
-- `execution_unit_id` (one of: strategy, product, research, engineering, security, operations, finance, legal)
-- `manager_agent_id` (one of: strategy_lead, product_lead, research_lead, technical_lead, security_lead, operations_lead, finance_lead, legal_lead)
-- `accountable_board_member_id`
-- `priority` (`p0`, `p1`, or `p2`)
-- `acceptance_criteria`
-- `dependencies`
-- `approval_required`
-
-Use approval_required=true unless the task is purely informational. Do not claim
-that any task has already been executed.
-
 ### SOTB Update
 Propose updates to the State of the Board:
 - New decisions to record

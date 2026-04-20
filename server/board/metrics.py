@@ -14,6 +14,8 @@ class CallMetrics:
     input_tokens: int
     output_tokens: int
     latency_seconds: float
+    finish_reason: str | None = None
+    response_id: str | None = None
 
 
 # Cost rates per 1M tokens: {model_prefix: (input_rate, output_rate)}
@@ -23,6 +25,8 @@ COST_RATES: dict[str, tuple[float, float]] = {
     "openai/gpt-4.1": (2.0, 8.0),
     "google/gemini-2.5-pro": (1.25, 10.0),
     "x-ai/grok-3": (3.0, 15.0),
+    "deepseek/deepseek-chat": (0.27, 1.10),
+    "kimi/kimi-k2.5": (0.60, 2.50),
 }
 
 # Fallback rate when model is not in the cost table
@@ -76,6 +80,19 @@ class SessionMetrics:
             "total_calls": len(self.calls),
             "total_tokens": self.total_tokens(),
             "total_cost_estimate_usd": round(self.total_cost_estimate(), 4),
+            "calls": [
+                {
+                    "member_id": c.member_id,
+                    "stage": c.stage,
+                    "model": c.model,
+                    "input_tokens": c.input_tokens,
+                    "output_tokens": c.output_tokens,
+                    "latency_seconds": c.latency_seconds,
+                    "finish_reason": c.finish_reason,
+                    "response_id": c.response_id,
+                }
+                for c in self.calls
+            ],
             "by_stage": {
                 stage: {
                     "calls": len(stage_calls),

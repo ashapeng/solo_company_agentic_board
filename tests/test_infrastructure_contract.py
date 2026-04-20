@@ -1,12 +1,19 @@
 import os
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from server.board.config import BoardMember
+from server.board.config import (
+    BoardMember,
+    get_chairman_model,
+    get_classifier_model,
+    get_council_models,
+    get_verification_model,
+)
 from server.board.loader import load_members
 from server.board.llm import (
     LLMResponse,
@@ -106,6 +113,46 @@ Owns security risk.
         self.assertEqual(250, summary["by_stage"][2]["tokens"])
         self.assertGreater(metrics.total_cost_estimate(), 0)
 
+    def test_default_models_use_available_native_providers(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CHAIRMAN_MODEL": "",
+                "COUNCIL_MODELS": "",
+                "CLASSIFIER_MODEL": "",
+                "VERIFICATION_MODEL": "",
+            },
+            clear=False,
+        ):
+            os.environ.pop("CHAIRMAN_MODEL", None)
+            os.environ.pop("COUNCIL_MODELS", None)
+            os.environ.pop("CLASSIFIER_MODEL", None)
+            os.environ.pop("VERIFICATION_MODEL", None)
+
+            self.assertEqual("kimi/kimi-k2.5", get_chairman_model())
+            self.assertEqual(
+                ["deepseek/deepseek-chat", "kimi/kimi-k2.5"],
+                get_council_models(),
+            )
+            self.assertEqual("deepseek/deepseek-chat", get_classifier_model())
+            self.assertEqual("kimi/kimi-k2.5", get_verification_model())
+
+    def test_runtime_lockfile_pins_project_dependencies(self):
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        direct_deps = {
+            item.split(">=", 1)[0].split("==", 1)[0].lower()
+            for item in pyproject["project"]["dependencies"]
+        }
+        lock_lines = Path("requirements.lock").read_text(encoding="utf-8").splitlines()
+        locked = {
+            line.split("==", 1)[0].lower()
+            for line in lock_lines
+            if line and not line.startswith("#") and "==" in line
+        }
+
+        self.assertTrue(direct_deps <= locked)
+        self.assertTrue(all("==" in line for line in lock_lines if line and not line.startswith("#")))
+
 
 class InfrastructureAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_query_member_sends_system_prompt_and_records_metrics(self):
@@ -140,6 +187,14 @@ class InfrastructureAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_send_llm_request_requires_actionable_api_key_error(self):
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}, clear=False):
             with self.assertRaisesRegex(RuntimeError, "OPENROUTER_API_KEY not set"):
+                await _send_llm_request(
+                    "anthropic/claude-sonnet-4",
+                    [{"role": "user", "content": "hello"}],
+                )
+
+    async def test_send_llm_request_rejects_placeholder_api_key(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-v1-..."}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "OPENROUTER_API_KEY still contains the placeholder"):
                 await _send_llm_request(
                     "anthropic/claude-sonnet-4",
                     [{"role": "user", "content": "hello"}],

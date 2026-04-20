@@ -6,16 +6,20 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from server.api import (
     QueryRequest,
     SotbReviewRequest,
+    WebSearchRequest,
     deliberate,
     delegated_task,
     enforce_local_only,
     execution_agent,
     execution_agents,
+    execution_web_search,
     get_session_adapter,
     get_session_delegation_plan,
     list_members,
@@ -136,6 +140,57 @@ class ApiLocalOnlyContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(403, response.status_code)
         self.assertIn(b"remote_access_disabled", response.body)
 
+    async def test_remote_access_requires_configured_bearer_token(self):
+        old_remote = os.environ.get("AGENTIC_BOARD_ALLOW_REMOTE")
+        old_token = os.environ.get("AGENTIC_BOARD_REMOTE_TOKEN")
+        try:
+            os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = "1"
+            os.environ["AGENTIC_BOARD_REMOTE_TOKEN"] = "remote-secret"
+            request = Request({
+                "type": "http",
+                "method": "GET",
+                "path": "/members",
+                "headers": [],
+                "client": ("203.0.113.10", 12345),
+                "server": ("testserver", 80),
+                "scheme": "http",
+            })
+
+            async def ok_response(_request):
+                return JSONResponse({"ok": True})
+
+            response = await enforce_local_only(
+                request,
+                ok_response,
+            )
+
+            authorized_request = Request({
+                "type": "http",
+                "method": "GET",
+                "path": "/members",
+                "headers": [(b"authorization", b"Bearer remote-secret")],
+                "client": ("203.0.113.10", 12345),
+                "server": ("testserver", 80),
+                "scheme": "http",
+            })
+            authorized = await enforce_local_only(
+                authorized_request,
+                ok_response,
+            )
+        finally:
+            if old_remote is None:
+                os.environ.pop("AGENTIC_BOARD_ALLOW_REMOTE", None)
+            else:
+                os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = old_remote
+            if old_token is None:
+                os.environ.pop("AGENTIC_BOARD_REMOTE_TOKEN", None)
+            else:
+                os.environ["AGENTIC_BOARD_REMOTE_TOKEN"] = old_token
+
+        self.assertEqual(401, response.status_code)
+        self.assertIn(b"remote_auth_required", response.body)
+        self.assertEqual(200, authorized.status_code)
+
 
 class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -207,6 +262,37 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.task_id, plan["tasks"][0]["id"])
         self.assertTrue(plan["requires_approval"])
+
+    async def test_web_search_route_rate_limits_requests(self):
+        old_limit = os.environ.get("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT")
+        old_window = os.environ.get("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS")
+        try:
+            os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT"] = "1"
+            os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS"] = "60"
+
+            with patch("server.api.routes.execution.web_search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {"results": [], "warnings": []}
+
+                first = await execution_web_search(WebSearchRequest(query="market sizing", provider="disabled"))
+                with self.assertRaises(HTTPException) as raised:
+                    await execution_web_search(WebSearchRequest(query="competitor scan", provider="disabled"))
+        finally:
+            if old_limit is None:
+                os.environ.pop("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT", None)
+            else:
+                os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT"] = old_limit
+            if old_window is None:
+                os.environ.pop("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS", None)
+            else:
+                os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS"] = old_window
+
+        self.assertEqual({"results": [], "warnings": []}, first)
+        self.assertEqual(429, raised.exception.status_code)
+        self.assertIn("rate limit", str(raised.exception.detail).lower())
+
+    async def test_web_search_request_validates_bounds(self):
+        with self.assertRaises(ValidationError):
+            WebSearchRequest(query="market sizing", provider="tavily", max_results=50)
 
 
 if __name__ == "__main__":

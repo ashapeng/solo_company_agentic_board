@@ -627,6 +627,43 @@ function DecisionRecord({ session }: { session: BoardSession | null }) {
 
   return (
     <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <article className="rounded-lg border border-[#e2e8f0] bg-white p-4 lg:col-span-2">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-extrabold uppercase tracking-widest text-[#003d9b]">Board Resolution</p>
+            <h3 className="mt-1 text-2xl font-extrabold text-[#0f172a]">{session.user_query || 'Board decision'}</h3>
+          </div>
+          <span className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-3 py-1 text-xs font-extrabold uppercase text-[#475569]">
+            {decision.status || session.status || 'completed'}
+          </span>
+        </div>
+        <dl className="mt-4 grid gap-3 md:grid-cols-2">
+          <FormalRow label="Prepared by" value={decision.prepared_by || 'Chairperson'} />
+          <FormalRow label="Decision authority" value={decision.decision_authority || 'Chairperson'} />
+          <FormalRow label="Session" value={decision.session_id || session.session_id || 'unrecorded'} />
+          <FormalRow label="Decision date" value={decision.decision_date || 'Not recorded'} />
+        </dl>
+        {decision.participants?.length ? (
+          <div className="mt-4">
+            <p className="text-xs font-extrabold uppercase text-[#003d9b]">Contributors</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {decision.participants.map((participant) => (
+                <span key={participant} className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1 text-xs font-bold text-[#475569]">
+                  {participant}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </article>
+
+      {session.clarification?.status === 'required' ? (
+        <article className="rounded-lg border border-[#f0c8c2] bg-[#fff8f6] p-4 lg:col-span-2">
+          <h3 className="text-lg font-extrabold text-[#0f172a]">Clarification Required</h3>
+          <PlainList items={(session.clarification.questions || []).map((item) => String(item.question || 'Clarification needed.'))} />
+        </article>
+      ) : null}
+
       <article className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
         <DecisionBlock title="Executive Summary" content={decision.executive_summary} />
         <DecisionBlock title="Strategic Direction" content={decision.strategic_direction} />
@@ -638,6 +675,8 @@ function DecisionRecord({ session }: { session: BoardSession | null }) {
         <DecisionList title="Next Steps" items={decision.next_steps || decision.implementation_plan} />
         <DecisionList title="Top Risks" items={decision.risk_register} />
         <DecisionList title="Dissent" items={decision.dissenting_views} />
+        <DecisionList title="Assumptions" items={decision.assumptions} />
+        <DecisionList title="Accountable Owners" items={decision.accountable_owners} />
       </aside>
 
       {delegationPlan?.tasks?.length ? (
@@ -657,6 +696,13 @@ function DecisionRecord({ session }: { session: BoardSession | null }) {
               </div>
             ))}
           </div>
+        </article>
+      ) : null}
+
+      {delegationPlan?.warnings?.length || session.structured_output_warnings?.length ? (
+        <article className="rounded-lg border border-[#f0c8c2] bg-[#fff8f6] p-4 lg:col-span-2">
+          <h3 className="text-lg font-extrabold text-[#0f172a]">Delegation Status</h3>
+          <PlainList items={[...(delegationPlan?.warnings || []), ...(session.structured_output_warnings || [])]} />
         </article>
       ) : null}
 
@@ -703,6 +749,15 @@ function DecisionRecord({ session }: { session: BoardSession | null }) {
   );
 }
 
+function FormalRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-3 py-2">
+      <dt className="text-[10px] font-extrabold uppercase text-[#64748b]">{label}</dt>
+      <dd className="mt-1 text-sm font-bold text-[#0f172a]">{value || 'Not recorded'}</dd>
+    </div>
+  );
+}
+
 function DecisionBlock({ title, content }: { title: string; content?: string }) {
   if (!content) return null;
   return (
@@ -722,4 +777,3 @@ function DecisionList({ title, items }: { title: string; items?: string[] }) {
     </article>
   );
 }
-

@@ -52,6 +52,7 @@ async def deliberate(req: QueryRequest):
             skip_classify=req.full_board,
             verify=req.verify,
             session_id=req.session_id,
+            clarification_answers=req.clarification_answers,
         )
     except BoardDeliberationError as e:
         raise HTTPException(
@@ -94,11 +95,27 @@ async def deliberate_stream(req: QueryRequest):
         count = len(responses) if isinstance(responses, list) else 1
         queue.put_nowait({"event": "stage_done", "stage": stage, "count": count})
 
+    def on_intake_card(card):
+        queue.put_nowait({"event": "intake_card", "card": card})
+
+    def on_clarification_required(clarification):
+        queue.put_nowait({"event": "clarification_required", "clarification": clarification})
+
+    def on_clarification_answered(clarification):
+        queue.put_nowait({"event": "clarification_answered", "clarification": clarification})
+
+    def on_structured_output_warning(warning):
+        queue.put_nowait({"event": "structured_output_warning", "warning": warning})
+
     async def event_generator():
         orchestrator = BoardOrchestrator(
             on_stage_start=on_stage_start,
             on_member_done=on_member_done,
             on_stage_done=on_stage_done,
+            on_intake_card=on_intake_card,
+            on_clarification_required=on_clarification_required,
+            on_clarification_answered=on_clarification_answered,
+            on_structured_output_warning=on_structured_output_warning,
         )
 
         task = asyncio.create_task(
@@ -108,6 +125,7 @@ async def deliberate_stream(req: QueryRequest):
                 skip_classify=req.full_board,
                 verify=req.verify,
                 session_id=req.session_id,
+                clarification_answers=req.clarification_answers,
             )
         )
 

@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS session_outcomes (
     sotb_update_approved  INTEGER,
     feedback_rating       TEXT,
     feedback_note         TEXT,
+    parse_warnings        TEXT,
+    structured_output_failed INTEGER,
+    truncation_detected   INTEGER,
+    blank_member_responses TEXT,
+    clarification_questions_count INTEGER,
+    clarification_answers_count INTEGER,
+    delegation_task_count INTEGER,
     harness_config_version INTEGER
 );
 """
@@ -58,6 +65,7 @@ def init_db(db_path: Path | None = None) -> None:
     conn = sqlite3.connect(str(path))
     try:
         conn.execute(_SCHEMA)
+        _ensure_columns(conn)
         conn.commit()
     finally:
         conn.close()
@@ -69,6 +77,7 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
         init_db(path)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    _ensure_columns(conn)
     return conn
 
 
@@ -113,6 +122,29 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
 
     # SOTB
     sotb_proposed = 1 if memory.get("proposed_sotb_update") else 0
+    delegation_plan = session.delegation_plan or {}
+    parse_warnings = delegation_plan.get("warnings", []) if isinstance(delegation_plan, dict) else []
+    structured_output_failed = 1 if (
+        isinstance(delegation_plan, dict) and delegation_plan.get("structured_output_failed")
+    ) else 0
+    truncation_detected = 1 if (
+        isinstance(delegation_plan, dict) and delegation_plan.get("truncated")
+    ) else 0
+    blank_member_responses = [
+        response.member_id
+        for response in [*session.stage1_responses, *session.stage2_responses]
+        if not str(response.content or "").strip()
+    ]
+    clarification = getattr(session, "clarification", {}) or {}
+    clarification_questions = clarification.get("questions") or []
+    clarification_answers = clarification.get("answers") or {}
+    if isinstance(clarification_answers, dict):
+        answers_count = len([value for value in clarification_answers.values() if str(value).strip()])
+    elif clarification_answers:
+        answers_count = 1
+    else:
+        answers_count = 0
+    delegation_tasks = delegation_plan.get("tasks", []) if isinstance(delegation_plan, dict) else []
 
     conn = _connect(db_path)
     try:
@@ -127,8 +159,12 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 total_cost_usd,
                 sotb_update_proposed, sotb_update_approved,
                 feedback_rating, feedback_note,
+                parse_warnings, structured_output_failed,
+                truncation_detected, blank_member_responses,
+                clarification_questions_count, clarification_answers_count,
+                delegation_task_count,
                 harness_config_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -152,6 +188,13 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 None,
                 None,
                 None,
+                json.dumps(parse_warnings),
+                structured_output_failed,
+                truncation_detected,
+                json.dumps(blank_member_responses),
+                len(clarification_questions),
+                answers_count,
+                len(delegation_tasks) if isinstance(delegation_tasks, list) else 0,
                 config_version,
             ),
         )
@@ -177,6 +220,25 @@ def record_feedback(
             raise LedgerError(f"Session not found: {session_id}")
     finally:
         conn.close()
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(session_outcomes)").fetchall()
+    }
+    additions = {
+        "parse_warnings": "TEXT",
+        "structured_output_failed": "INTEGER",
+        "truncation_detected": "INTEGER",
+        "blank_member_responses": "TEXT",
+        "clarification_questions_count": "INTEGER",
+        "clarification_answers_count": "INTEGER",
+        "delegation_task_count": "INTEGER",
+    }
+    for column, column_type in additions.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE session_outcomes ADD COLUMN {column} {column_type}")
 
 
 def query_outcomes(
@@ -233,7 +295,8 @@ def aggregate(
 
     conn = _connect(db_path)
     try:
-        sql = f"SELECT {group_by}, AVG({field}) as avg_val FROM session_outcomes WHERE 1=1"
+        # field and group_by are constrained to allowlists above; values stay parameterized.
+        sql = f"SELECT {group_by}, AVG({field}) as avg_val FROM session_outcomes WHERE 1=1"  # nosec B608
         params: list = []
 
         if query_type is not None:

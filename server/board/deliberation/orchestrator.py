@@ -14,7 +14,9 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from server.execution import parse_delegation_plan, record_delegation_plan
 from server.harness.config import (
@@ -69,6 +71,10 @@ class BoardSession:
     delegation_plan: dict | None = None
     verification: dict | None = None
     memory: dict | None = None
+    status: str = "completed"
+    intake_cards: list[dict] = field(default_factory=list)
+    clarification: dict = field(default_factory=dict)
+    structured_output_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         def _resp(r: MemberResponse) -> dict:
@@ -89,6 +95,10 @@ class BoardSession:
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,
             "memory": self.memory,
+            "status": self.status,
+            "intake_cards": self.intake_cards,
+            "clarification": self.clarification,
+            "structured_output_warnings": self.structured_output_warnings,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
             "participation": self.participation,
@@ -227,6 +237,160 @@ def _build_participation_decisions(
     return decisions
 
 
+def _should_pause_for_clarification(user_query: str, council: list[BoardMember]) -> bool:
+    words = [word for word in user_query.replace("-", " ").split() if word.strip()]
+    lower = user_query.lower()
+    if len(words) > 14:
+        return False
+    if any(member.id in {"product", "researcher", "strategist", "architect"} for member in council):
+        ambiguous_terms = {"business", "product", "ai", "search", "e-commerce", "ecommerce"}
+        return sum(1 for term in ambiguous_terms if term in lower) >= 2
+    return False
+
+
+def _build_intake_card(member: BoardMember, user_query: str, *, blocking: bool) -> dict:
+    defaults = {
+        "strategist": (
+            "Which seller segment and market wedge should this target first?",
+            "Market and competitive assumptions are not yet grounded.",
+            "Define the wedge and evidence threshold before spend.",
+            "strategy",
+        ),
+        "product": (
+            "Who is the exact buyer and what painful job are they hiring this for?",
+            "The request describes a solution before validating the problem.",
+            "Run problem validation before feature scoping.",
+            "product",
+        ),
+        "researcher": (
+            "Which customers have already shown this pain through behavior or spend?",
+            "No customer evidence has been supplied.",
+            "Collect customer discovery evidence before the final decision.",
+            "research",
+        ),
+        "critic": (
+            "What would make this decision obviously wrong within 30 days?",
+            "The failure criteria and disconfirming evidence are undefined.",
+            "Set explicit kill criteria and dissent checks.",
+            "legal",
+        ),
+        "architect": (
+            "What input images, output quality bar, and integration surface are required?",
+            "Technical feasibility depends on unstated product constraints.",
+            "Run a feasibility memo after customer constraints are known.",
+            "engineering",
+        ),
+        "builder": (
+            "What is the smallest manual or prototype test that proves demand?",
+            "Execution could expand before the validation path is clear.",
+            "Sequence a small validation slice before implementation.",
+            "engineering",
+        ),
+    }
+    question, concern, path, unit = defaults.get(member.id, (
+        "What missing fact would change this board member's recommendation?",
+        "The prompt lacks enough context for a fully accountable decision.",
+        "Name the assumption and verify it before execution.",
+        "strategy",
+    ))
+    return {
+        "member_id": member.id,
+        "member_title": member.title,
+        "clarifying_question": question,
+        "immediate_concern": concern,
+        "proposed_path": path,
+        "required_execution_unit": unit,
+        "confidence": "medium",
+        "blocking": blocking,
+    }
+
+
+def _format_clarification_context(user_query: str, clarification: dict) -> str:
+    answers = clarification.get("answers") or {}
+    if not answers:
+        return user_query
+    lines = [user_query, "", "Clarification answers supplied before deliberation:"]
+    if isinstance(answers, dict):
+        lines.extend(f"- {key}: {value}" for key, value in answers.items())
+    else:
+        lines.append(str(answers))
+    return "\n".join(lines)
+
+
+def _wrap_delegation_json(content: str) -> str:
+    return f"### Delegation Plan\n```json\n{content.strip()}\n```"
+
+
+def _format_delegation_prompt(user_query: str, synthesis_content: str) -> str:
+    return f"""Create the execution delegation plan for this board decision.
+
+Return ONLY valid JSON. No Markdown. No commentary.
+
+Schema:
+{{
+  "tasks": [
+    {{
+      "title": "short task name",
+      "objective": "specific outcome",
+      "execution_unit_id": "strategy|product|research|engineering|security|operations|finance|legal",
+      "manager_agent_id": "strategy_lead|product_lead|research_lead|technical_lead|security_lead|operations_lead|finance_lead|legal_lead",
+      "accountable_board_member_id": "chairperson|strategist|product|researcher|critic|architect|builder|guardian|operator",
+      "priority": "p0|p1|p2",
+      "acceptance_criteria": ["observable completion criterion"],
+      "dependencies": [],
+      "approval_required": true
+    }}
+  ]
+}}
+
+Use approval_required=true unless a task is purely informational.
+Do not claim work has already been executed.
+Create at most 4 tasks.
+
+Original request:
+{user_query}
+
+Board decision:
+{synthesis_content}
+"""
+
+
+def _synthesis_has_actions(content: str) -> bool:
+    lower = content.lower()
+    return "### next steps" in lower or "### implementation plan" in lower
+
+
+def _metadata_for_decision(
+    decision: dict | None,
+    *,
+    session: BoardSession,
+    chairman: BoardMember,
+    council: list[BoardMember],
+) -> dict | None:
+    if decision is None:
+        return None
+    participant_titles = [member.title for member in [chairman, *council]]
+    enriched = dict(decision)
+    enriched.setdefault("prepared_by", chairman.title)
+    enriched.setdefault("decision_authority", f"{chairman.title} ({chairman.role})")
+    enriched.setdefault("participants", participant_titles)
+    enriched.setdefault("decision_date", datetime.now(timezone.utc).isoformat())
+    enriched.setdefault("session_id", session.session_id)
+    enriched.setdefault("status", session.status)
+    enriched.setdefault("assumptions", [])
+    enriched.setdefault("accountable_owners", _accountable_owners(enriched))
+    return enriched
+
+
+def _accountable_owners(decision: dict) -> list[str]:
+    owners: list[str] = []
+    for item in decision.get("next_steps") or []:
+        text = str(item)
+        if ":" in text:
+            owners.append(text.split(":", 1)[0].strip("* "))
+    return owners
+
+
 class BoardOrchestrator:
     """Runs the 3-stage board deliberation."""
 
@@ -238,6 +402,10 @@ class BoardOrchestrator:
         on_stage_start: callable = None,
         on_member_done: callable = None,
         on_stage_done: callable = None,
+        on_intake_card: callable = None,
+        on_clarification_required: callable = None,
+        on_clarification_answered: callable = None,
+        on_structured_output_warning: callable = None,
     ):
         all_members = members or get_board_members()
         members_by_id = get_members_by_id()
@@ -251,12 +419,62 @@ class BoardOrchestrator:
         self._on_stage_start = on_stage_start
         self._on_member_done = on_member_done
         self._on_stage_done = on_stage_done
+        self._on_intake_card = on_intake_card
+        self._on_clarification_required = on_clarification_required
+        self._on_clarification_answered = on_clarification_answered
+        self._on_structured_output_warning = on_structured_output_warning
         self._token_budget_query_type: str | None = None
         self._token_budget_complexity: str | None = None
 
     def _fire(self, callback, *args):
         if callback:
             callback(*args)
+
+    def stage0_intake(
+        self,
+        user_query: str,
+        *,
+        clarification_answers: dict[str, Any] | None = None,
+    ) -> tuple[list[dict], dict]:
+        """Create immediate member intake cards before expensive deliberation."""
+        self._fire(self._on_stage_start, 0, "Board Intake")
+        should_pause = _should_pause_for_clarification(user_query, self.council)
+        cards: list[dict] = []
+        questions: list[dict] = []
+        for member in self.council:
+            card = _build_intake_card(member, user_query, blocking=should_pause)
+            cards.append(card)
+            self._fire(self._on_intake_card, card)
+            if card["blocking"]:
+                questions.append({
+                    "member_id": member.id,
+                    "member_title": member.title,
+                    "question": card["clarifying_question"],
+                })
+
+        answers = clarification_answers or {}
+        if questions and not answers:
+            clarification = {
+                "status": "required",
+                "questions": questions,
+                "answers": {},
+            }
+            self._fire(self._on_clarification_required, clarification)
+        elif questions:
+            clarification = {
+                "status": "answered",
+                "questions": questions,
+                "answers": answers,
+            }
+            self._fire(self._on_clarification_answered, clarification)
+        else:
+            clarification = {
+                "status": "not_required",
+                "questions": [],
+                "answers": answers,
+            }
+        self._fire(self._on_stage_done, 0, cards)
+        return cards, clarification
 
     def _record_metrics(self, member_id: str, stage: int, llm_resp: LLMResponse) -> None:
         """Record metrics from an LLM response."""
@@ -267,6 +485,8 @@ class BoardOrchestrator:
             input_tokens=llm_resp.input_tokens,
             output_tokens=llm_resp.output_tokens,
             latency_seconds=llm_resp.latency_seconds,
+            finish_reason=llm_resp.finish_reason,
+            response_id=llm_resp.response_id,
         ))
 
     async def _query_member(
@@ -466,6 +686,76 @@ class BoardOrchestrator:
         self._fire(self._on_stage_done, 3, synthesis)
         return synthesis
 
+    async def build_delegation_plan(
+        self,
+        *,
+        user_query: str,
+        synthesis_content: str,
+        session_id: str,
+        query_type: str | None = None,
+        complexity: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate delegation JSON in a dedicated structured pass."""
+        prompt = _format_delegation_prompt(user_query, synthesis_content)
+        messages = [{"role": "user", "content": prompt}]
+        cfg = get_config()
+        first = await query_llm(
+            self.chairman_model,
+            messages,
+            system=(
+                "You convert approved board decisions into execution tasks. "
+                "Return valid JSON only."
+            ),
+            temperature=0.1,
+            max_tokens=max(1200, min(resolve_stage_max_tokens(
+                3,
+                query_type=query_type,
+                complexity=complexity,
+                config=cfg,
+            ), 3000)),
+        )
+        self._record_metrics("delegation_planner", 3, first)
+        plan = parse_delegation_plan(
+            _wrap_delegation_json(first.content),
+            session_id=session_id,
+        )
+        if plan.get("tasks") and not plan.get("structured_output_failed"):
+            return plan
+
+        warning = "Delegation JSON parse failed; retrying once with repair prompt."
+        plan.setdefault("warnings", []).append(warning)
+        self._fire(self._on_structured_output_warning, warning)
+        repair = await query_llm(
+            self.chairman_model,
+            [
+                {"role": "user", "content": prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        "The previous response did not parse as the required JSON. "
+                        "Repair it now. Return only a valid JSON object with a tasks array.\n\n"
+                        f"Previous response:\n{first.content}"
+                    ),
+                },
+            ],
+            system=(
+                "You repair malformed delegation JSON. Return valid JSON only."
+            ),
+            temperature=0.0,
+            max_tokens=3000,
+        )
+        self._record_metrics("delegation_planner", 3, repair)
+        repaired = parse_delegation_plan(
+            _wrap_delegation_json(repair.content),
+            session_id=session_id,
+        )
+        repaired.setdefault("warnings", [])
+        repaired["warnings"] = [*plan.get("warnings", []), *repaired["warnings"]]
+        if first.finish_reason == "length" or repair.finish_reason == "length":
+            repaired["truncated"] = True
+            repaired["structured_output_failed"] = not bool(repaired.get("tasks"))
+        return repaired
+
     # ── Full Deliberation ──────────────────────────────────────────────
 
     async def deliberate(
@@ -476,6 +766,7 @@ class BoardOrchestrator:
         skip_classify: bool = False,
         verify: bool = False,
         session_id: str | None = None,
+        clarification_answers: dict[str, Any] | None = None,
     ) -> BoardSession:
         """Run the full 3-stage board deliberation.
 
@@ -549,6 +840,34 @@ class BoardOrchestrator:
 
         t0 = time.monotonic()
 
+        if not skip_classify:
+            session.intake_cards, session.clarification = self.stage0_intake(
+                user_query,
+                clarification_answers=clarification_answers,
+            )
+            if session.clarification.get("status") == "required":
+                session.status = "clarification_required"
+                session.decision = _metadata_for_decision(
+                    project_board_decision(
+                        "### Executive Summary\n"
+                        "The board requires clarification before issuing a final decision.\n\n"
+                        "### Next Steps\n"
+                        "- CEO: Answer the clarification questions and resume the board session."
+                    ),
+                    session=session,
+                    chairman=self.chairman,
+                    council=self.council,
+                )
+                session.total_elapsed = round(time.monotonic() - t0, 2)
+                session.save()
+                try:
+                    _record_to_ledger(session, config_version=get_config().version, db_path=_LEDGER_DB_PATH)
+                except Exception:
+                    logger.warning("Failed to record clarification session to harness ledger", exc_info=True)
+                return session
+
+        effective_query = _format_clarification_context(user_query, session.clarification)
+
         # Stage 1: All members analyze independently (parallel)
         query_type = None
         complexity = None
@@ -557,14 +876,14 @@ class BoardOrchestrator:
             complexity = session.classification.get("complexity")
 
         session.stage1_responses = await self.stage1(
-            user_query,
+            effective_query,
             query_type=query_type,
             complexity=complexity,
         )
 
         # Stage 2: Peer review with anonymized responses (parallel)
         session.stage2_responses = await self.stage2(
-            user_query,
+            effective_query,
             session.stage1_responses,
             query_type=query_type,
             complexity=complexity,
@@ -575,7 +894,7 @@ class BoardOrchestrator:
 
         # Stage 3: Chairman synthesizes everything (with SOTB context)
         session.stage3_synthesis = await self.stage3(
-            user_query, session.stage1_responses, session.stage2_responses,
+            effective_query, session.stage1_responses, session.stage2_responses,
             sotb=sotb,
             query_type=query_type,
             complexity=complexity,
@@ -592,7 +911,7 @@ class BoardOrchestrator:
             result = await verify_synthesis(
                 synthesis=session.stage3_synthesis.content,
                 stage2_compacted=compacted_s2_text,
-                user_query=user_query,
+                user_query=effective_query,
                 query_type=query_type,
             )
 
@@ -633,18 +952,40 @@ class BoardOrchestrator:
                 result = await verify_synthesis(
                     synthesis=session.stage3_synthesis.content,
                     stage2_compacted=compacted_s2_text,
-                    user_query=user_query,
+                    user_query=effective_query,
                     query_type=query_type,
                 )
                 logger.info("Revision score: %d/10 (passed: %s)", result.score, result.passed)
                 session.verification = verification_to_dict(result)
 
         if session.stage3_synthesis:
-            session.decision = project_board_decision(session.stage3_synthesis.content)
-            session.delegation_plan = parse_delegation_plan(
-                session.stage3_synthesis.content,
-                session_id=session_id,
+            session.decision = _metadata_for_decision(
+                project_board_decision(session.stage3_synthesis.content),
+                session=session,
+                chairman=self.chairman,
+                council=self.council,
             )
+            if _synthesis_has_actions(session.stage3_synthesis.content):
+                session.delegation_plan = await self.build_delegation_plan(
+                    user_query=effective_query,
+                    synthesis_content=session.stage3_synthesis.content,
+                    session_id=session_id,
+                    query_type=query_type,
+                    complexity=complexity,
+                )
+            else:
+                session.delegation_plan = {
+                    "session_id": session_id,
+                    "tasks": [],
+                    "warnings": ["No delegation-worthy action section found in chair synthesis."],
+                    "requires_approval": True,
+                    "structured_output_failed": False,
+                    "truncated": False,
+                }
+            for warning in session.delegation_plan.get("warnings", []):
+                if "parse" in warning.lower() or session.delegation_plan.get("structured_output_failed"):
+                    session.structured_output_warnings.append(warning)
+                    self._fire(self._on_structured_output_warning, warning)
             session.memory = propose_memory_update(
                 session.stage3_synthesis.content,
                 session_id=session_id,
