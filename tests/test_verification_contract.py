@@ -112,5 +112,39 @@ class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Revised with next steps", session.stage3_synthesis.content)
 
 
+class VerificationProviderStampTest(unittest.TestCase):
+    def test_result_carries_provider_metadata(self):
+        from dataclasses import asdict
+        from server.board.deliberation.verification import VerificationResult
+
+        result = VerificationResult(
+            score=8,
+            passed=True,
+            verifier_model="deepseek/deepseek-chat",
+            verifier_provider="deepseek",
+            chairman_provider="kimi",
+        )
+        d = asdict(result)
+        self.assertEqual(d["verifier_model"], "deepseek/deepseek-chat")
+        self.assertEqual(d["verifier_provider"], "deepseek")
+        self.assertEqual(d["chairman_provider"], "kimi")
+
+    def test_projection_includes_provider_fields(self):
+        from server.board.deliberation.verification import VerificationResult
+        from server.board.projection import verification_to_dict
+
+        result = VerificationResult(
+            score=6,
+            passed=False,
+            verifier_model="deepseek/deepseek-chat",
+            verifier_provider="deepseek",
+            chairman_provider="kimi",
+        )
+        projected = verification_to_dict(result)
+        self.assertEqual(projected.get("verifier_model"), "deepseek/deepseek-chat")
+        self.assertEqual(projected.get("verifier_provider"), "deepseek")
+        self.assertEqual(projected.get("chairman_provider"), "kimi")
+
+
 if __name__ == "__main__":
     unittest.main()

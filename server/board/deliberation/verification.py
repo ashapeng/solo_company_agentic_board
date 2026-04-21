@@ -22,6 +22,9 @@ class VerificationResult:
     deficiencies: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     status: str = "completed"
+    verifier_model: str | None = None
+    verifier_provider: str | None = None
+    chairman_provider: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -73,6 +76,13 @@ async def verify_synthesis(
     Uses a configured evaluator model separate from the chairman.
     Returns VerificationResult with score and deficiencies.
     """
+    from server.board.config import get_chairman_model, get_verification_model
+    from server.harness.config_provider import provider_of
+
+    verifier_model = get_verification_model()
+    verifier_provider = provider_of(verifier_model)
+    chairman_provider = provider_of(get_chairman_model())
+
     prompt = VERIFICATION_PROMPT.format(
         user_query=user_query,
         stage2_compacted=stage2_compacted,
@@ -112,6 +122,9 @@ async def verify_synthesis(
             ),
             deficiencies=deficiencies,
             suggestions=suggestions,
+            verifier_model=verifier_model,
+            verifier_provider=verifier_provider,
+            chairman_provider=chairman_provider,
         )
     except Exception as e:
         logger.warning("Verification failed: %s. Defaulting to indeterminate.", e)
@@ -121,4 +134,7 @@ async def verify_synthesis(
             deficiencies=[f"Verification error: {e}"],
             suggestions=["Review the synthesis manually; verifier output was not parseable."],
             status="indeterminate",
+            verifier_model=verifier_model,
+            verifier_provider=verifier_provider,
+            chairman_provider=chairman_provider,
         )
