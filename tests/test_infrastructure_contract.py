@@ -135,7 +135,7 @@ Owns security risk.
                 get_council_models(),
             )
             self.assertEqual("deepseek/deepseek-chat", get_classifier_model())
-            self.assertEqual("kimi/kimi-k2.5", get_verification_model())
+            self.assertEqual("deepseek/deepseek-chat", get_verification_model())
 
     def test_runtime_lockfile_pins_project_dependencies(self):
         pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))

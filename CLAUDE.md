@@ -116,3 +116,6 @@ uv run uvicorn server.api:app --reload --port 8000
   `deepseek/<model>` uses DeepSeek via the OpenAI SDK, and `kimi/<model>` uses Kimi via the OpenAI SDK.
   Defaults use `deepseek/deepseek-chat` and `kimi/kimi-k2.5`. Use `openrouter:<model_id>` to force OpenRouter for a provider-shaped model ID.
 - Add/edit members in `server/members/*.md`
+- Verifier must use a different provider than the chairman. To run both on
+  the same provider during local experimentation, set
+  `AGENTIC_BOARD_ALLOW_SAME_VERIFIER=1`.

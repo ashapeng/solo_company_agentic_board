@@ -16,7 +16,7 @@ DEFAULT_COUNCIL_MODELS = [
     "kimi/kimi-k2.5",
 ]
 DEFAULT_CLASSIFIER_MODEL = "deepseek/deepseek-chat"
-DEFAULT_VERIFICATION_MODEL = "kimi/kimi-k2.5"
+DEFAULT_VERIFICATION_MODEL = "deepseek/deepseek-chat"
 
 
 def get_chairman_model() -> str:
@@ -99,3 +99,22 @@ def __getattr__(name: str):
     if name == "MEMBERS_BY_ID":
         return get_members_by_id()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _assert_verifier_decoupled() -> None:
+    """Refuse to boot if verifier and chairman share a provider."""
+    import os
+    if os.getenv("AGENTIC_BOARD_ALLOW_SAME_VERIFIER") == "1":
+        return
+    from server.harness.config_provider import provider_of
+    chair = provider_of(get_chairman_model())
+    verifier = provider_of(get_verification_model())
+    if chair == verifier:
+        raise RuntimeError(
+            f"Chairman and verifier share provider '{chair}'. "
+            "Set VERIFICATION_MODEL to a different provider, or export "
+            "AGENTIC_BOARD_ALLOW_SAME_VERIFIER=1 to override."
+        )
+
+
+_assert_verifier_decoupled()
