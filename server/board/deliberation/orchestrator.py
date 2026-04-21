@@ -238,68 +238,54 @@ def _build_participation_decisions(
 
 
 def _should_pause_for_clarification(user_query: str, council: list[BoardMember]) -> bool:
-    words = [word for word in user_query.replace("-", " ").split() if word.strip()]
-    lower = user_query.lower()
-    if len(words) > 14:
+    from server.board.roster import get_clarification_gate, load_roster
+
+    gate = get_clarification_gate()
+
+    words = [w for w in user_query.replace("-", " ").split() if w.strip()]
+    if len(words) > gate["max_query_words"]:
         return False
-    if any(member.id in {"product", "researcher", "strategist", "architect"} for member in council):
-        ambiguous_terms = {"business", "product", "ai", "search", "e-commerce", "ecommerce"}
-        return sum(1 for term in ambiguous_terms if term in lower) >= 2
-    return False
+
+    gating_caps = set(gate["gating_capabilities"])
+    if gating_caps:
+        roster_members = load_roster().get("members", {})
+        has_gating_member = any(
+            any(
+                cap in gating_caps
+                for cap in roster_members.get(member.id, {}).get("capabilities", [])
+            )
+            for member in council
+        )
+        if not has_gating_member:
+            return False
+
+    ambiguous = set(gate["ambiguous_terms"])
+    lower = user_query.lower()
+    hits = sum(1 for term in ambiguous if term in lower)
+    return hits >= gate["min_terms_present"]
 
 
 def _build_intake_card(member: BoardMember, user_query: str, *, blocking: bool) -> dict:
-    defaults = {
-        "strategist": (
-            "Which seller segment and market wedge should this target first?",
-            "Market and competitive assumptions are not yet grounded.",
-            "Define the wedge and evidence threshold before spend.",
-            "strategy",
-        ),
-        "product": (
-            "Who is the exact buyer and what painful job are they hiring this for?",
-            "The request describes a solution before validating the problem.",
-            "Run problem validation before feature scoping.",
-            "product",
-        ),
-        "researcher": (
-            "Which customers have already shown this pain through behavior or spend?",
-            "No customer evidence has been supplied.",
-            "Collect customer discovery evidence before the final decision.",
-            "research",
-        ),
-        "critic": (
-            "What would make this decision obviously wrong within 30 days?",
-            "The failure criteria and disconfirming evidence are undefined.",
-            "Set explicit kill criteria and dissent checks.",
-            "legal",
-        ),
-        "architect": (
-            "What input images, output quality bar, and integration surface are required?",
-            "Technical feasibility depends on unstated product constraints.",
-            "Run a feasibility memo after customer constraints are known.",
-            "engineering",
-        ),
-        "builder": (
-            "What is the smallest manual or prototype test that proves demand?",
-            "Execution could expand before the validation path is clear.",
-            "Sequence a small validation slice before implementation.",
-            "engineering",
-        ),
-    }
-    question, concern, path, unit = defaults.get(member.id, (
-        "What missing fact would change this board member's recommendation?",
-        "The prompt lacks enough context for a fully accountable decision.",
-        "Name the assumption and verify it before execution.",
-        "strategy",
-    ))
+    intake = member.intake
+    if intake is None:
+        # Non-council (e.g., chairperson) path: generic fallback.
+        return {
+            "member_id": member.id,
+            "member_title": member.title,
+            "clarifying_question": "What missing fact would change this board member's recommendation?",
+            "immediate_concern": "The prompt lacks enough context for a fully accountable decision.",
+            "proposed_path": "Name the assumption and verify it before execution.",
+            "required_execution_unit": "strategy",
+            "confidence": "medium",
+            "blocking": blocking,
+        }
     return {
         "member_id": member.id,
         "member_title": member.title,
-        "clarifying_question": question,
-        "immediate_concern": concern,
-        "proposed_path": path,
-        "required_execution_unit": unit,
+        "clarifying_question": intake.clarifying_question,
+        "immediate_concern": intake.immediate_concern,
+        "proposed_path": intake.proposed_path,
+        "required_execution_unit": intake.required_execution_unit,
         "confidence": "medium",
         "blocking": blocking,
     }
