@@ -6,6 +6,11 @@ expertise: [CI/CD, deployment, monitoring, incident response, process health]
 priority: 55
 tags: [operations, deployment, monitoring, sustainability]
 model_override: null
+intake:
+  clarifying_question: "What is the deployment target and what does production health look like today?"
+  immediate_concern: "Release stability and operational sustainability are not yet scoped."
+  proposed_path: "Define deployment strategy, monitoring baseline, and rollback plan before shipping."
+  required_execution_unit: "operations"
 ---
 
 # Operations Lead — Release & Sustainability Engineer

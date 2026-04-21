@@ -93,6 +93,23 @@ class StructuredParseTest(unittest.TestCase):
         self.assertEqual(out.peer_challenges, ["c1"])
         self.assertEqual(out.ranking, ["r1", "r2"])
 
+    def test_parse_stage1_walks_past_invalid_first_fence(self):
+        from server.board.deliberation.structured import parse_stage1
+
+        payload = (
+            '```json\n'
+            '{"some_other_key": "commentary", "not_a_stage1_response": true}\n'
+            '```\n'
+            'Then the real answer:\n'
+            '```json\n'
+            '{"confidence":"High","tldr":"t","analysis":"a","recommendation":"r",'
+            '"risks":[],"open_questions":[]}\n'
+            '```'
+        )
+        out = parse_stage1(payload)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.tldr, "t")
+
 
 if __name__ == "__main__":
     unittest.main()

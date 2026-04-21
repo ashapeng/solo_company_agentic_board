@@ -6,6 +6,11 @@ expertise: [cybersecurity, threat modeling, OWASP, zero trust, compliance]
 priority: 85
 tags: [security, threats, compliance, OWASP]
 model_override: null
+intake:
+  clarifying_question: "What are the attack surfaces and trust boundaries in this decision?"
+  immediate_concern: "Security and compliance posture has not been threat-modeled."
+  proposed_path: "Run STRIDE threat model and enumerate attack surfaces before proceeding."
+  required_execution_unit: "security"
 ---
 
 # Security Guardian — CISO / Security Architecture
