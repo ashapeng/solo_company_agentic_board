@@ -80,6 +80,7 @@ class BoardSession:
     intake_cards: list[dict] = field(default_factory=list)
     clarification: dict = field(default_factory=dict)
     structured_output_warnings: list[str] = field(default_factory=list)
+    evidence_packets: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         def _resp(r: MemberResponse) -> dict:
@@ -104,6 +105,7 @@ class BoardSession:
             "intake_cards": self.intake_cards,
             "clarification": self.clarification,
             "structured_output_warnings": self.structured_output_warnings,
+            "evidence_packets": self.evidence_packets,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
             "participation": self.participation,
@@ -416,10 +418,45 @@ class BoardOrchestrator:
         self._on_structured_output_warning = on_structured_output_warning
         self._token_budget_query_type: str | None = None
         self._token_budget_complexity: str | None = None
+        self._evidence_addenda: dict[str, str] = {}
+        self._current_session_id: str | None = None
 
     def _fire(self, callback, *args):
         if callback:
             callback(*args)
+
+    async def _collect_member_evidence(self, query: str) -> dict[str, str]:
+        """For members with evidence_required, run web_search and build a system-prompt addendum.
+
+        Returns a dict mapping member_id -> addendum string. Members without
+        evidence_required are omitted. On any retrieval failure, the member is
+        omitted and a warning is logged.
+        """
+        from server.execution.web_search import web_search
+
+        addenda: dict[str, str] = {}
+        session_key = getattr(self, "_current_session_id", None) or "anon"
+        for member in self.council:
+            if not getattr(member, "evidence_required", False):
+                continue
+            try:
+                result = await web_search(query, session_id=session_key)
+            except Exception as exc:
+                logger.warning(
+                    "Evidence retrieval failed for %s: %s", member.id, exc,
+                )
+                continue
+            results = result.get("results") or []
+            if not results:
+                continue
+            lines = ["## Retrieved Evidence"]
+            for item in results[:3]:
+                title = (item.get("title") or "Untitled").strip()
+                url = (item.get("url") or "").strip()
+                snippet = (item.get("snippet") or "").strip()
+                lines.append(f"- [{title}]({url}) — {snippet}")
+            addenda[member.id] = "\n".join(lines)
+        return addenda
 
     def stage0_intake(
         self,
@@ -500,10 +537,15 @@ class BoardOrchestrator:
             config=cfg,
         )
 
+        system_prompt = member.system_prompt
+        addendum = getattr(self, "_evidence_addenda", {}).get(member.id)
+        if stage == 1 and addendum:
+            system_prompt = f"{member.system_prompt}\n\n{addendum}"
+
         llm_resp = await query_llm(
             model,
             messages,
-            system=member.system_prompt,
+            system=system_prompt,
             max_tokens=max_tokens,
         )
 
@@ -858,6 +900,17 @@ class BoardOrchestrator:
                 return session
 
         effective_query = _format_clarification_context(user_query, session.clarification)
+
+        # Capture session id for the duration of this run so the evidence hook
+        # can key the web-search rate limiter per-session.
+        self._current_session_id = session_id
+
+        evidence_addenda = await self._collect_member_evidence(effective_query)
+        self._evidence_addenda = evidence_addenda
+        session.evidence_packets = {
+            mid: f"evidence_{session_id}_{mid}"
+            for mid in evidence_addenda
+        }
 
         # Stage 1: All members analyze independently (parallel)
         query_type = None
