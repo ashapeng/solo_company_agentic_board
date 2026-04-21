@@ -62,5 +62,30 @@ class MemberIntakeContract(unittest.TestCase):
             self.assertIn("intake", str(ctx.exception).lower())
 
 
+class EvidenceRequiredFlagTest(unittest.TestCase):
+    def test_researcher_and_strategist_require_evidence(self):
+        from server.board.config import get_board_members
+
+        by_id = {m.id: m for m in get_board_members()}
+        self.assertTrue(
+            by_id["researcher"].evidence_required,
+            "researcher should have evidence_required=True",
+        )
+        self.assertTrue(
+            by_id["strategist"].evidence_required,
+            "strategist should have evidence_required=True",
+        )
+
+    def test_other_members_do_not_require_evidence(self):
+        from server.board.config import get_board_members
+
+        by_id = {m.id: m for m in get_board_members()}
+        for mid in ("chairperson", "product", "critic", "architect", "builder"):
+            self.assertFalse(
+                by_id[mid].evidence_required,
+                f"{mid!r} should default to evidence_required=False",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ expertise: [customer discovery, user interviews, persona development, jobs-to-be
 priority: 80
 tags: [customer, research, interviews, personas, jtbd]
 model_override: null
+evidence_required: true
 intake:
   clarifying_question: "Which customers have already shown this pain through behavior or spend?"
   immediate_concern: "No customer evidence has been supplied."

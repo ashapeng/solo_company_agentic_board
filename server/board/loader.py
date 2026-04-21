@@ -173,6 +173,7 @@ def load_members(
             priority=int(frontmatter.get("priority", 0)),
             tags=tags,
             intake=_parse_member_intake(frontmatter.get("intake")),
+            evidence_required=bool(frontmatter.get("evidence_required", False)),
         )
         # Intake frontmatter is required for active council members (not shelved, not chairperson).
         # Shelved members that are explicitly activated also must satisfy the intake requirement.

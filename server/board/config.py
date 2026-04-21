@@ -65,6 +65,7 @@ class BoardMember:
     priority: int = 0                  # higher = speaks earlier in synthesis
     tags: list[str] = field(default_factory=list)
     intake: MemberIntake | None = None  # optional structured feedback intake
+    evidence_required: bool = False    # whether member requires evidence inputs
 
 
 # ---------------------------------------------------------------------------
