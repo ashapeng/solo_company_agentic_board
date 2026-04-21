@@ -43,6 +43,15 @@ def get_verification_model() -> str:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class MemberIntake:
+    """Structured intake form for board member session feedback."""
+    clarifying_question: str
+    immediate_concern: str
+    proposed_path: str
+    required_execution_unit: str
+
+
+@dataclass
 class BoardMember:
     """A single board member with a defined role and expertise."""
     id: str
@@ -55,6 +64,7 @@ class BoardMember:
     model_override: str | None = None  # use specific model for this member
     priority: int = 0                  # higher = speaks earlier in synthesis
     tags: list[str] = field(default_factory=list)
+    intake: MemberIntake | None = None  # optional structured feedback intake
 
 
 # ---------------------------------------------------------------------------
