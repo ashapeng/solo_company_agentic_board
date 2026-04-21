@@ -547,7 +547,37 @@ def cli():
         default=MIN_MODEL_SAMPLES,
         help="Minimum sessions per candidate model for --tune-models",
     )
+    parser.add_argument(
+        "--replay",
+        type=str,
+        default=None,
+        help="Path to a saved session JSON to replay Stage 3 under a candidate harness config",
+    )
+    parser.add_argument(
+        "--candidate-config",
+        type=str,
+        default=None,
+        help="Harness config JSON path to use during replay (default: active config)",
+    )
+    parser.add_argument(
+        "--replay-verify",
+        action="store_true",
+        help="Also run Stage 4 verification during replay",
+    )
     args = parser.parse_args()
+
+    if args.replay:
+        from pathlib import Path as _ReplayPath
+        from server.harness.replay import replay_session
+        import json as _replay_json
+
+        report = replay_session(
+            _ReplayPath(args.replay),
+            _ReplayPath(args.candidate_config) if args.candidate_config else None,
+            verify=args.replay_verify,
+        )
+        print(_replay_json.dumps(report.to_dict(), indent=2))
+        return
 
     if args.tune:
         run_tuner(dry_run=args.dry_run, json_output=args.json)
