@@ -8,9 +8,9 @@ import os
 import re
 import time
 from collections import deque
-from pathlib import Path
+from pathlib import Path as FilePath
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 
 from server.board.config import BOARD_MEMBERS
@@ -38,13 +38,33 @@ def _positive_int_env(name: str, default: int) -> int:
     return max(0, value)
 
 
+def _deliberate_bucket_key(request: Request) -> str:
+    trust_proxy_header = os.getenv("AGENTIC_BOARD_TRUST_FORWARDED_FOR") == "1"
+    if trust_proxy_header:
+        xff = request.headers.get("x-forwarded-for", "").strip()
+        if xff:
+            # Left-most entry is the originating client; strip whitespace.
+            first = xff.split(",", 1)[0].strip()
+            if first:
+                return first
+    return request.client.host if request.client else "anon"
+
+
+def _sweep_empty_deliberate_buckets() -> None:
+    """Drop any buckets that emptied between requests. Call from request entry."""
+    empties = [key for key, bucket in _DELIBERATE_REQUESTS.items() if not bucket]
+    for key in empties:
+        _DELIBERATE_REQUESTS.pop(key, None)
+
+
 def _enforce_deliberate_rate_limit(request: Request) -> None:
+    _sweep_empty_deliberate_buckets()
     limit = _positive_int_env("AGENTIC_BOARD_DELIBERATE_RATE_LIMIT", 5)
     window = _positive_int_env("AGENTIC_BOARD_DELIBERATE_RATE_WINDOW_SECONDS", 60)
     if limit <= 0:
         return
 
-    bucket_key = request.client.host if request.client else "anon"
+    bucket_key = _deliberate_bucket_key(request)
     bucket = _DELIBERATE_REQUESTS.setdefault(bucket_key, deque())
     now = time.monotonic()
     cutoff = now - window
@@ -58,6 +78,7 @@ def _enforce_deliberate_rate_limit(request: Request) -> None:
             headers={"Retry-After": str(retry_after)},
         )
     bucket.append(now)
+    # After append, bucket is non-empty by construction; no eviction needed here.
 
 
 SESSION_ID_PATTERN = re.compile(r"^board_\d+$")
@@ -210,7 +231,7 @@ async def deliberate_stream(req: QueryRequest, request: Request):
 async def list_sessions():
     sessions = []
     for dirname in ("data/sessions", "data/conversations"):
-        path = Path(dirname)
+        path = FilePath(dirname)
         if path.exists():
             sessions.extend(f.stem for f in path.glob("*.json"))
     return sorted(set(sessions), reverse=True)
@@ -222,24 +243,28 @@ async def list_sessions():
 # traversal validator still fires, but the real sub-handlers are never reached.
 # Do NOT reorder these routes alphabetically or for any other cosmetic reason.
 @router.get("/sessions/{session_id:path}/adapter")
-async def get_session_adapter(session_id: str):
+async def get_session_adapter(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+):
     _validate_session_id(session_id)
     for dirname in ("data/sessions", "data/conversations"):
-        filepath = Path(f"{dirname}/{session_id}.json")
+        filepath = FilePath(f"{dirname}/{session_id}.json")
         if filepath.exists():
             return adapt_session_record(json.loads(filepath.read_text()))
     raise HTTPException(404, "Session not found")
 
 
 @router.get("/sessions/{session_id:path}/delegation-plan")
-async def get_session_delegation_plan(session_id: str):
+async def get_session_delegation_plan(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+):
     _validate_session_id(session_id)
     persisted = get_delegation_plan(session_id)
     if persisted.get("tasks"):
         return persisted
 
     for dirname in ("data/sessions", "data/conversations"):
-        filepath = Path(f"{dirname}/{session_id}.json")
+        filepath = FilePath(f"{dirname}/{session_id}.json")
         if filepath.exists():
             data = json.loads(filepath.read_text())
             plan = data.get("delegation_plan") or {
@@ -254,7 +279,10 @@ async def get_session_delegation_plan(session_id: str):
 
 
 @router.post("/sessions/{session_id:path}/feedback")
-async def feedback(session_id: str, req: FeedbackRequest):
+async def feedback(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+    req: FeedbackRequest = ...,  # type: ignore[assignment]
+):
     _validate_session_id(session_id)
     if req.rating not in ("positive", "negative"):
         raise HTTPException(422, detail="rating must be 'positive' or 'negative'")
@@ -270,10 +298,12 @@ async def feedback(session_id: str, req: FeedbackRequest):
 
 
 @router.get("/sessions/{session_id:path}")
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+):
     _validate_session_id(session_id)
     for dirname in ("data/sessions", "data/conversations"):
-        filepath = Path(f"{dirname}/{session_id}.json")
+        filepath = FilePath(f"{dirname}/{session_id}.json")
         if filepath.exists():
             return json.loads(filepath.read_text())
     raise HTTPException(404, "Session not found")

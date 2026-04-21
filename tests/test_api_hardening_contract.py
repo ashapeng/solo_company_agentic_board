@@ -22,6 +22,17 @@ from fastapi.testclient import TestClient
 from server.api.app import app
 
 
+def _make_fake_request(client_host: str = "1.2.3.4", xff: str | None = None):
+    from starlette.datastructures import Headers
+    class _Client:
+        def __init__(self, h): self.host = h
+    class _Request:
+        def __init__(self, h, xff):
+            self.client = _Client(h) if h else None
+            self.headers = Headers({"x-forwarded-for": xff} if xff else {})
+    return _Request(client_host, xff)
+
+
 _TEST_TOKEN = "test-token-phase-0"
 
 
@@ -182,3 +193,55 @@ class CorsTighteningTest(unittest.TestCase):
         )
         self.assertNotIn("x-evil", allow_headers)
         self.assertNotEqual(allow_headers.strip(), "*")
+
+
+class DeliberateBucketKeyTest(unittest.TestCase):
+    def test_default_uses_client_host(self):
+        from server.api.routes.board import _deliberate_bucket_key
+        request = _make_fake_request(client_host="1.2.3.4", xff=None)
+        self.assertEqual(_deliberate_bucket_key(request), "1.2.3.4")
+
+    def test_flag_off_ignores_forwarded_for(self):
+        from server.api.routes.board import _deliberate_bucket_key
+        request = _make_fake_request(client_host="10.0.0.1", xff="9.9.9.9")
+        self.assertEqual(_deliberate_bucket_key(request), "10.0.0.1")
+
+    def test_flag_on_prefers_forwarded_for(self):
+        from server.api.routes.board import _deliberate_bucket_key
+        os.environ["AGENTIC_BOARD_TRUST_FORWARDED_FOR"] = "1"
+        try:
+            request = _make_fake_request(client_host="10.0.0.1", xff="5.6.7.8")
+            self.assertEqual(_deliberate_bucket_key(request), "5.6.7.8")
+        finally:
+            os.environ.pop("AGENTIC_BOARD_TRUST_FORWARDED_FOR", None)
+
+    def test_flag_on_falls_back_when_xff_absent(self):
+        from server.api.routes.board import _deliberate_bucket_key
+        os.environ["AGENTIC_BOARD_TRUST_FORWARDED_FOR"] = "1"
+        try:
+            request = _make_fake_request(client_host="10.0.0.1", xff=None)
+            self.assertEqual(_deliberate_bucket_key(request), "10.0.0.1")
+        finally:
+            os.environ.pop("AGENTIC_BOARD_TRUST_FORWARDED_FOR", None)
+
+    def test_flag_on_uses_first_of_multiple_xff_hops(self):
+        from server.api.routes.board import _deliberate_bucket_key
+        os.environ["AGENTIC_BOARD_TRUST_FORWARDED_FOR"] = "1"
+        try:
+            request = _make_fake_request(client_host="10.0.0.1", xff="5.6.7.8, 9.9.9.9")
+            self.assertEqual(_deliberate_bucket_key(request), "5.6.7.8")
+        finally:
+            os.environ.pop("AGENTIC_BOARD_TRUST_FORWARDED_FOR", None)
+
+
+class DeliberateBucketEvictionTest(unittest.TestCase):
+    def test_empty_buckets_are_swept(self):
+        from server.api.routes import board as board_routes
+        from collections import deque
+        board_routes._DELIBERATE_REQUESTS.clear()
+        board_routes._DELIBERATE_REQUESTS["stale_ip"] = deque()
+        request = _make_fake_request(client_host="1.2.3.4")
+        board_routes._enforce_deliberate_rate_limit(request)
+        self.assertNotIn("stale_ip", board_routes._DELIBERATE_REQUESTS)
+        self.assertIn("1.2.3.4", board_routes._DELIBERATE_REQUESTS)
+        board_routes._DELIBERATE_REQUESTS.clear()
