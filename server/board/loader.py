@@ -61,6 +61,31 @@ def _extract_stage2_behavior(body: str) -> str:
     return "\n".join(captured).strip()
 
 
+def _parse_member_intake(raw):
+    """Parse a member's `intake:` frontmatter block into MemberIntake or None."""
+    from .config import MemberIntake
+
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"member intake must be a mapping, got {type(raw).__name__}")
+    required = (
+        "clarifying_question",
+        "immediate_concern",
+        "proposed_path",
+        "required_execution_unit",
+    )
+    missing = [k for k in required if not str(raw.get(k, "")).strip()]
+    if missing:
+        raise ValueError(f"intake missing fields: {missing}")
+    return MemberIntake(
+        clarifying_question=str(raw["clarifying_question"]).strip(),
+        immediate_concern=str(raw["immediate_concern"]).strip(),
+        proposed_path=str(raw["proposed_path"]).strip(),
+        required_execution_unit=str(raw["required_execution_unit"]).strip(),
+    )
+
+
 _DEFAULT_MEMBERS_DIR = Path(__file__).resolve().parent.parent / "members"
 
 
@@ -144,7 +169,12 @@ def load_members(
             model_override=model_override,
             priority=int(frontmatter.get("priority", 0)),
             tags=tags,
+            intake=_parse_member_intake(frontmatter.get("intake")),
         )
+        if member.id != "chairperson" and member.intake is None:
+            raise ValueError(
+                f"Council member '{member.id}' is missing required 'intake:' frontmatter block."
+            )
         members.append(member)
         logger.info("Loaded member: %s (%s)", member.id, member.title)
 
