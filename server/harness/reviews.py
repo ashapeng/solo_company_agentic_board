@@ -117,6 +117,13 @@ def approve_harness_review(review_id: str, *, approve: bool = True) -> dict[str,
     if review["status"] not in {"proposed", "approved", "rejected"}:
         raise HarnessReviewError(f"Review cannot be changed from status: {review['status']}")
     review["status"] = "approved" if approve else "rejected"
+    if approve and "snapshot" not in review:
+        review["snapshot"] = {
+            "token_budgets": tune_token_budgets(dry_run=True).to_dict(),
+            "verification_thresholds": tune_verification_thresholds(dry_run=True).to_dict(),
+            "routing_compaction": tune_routing_and_compaction(dry_run=True).to_dict(),
+            "model_assignments": tune_model_assignments(dry_run=True).to_dict(),
+        }
     _save_review(review)
     return review
 
@@ -126,20 +133,27 @@ def apply_harness_review(review_id: str) -> dict[str, Any]:
     if review["status"] != "approved":
         raise HarnessReviewError("Harness review must be approved before apply.")
 
-    applied: dict[str, Any] = {}
-    for name, fn in (
-        ("token_budgets", tune_token_budgets),
-        ("verification_thresholds", tune_verification_thresholds),
-        ("routing_compaction", tune_routing_and_compaction),
-        ("model_assignments", tune_model_assignments),
-    ):
-        try:
-            applied[name] = fn(dry_run=False).to_dict()
-        except Exception as exc:
-            applied[name] = {"error": str(exc)}
+    snapshot = review.get("snapshot")
+    if not snapshot:
+        raise HarnessReviewError("Approved review has no snapshot to apply.")
+
+    from .config import load_config, save_config
+    from .ledger import snapshot_activation
+
+    previous = load_config()
+    previous_snapshot = _config_to_snapshot(previous)
+    updated = _apply_snapshot_to_config(previous, snapshot)
+    save_config(updated)
+
+    snapshot_activation(
+        review_id=review_id,
+        snapshot=snapshot,
+        previous_snapshot=previous_snapshot,
+    )
 
     review["status"] = "applied"
-    review["applied_reports"] = applied
+    review["applied_reports"] = snapshot
+    review["applied_at"] = datetime.now(timezone.utc).isoformat()
     _save_review(review)
     return review
 
@@ -165,6 +179,64 @@ def _change_count(report: dict[str, Any]) -> int:
         len(report.get(key) or [])
         for key in ("changes", "routing_changes", "compaction_changes")
     )
+
+
+def _config_to_snapshot(config) -> dict:
+    """Serialize a HarnessConfig to a plain dict for activation auditing."""
+    from dataclasses import asdict
+    try:
+        return asdict(config)
+    except TypeError:
+        # Fallback if HarnessConfig is not a plain dataclass.
+        return {
+            k: getattr(config, k)
+            for k in dir(config)
+            if not k.startswith("_") and not callable(getattr(config, k))
+        }
+
+
+def _apply_snapshot_to_config(config, snapshot):
+    """Merge snapshot-reported preferences into the live config.
+
+    V1 only implements model_assignments; the other tuner categories report
+    empty `changes` lists from their dry-run invocations, so the per-change
+    loop is a no-op for them. Follow-up tasks should extend _apply_change
+    for those categories.
+    """
+    from copy import deepcopy
+    updated = deepcopy(config)
+    for category_key in (
+        "token_budgets",
+        "verification_thresholds",
+        "routing_compaction",
+        "model_assignments",
+    ):
+        report = snapshot.get(category_key) or {}
+        for change in report.get("changes", []):
+            _apply_change(updated, category_key, change)
+    return updated
+
+
+def _apply_change(config, category: str, change: dict) -> None:
+    """Translate a tuner change dict into a config mutation (V1: model_assignments only)."""
+    import dataclasses
+
+    if category == "model_assignments":
+        qt = change.get("query_type")
+        member = change.get("member_id")
+        model = change.get("new_model")
+        if not (qt and member and model):
+            return
+        per_qt = dict(getattr(config, "per_query_type", {}) or {})
+        entry = dict(per_qt.get(qt, {}))
+        prefs = dict(entry.get("model_preferences", {}))
+        prefs[member] = model
+        entry["model_preferences"] = prefs
+        per_qt[qt] = entry
+        try:
+            config.per_query_type = per_qt
+        except dataclasses.FrozenInstanceError:
+            setattr(config, "per_query_type", per_qt)
 
 
 def _reliability_recommendation() -> HarnessRecommendation | None:
