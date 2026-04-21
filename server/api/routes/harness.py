@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from server.harness.reviews import (
@@ -11,6 +13,7 @@ from server.harness.reviews import (
     latest_harness_review,
     run_harness_review,
 )
+from server.harness.shadow import watch_after_apply
 
 from ..schemas import HarnessReviewApprovalRequest, HarnessReviewRunRequest
 
@@ -42,6 +45,12 @@ async def approve_harness_review_endpoint(review_id: str, req: HarnessReviewAppr
 @router.post("/harness/review/{review_id}/apply")
 async def apply_harness_review_endpoint(review_id: str):
     try:
-        return apply_harness_review(review_id)
+        result = apply_harness_review(review_id)
     except HarnessReviewError as e:
         raise HTTPException(422, detail=str(e))
+    try:
+        asyncio.create_task(asyncio.to_thread(watch_after_apply, review_id))
+    except Exception:
+        # Shadow watcher must not surface errors through the apply response.
+        pass
+    return result
