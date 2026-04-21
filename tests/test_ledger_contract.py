@@ -245,5 +245,17 @@ class LedgerExtensionsTest(unittest.TestCase):
         self.assertIn("harness_config_activations", tables)
 
 
+class RollingStatsTest(unittest.TestCase):
+    def test_rolling_stats_helper_exists(self):
+        from server.harness.ledger import rolling_stats
+
+        self.assertTrue(callable(rolling_stats))
+
+    def test_distribution_shift_helper_exists(self):
+        from server.harness.ledger import distribution_shift
+
+        self.assertTrue(callable(distribution_shift))
+
+
 if __name__ == "__main__":
     unittest.main()
