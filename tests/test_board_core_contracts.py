@@ -45,5 +45,54 @@ class Stage1JsonPreferredTest(unittest.TestCase):
         self.assertIn("beta", out)
 
 
+class StructuredParseTest(unittest.TestCase):
+    def test_parse_stage1_from_fenced_json(self):
+        from server.board.deliberation.structured import parse_stage1
+
+        payload = (
+            '```json\n'
+            '{"confidence":"High","tldr":"t","analysis":"a","recommendation":"r",'
+            '"risks":[],"open_questions":[]}\n'
+            '```'
+        )
+        out = parse_stage1(payload)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.confidence, "High")
+        self.assertEqual(out.tldr, "t")
+
+    def test_parse_stage1_returns_none_on_non_json(self):
+        from server.board.deliberation.structured import parse_stage1
+
+        self.assertIsNone(parse_stage1("no json here, only prose"))
+
+    def test_parse_stage1_bare_json_without_fence(self):
+        from server.board.deliberation.structured import parse_stage1
+
+        payload = (
+            'Preamble text.\n'
+            '{"confidence":"Medium","tldr":"x","analysis":"y","recommendation":"z",'
+            '"risks":[{"severity":"High","description":"r"}],"open_questions":["q1"]}\n'
+            'Trailing text.'
+        )
+        out = parse_stage1(payload)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.confidence, "Medium")
+        self.assertEqual(out.risks[0].severity, "High")
+
+    def test_parse_stage2_from_fenced_json(self):
+        from server.board.deliberation.structured import parse_stage2
+
+        payload = (
+            '```json\n'
+            '{"confidence":"Low","updated_position":"p",'
+            '"peer_challenges":["c1"],"ranking":["r1","r2"]}\n'
+            '```'
+        )
+        out = parse_stage2(payload)
+        self.assertIsNotNone(out)
+        self.assertEqual(out.peer_challenges, ["c1"])
+        self.assertEqual(out.ranking, ["r1", "r2"])
+
+
 if __name__ == "__main__":
     unittest.main()
