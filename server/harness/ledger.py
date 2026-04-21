@@ -163,8 +163,9 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 truncation_detected, blank_member_responses,
                 clarification_questions_count, clarification_answers_count,
                 delegation_task_count,
-                harness_config_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                harness_config_version,
+                verifier_model, verifier_provider, chairman_provider, applied_review_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -196,6 +197,10 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 answers_count,
                 len(delegation_tasks) if isinstance(delegation_tasks, list) else 0,
                 config_version,
+                verification.get("verifier_model"),
+                verification.get("verifier_provider"),
+                verification.get("chairman_provider"),
+                _active_review_id(conn),
             ),
         )
         conn.commit()
@@ -235,10 +240,27 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "clarification_questions_count": "INTEGER",
         "clarification_answers_count": "INTEGER",
         "delegation_task_count": "INTEGER",
+        "verifier_model": "TEXT",
+        "verifier_provider": "TEXT",
+        "chairman_provider": "TEXT",
+        "applied_review_id": "TEXT",
     }
     for column, column_type in additions.items():
         if column not in existing:
-            conn.execute(f"ALTER TABLE session_outcomes ADD COLUMN {column} {column_type}")
+            conn.execute(
+                f"ALTER TABLE session_outcomes ADD COLUMN {column} {column_type}"
+            )
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS harness_config_activations (
+            review_id         TEXT PRIMARY KEY,
+            activated_at      TEXT NOT NULL,
+            reverted_at       TEXT,
+            snapshot          TEXT NOT NULL,
+            previous_snapshot TEXT,
+            reason            TEXT
+        )"""
+    )
 
 
 def query_outcomes(
@@ -317,5 +339,79 @@ def aggregate(
 
         cursor = conn.execute(sql, params)
         return {row[0]: row[1] for row in cursor.fetchall() if row[0] is not None}
+    finally:
+        conn.close()
+
+
+def _active_review_id(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute(
+        "SELECT review_id FROM harness_config_activations "
+        "WHERE reverted_at IS NULL ORDER BY activated_at DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def snapshot_activation(
+    review_id: str,
+    snapshot: dict,
+    previous_snapshot: dict | None,
+    db_path: Path | None = None,
+) -> None:
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO harness_config_activations
+               (review_id, activated_at, snapshot, previous_snapshot)
+               VALUES (?, ?, ?, ?)""",
+            (
+                review_id,
+                datetime.now(timezone.utc).isoformat(),
+                json.dumps(snapshot),
+                json.dumps(previous_snapshot or {}),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def revert_activation(
+    review_id: str, reason: str, db_path: Path | None = None,
+) -> dict | None:
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT previous_snapshot FROM harness_config_activations WHERE review_id = ?",
+            (review_id,),
+        ).fetchone()
+        if not row:
+            return None
+        previous_snapshot = json.loads(row[0] or "null")
+        conn.execute(
+            "UPDATE harness_config_activations SET reverted_at = ?, reason = ? WHERE review_id = ?",
+            (datetime.now(timezone.utc).isoformat(), reason, review_id),
+        )
+        conn.commit()
+        return previous_snapshot
+    finally:
+        conn.close()
+
+
+def rolling_mean(
+    field: str, *, limit: int, db_path: Path | None = None,
+) -> tuple[float | None, int]:
+    if field not in _NUMERIC_COLUMNS:
+        raise LedgerError(f"Cannot roll non-numeric field: {field}")
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT {field} FROM session_outcomes "  # nosec B608
+            f"WHERE {field} IS NOT NULL ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        values = [row[0] for row in rows if row[0] is not None]
+        if not values:
+            return None, 0
+        return sum(values) / len(values), len(values)
     finally:
         conn.close()

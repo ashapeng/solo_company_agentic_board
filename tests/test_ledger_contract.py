@@ -197,5 +197,53 @@ class LedgerContractTest(unittest.TestCase):
         self.assertIsNone(rows[0]["verification_passed"])
 
 
+class LedgerExtensionsTest(unittest.TestCase):
+    def test_new_columns_present(self):
+        from pathlib import Path
+        import tempfile
+        from server.harness.ledger import init_db, _connect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "l.db"
+            init_db(path)
+            conn = _connect(path)
+            try:
+                cols = {
+                    r[1]
+                    for r in conn.execute(
+                        "PRAGMA table_info(session_outcomes)"
+                    ).fetchall()
+                }
+            finally:
+                conn.close()
+        for c in (
+            "verifier_model",
+            "verifier_provider",
+            "chairman_provider",
+            "applied_review_id",
+        ):
+            self.assertIn(c, cols)
+
+    def test_activation_table_exists(self):
+        from pathlib import Path
+        import tempfile
+        from server.harness.ledger import init_db, _connect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "l.db"
+            init_db(path)
+            conn = _connect(path)
+            try:
+                tables = {
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+            finally:
+                conn.close()
+        self.assertIn("harness_config_activations", tables)
+
+
 if __name__ == "__main__":
     unittest.main()
