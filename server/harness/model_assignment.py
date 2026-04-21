@@ -16,7 +16,61 @@ from .ledger import query_outcomes
 
 MIN_MODEL_SAMPLES = 3
 MIN_MODEL_SCORE_DELTA = 0.5
-FEEDBACK_BONUS = 1.5
+
+
+@dataclass(frozen=True)
+class QualityObservation:
+    verification: float | None
+    feedback: str | None  # "positive" | "negative" | None
+
+
+def _quality_observation(row: dict) -> QualityObservation | None:
+    verification_score = row.get("verification_score")
+    feedback_rating = row.get("feedback_rating")
+    v: float | None = None
+    if verification_score is not None:
+        try:
+            v = float(verification_score)
+        except (TypeError, ValueError):
+            v = None
+    fb = feedback_rating if feedback_rating in ("positive", "negative") else None
+    if v is None and fb is None:
+        return None
+    return QualityObservation(verification=v, feedback=fb)
+
+
+def _group_observations_by_assignment(
+    outcomes: list[dict],
+) -> dict[tuple[str, str], dict[str, list[QualityObservation]]]:
+    grouped: dict[tuple[str, str], dict[str, list[QualityObservation]]] = defaultdict(
+        lambda: defaultdict(list),
+    )
+    for row in outcomes:
+        query_type = row.get("query_type")
+        if not query_type:
+            continue
+        obs = _quality_observation(row)
+        if obs is None:
+            continue
+        for member_id, model in _models_used(row.get("models_used")).items():
+            grouped[(str(query_type), member_id)][model].append(obs)
+    return grouped
+
+
+def _model_score(obs_list: list[QualityObservation]) -> tuple[float, int]:
+    """Mean verification score (None-filtered). Returns (mean, sample_count)."""
+    values = [o.verification for o in obs_list if o.verification is not None]
+    if not values:
+        return 0.0, 0
+    return mean(values), len(values)
+
+
+def _has_negative_feedback(obs_list: list[QualityObservation]) -> bool:
+    return any(o.feedback == "negative" for o in obs_list)
+
+
+def _has_positive_feedback(obs_list: list[QualityObservation]) -> bool:
+    return any(o.feedback == "positive" for o in obs_list)
 
 
 @dataclass(frozen=True)
@@ -94,20 +148,20 @@ def _apply_model_assignment_tuning(
     min_samples: int,
     min_score_delta: float,
 ) -> tuple[list[ModelPreferenceChange], int, int]:
-    grouped = _group_scores_by_assignment(outcomes)
+    grouped = _group_observations_by_assignment(outcomes)
     changes: list[ModelPreferenceChange] = []
     examined_assignments = 0
     eligible_assignments = 0
 
-    for (query_type, member_id), model_scores in sorted(grouped.items()):
-        if len(model_scores) < 2:
+    for (query_type, member_id), model_obs in sorted(grouped.items()):
+        if len(model_obs) < 2:
             continue
         examined_assignments += 1
 
         candidates = {
-            model: scores
-            for model, scores in model_scores.items()
-            if len(scores) >= min_samples
+            model: obs_list
+            for model, obs_list in model_obs.items()
+            if sum(1 for o in obs_list if o.verification is not None) >= min_samples
         }
         if len(candidates) < 2:
             continue
@@ -115,15 +169,28 @@ def _apply_model_assignment_tuning(
 
         ranked = sorted(
             (
-                (model, mean(scores), len(scores))
-                for model, scores in candidates.items()
+                (model, *_model_score(obs))
+                for model, obs in candidates.items()
             ),
             key=lambda item: (item[1], item[2], item[0]),
             reverse=True,
         )
         best_model, best_score, best_count = ranked[0]
-        runner_up_model, runner_up_score, _runner_up_count = ranked[1]
+        runner_up_model, runner_up_score, _ = ranked[1]
+
+        # Gate 1 — verification-score delta.
         if best_score - runner_up_score < min_score_delta:
+            continue
+
+        best_obs = candidates[best_model]
+        runner_obs = candidates[runner_up_model]
+
+        # Gate 2 — feedback veto: only-negative signal blocks promotion.
+        if _has_negative_feedback(best_obs) and not _has_positive_feedback(best_obs):
+            continue
+        # Gate 3 — feedback comparison: best cannot have negative feedback
+        # when the runner-up has none.
+        if _has_negative_feedback(best_obs) and not _has_negative_feedback(runner_obs):
             continue
 
         preferences = resolve_model_preferences(query_type=query_type, config=config)
@@ -132,64 +199,31 @@ def _apply_model_assignment_tuning(
             continue
 
         previous_score = None
-        if previous_model and previous_model in model_scores:
-            previous_score = round(mean(model_scores[previous_model]), 4)
+        if previous_model and previous_model in model_obs:
+            previous_verif_values = [
+                o.verification
+                for o in model_obs[previous_model]
+                if o.verification is not None
+            ]
+            if previous_verif_values:
+                previous_score = round(mean(previous_verif_values), 4)
 
         _set_model_preference(config, query_type, member_id, best_model)
-        changes.append(ModelPreferenceChange(
-            query_type=query_type,
-            member_id=member_id,
-            previous_model=previous_model,
-            new_model=best_model,
-            previous_score=previous_score,
-            new_score=round(best_score, 4),
-            sample_count=best_count,
-            runner_up_model=runner_up_model,
-            runner_up_score=round(runner_up_score, 4),
-        ))
+        changes.append(
+            ModelPreferenceChange(
+                query_type=query_type,
+                member_id=member_id,
+                previous_model=previous_model,
+                new_model=best_model,
+                previous_score=previous_score,
+                new_score=round(best_score, 4),
+                sample_count=best_count,
+                runner_up_model=runner_up_model,
+                runner_up_score=round(runner_up_score, 4),
+            )
+        )
 
     return changes, examined_assignments, eligible_assignments
-
-
-def _group_scores_by_assignment(
-    outcomes: list[dict[str, Any]],
-) -> dict[tuple[str, str], dict[str, list[float]]]:
-    grouped: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    for row in outcomes:
-        query_type = row.get("query_type")
-        if not query_type:
-            continue
-
-        score = _quality_score(row)
-        if score is None:
-            continue
-
-        models_used = _models_used(row.get("models_used"))
-        for member_id, model in models_used.items():
-            grouped[(str(query_type), member_id)][model].append(score)
-    return grouped
-
-
-def _quality_score(row: dict[str, Any]) -> float | None:
-    verification_score = row.get("verification_score")
-    feedback_rating = row.get("feedback_rating")
-    if verification_score is None and feedback_rating not in {"positive", "negative"}:
-        return None
-
-    if verification_score is None:
-        score = 7.0 if feedback_rating == "positive" else 3.0
-    else:
-        try:
-            score = float(verification_score)
-        except (TypeError, ValueError):
-            return None
-
-    if feedback_rating == "positive":
-        score += FEEDBACK_BONUS
-    elif feedback_rating == "negative":
-        score -= FEEDBACK_BONUS
-
-    return max(0.0, min(10.0, score))
 
 
 def _models_used(value: Any) -> dict[str, str]:
