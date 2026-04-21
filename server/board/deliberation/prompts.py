@@ -37,6 +37,45 @@ def _load_or_fallback(name: str, fallback: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# JSON response suffix constants
+# ---------------------------------------------------------------------------
+
+_BACKTICK = "```"  # three backticks
+
+STAGE1_JSON_SUFFIX = (
+    "\n\n---\n"
+    "Return your response as a single fenced JSON object matching this schema,\n"
+    "followed by any prose you want to include:\n\n"
+    f"{_BACKTICK}json\n"
+    "{\n"
+    '  "confidence": "High | Medium | Low",\n'
+    '  "tldr": "...",\n'
+    '  "analysis": "...",\n'
+    '  "recommendation": "...",\n'
+    '  "risks": [{"severity": "Critical|High|Medium|Low", "description": "..."}],\n'
+    '  "open_questions": ["..."]\n'
+    "}\n"
+    f"{_BACKTICK}\n\n"
+    "If you cannot produce JSON, respond in the previous markdown format and keep\n"
+    "`##` section headers exactly as before.\n"
+)
+
+STAGE2_JSON_SUFFIX = (
+    "\n\n---\n"
+    "Return a single fenced JSON object:\n\n"
+    f"{_BACKTICK}json\n"
+    "{\n"
+    '  "confidence": "High | Medium | Low",\n'
+    '  "updated_position": "...",\n'
+    '  "peer_challenges": ["..."],\n'
+    '  "ranking": ["..."]\n'
+    "}\n"
+    f"{_BACKTICK}\n\n"
+    "Markdown fallback uses the same `###` section names as before.\n"
+)
+
+
+# ---------------------------------------------------------------------------
 # Output formats
 # ---------------------------------------------------------------------------
 
@@ -72,6 +111,7 @@ def format_stage1(*, role: str, user_query: str) -> str:
         .replace("{{system_prompt}}", "")
         .replace("{{output_format}}", output_format)
         .replace("{{user_query}}", user_query)
+        + STAGE1_JSON_SUFFIX
     )
 
 
@@ -92,6 +132,7 @@ def format_stage2(
         .replace("{{stage2_behavior}}", stage2_behavior)
         .replace("{{user_query}}", user_query)
         .replace("{{anonymized_responses}}", anonymized_responses)
+        + STAGE2_JSON_SUFFIX
     )
 
 
