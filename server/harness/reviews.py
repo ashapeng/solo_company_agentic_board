@@ -91,6 +91,26 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
     if reliability:
         recommendations.append(reliability)
 
+    try:
+        from .meta import tuner_accuracy
+        accuracy = tuner_accuracy()
+        if accuracy:
+            recommendations.append(
+                HarnessRecommendation(
+                    category="meta",
+                    summary="Historical tuner accuracy",
+                    details=accuracy,
+                )
+            )
+    except Exception as exc:  # defensive: never break a review because of meta
+        recommendations.append(
+            HarnessRecommendation(
+                category="meta",
+                summary="Tuner accuracy check failed.",
+                details={"error": str(exc)},
+            )
+        )
+
     review = HarnessReview(
         id=f"harness_review_{time.time_ns()}",
         created_at=datetime.now(timezone.utc).isoformat(),

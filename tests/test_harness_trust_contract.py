@@ -173,5 +173,50 @@ class SplitQualitySignalTest(unittest.TestCase):
         )
 
 
+class MetaAccuracyTest(unittest.TestCase):
+    def test_meta_reports_accuracy_per_tuner(self):
+        import json as _json
+
+        from server.harness.ledger import init_db, _connect
+        from server.harness.meta import tuner_accuracy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "l.db"
+            init_db(path)
+            conn = _connect(path)
+            try:
+                conn.execute(
+                    "INSERT INTO harness_config_activations "
+                    "(review_id, activated_at, snapshot) VALUES (?, ?, ?)",
+                    (
+                        "r1",
+                        "2026-04-20T00:00:00Z",
+                        _json.dumps({
+                            "model_assignments": {"changes": [{"member_id": "x"}]},
+                        }),
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO harness_config_activations "
+                    "(review_id, activated_at, snapshot, reverted_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        "r2",
+                        "2026-04-21T00:00:00Z",
+                        _json.dumps({
+                            "model_assignments": {"changes": [{"member_id": "y"}]},
+                        }),
+                        "2026-04-21T01:00:00Z",
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            result = tuner_accuracy(db_path=path)
+        self.assertEqual(result["model_assignments"]["applied"], 2)
+        self.assertEqual(result["model_assignments"]["reverted"], 1)
+        self.assertAlmostEqual(result["model_assignments"]["accuracy"], 0.5, places=2)
+
+
 if __name__ == "__main__":
     unittest.main()
