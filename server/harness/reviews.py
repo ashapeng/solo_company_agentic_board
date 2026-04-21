@@ -279,16 +279,31 @@ def _drift_recommendation() -> HarnessRecommendation | None:
     if verification.get("insufficient_samples"):
         return None
 
+    import os
+
+    try:
+        score_threshold = float(
+            os.getenv("AGENTIC_BOARD_DRIFT_SCORE_DELTA", "-0.5")
+        )
+    except ValueError:
+        score_threshold = -0.5
+    try:
+        js_threshold = float(
+            os.getenv("AGENTIC_BOARD_DRIFT_JS", "0.3")
+        )
+    except ValueError:
+        js_threshold = 0.3
+
     notes: list[str] = []
     delta = verification.get("delta", 0.0)
-    if isinstance(delta, (int, float)) and delta < -0.5:
+    if isinstance(delta, (int, float)) and delta < score_threshold:
         notes.append(
             f"verification score regressed: delta={delta} "
             f"(recent={verification.get('recent_mean')}, "
             f"baseline={verification.get('baseline_mean')})"
         )
     js = distribution.get("js_distance", 0.0)
-    if isinstance(js, (int, float)) and js > 0.3:
+    if isinstance(js, (int, float)) and js > js_threshold:
         notes.append(
             f"classifier label distribution shifted: js={js}"
         )

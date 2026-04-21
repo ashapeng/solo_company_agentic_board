@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,7 +70,7 @@ def replay_session(
             delta[key] = None
 
     report = ReplayReport(
-        replay_id=f"replay_{int(datetime.now(timezone.utc).timestamp())}",
+        replay_id=f"replay_{time.time_ns()}",
         source_session_id=str(data.get("session_id")),
         candidate_config_path=str(candidate_config_path) if candidate_config_path else None,
         baseline=baseline,
@@ -121,13 +122,17 @@ async def _rerun_stage3_and_verify(
     query_type = classification.get("query_type")
     complexity = classification.get("complexity")
 
-    original_query_llm = orch_module.query_llm
+    import server.board.deliberation.verification as verif_module
+
+    original_orch_query_llm = orch_module.query_llm
+    original_verif_query_llm = verif_module.query_llm
 
     async def _deterministic_query_llm(*args, **kwargs):
         kwargs["temperature"] = 0.0
-        return await original_query_llm(*args, **kwargs)
+        return await original_orch_query_llm(*args, **kwargs)
 
     orch_module.query_llm = _deterministic_query_llm
+    verif_module.query_llm = _deterministic_query_llm
     try:
         stage3_resp = await orch.stage3(
             query, stage1, stage2,
@@ -154,4 +159,5 @@ async def _rerun_stage3_and_verify(
             result["verification_passed"] = v.passed
         return result
     finally:
-        orch_module.query_llm = original_query_llm
+        orch_module.query_llm = original_orch_query_llm
+        verif_module.query_llm = original_verif_query_llm

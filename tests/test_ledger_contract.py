@@ -351,6 +351,24 @@ class RollingStatsBehaviorTest(unittest.TestCase):
             )
         self.assertGreater(result["js_distance"], 0.5)
 
+    def test_rolling_stats_flags_underpowered_baseline(self):
+        import tempfile
+        from pathlib import Path
+        from server.harness.ledger import init_db, rolling_stats
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "l.db"
+            init_db(db_path)
+            # 10 recent rows + only 2 baseline rows (below min_baseline=5 default).
+            self._seed(db_path, scores=[8] * 2)
+            self._seed(db_path, scores=[4] * 10)
+            result = rolling_stats(
+                "verification_score", db_path=db_path,
+                recent_n=10, baseline_n=100,
+            )
+        self.assertTrue(result.get("insufficient_samples"))
+        self.assertTrue(result.get("baseline_underpowered"))
+
 
 if __name__ == "__main__":
     unittest.main()

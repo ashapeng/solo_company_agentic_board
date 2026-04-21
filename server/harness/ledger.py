@@ -424,6 +424,7 @@ def rolling_stats(
     *,
     recent_n: int = 10,
     baseline_n: int = 100,
+    min_baseline: int = 5,
     query_type: str | None = None,
     db_path: Path | None = None,
 ) -> dict:
@@ -460,8 +461,13 @@ def rolling_stats(
         return {"insufficient_samples": True, "sample_count": len(rows)}
     recent = rows[:recent_n]
     baseline = rows[recent_n : recent_n + baseline_n]
-    if not baseline:
-        return {"insufficient_samples": True, "sample_count": len(rows)}
+    if not baseline or len(baseline) < min_baseline:
+        return {
+            "insufficient_samples": True,
+            "sample_count": len(rows),
+            "baseline_underpowered": True,
+            "baseline_count": len(baseline),
+        }
     recent_mean = sum(recent) / len(recent)
     baseline_mean = sum(baseline) / len(baseline)
     return {
