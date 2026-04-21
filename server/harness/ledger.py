@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -415,3 +417,115 @@ def rolling_mean(
         return sum(values) / len(values), len(values)
     finally:
         conn.close()
+
+
+def rolling_stats(
+    field: str,
+    *,
+    recent_n: int = 10,
+    baseline_n: int = 100,
+    query_type: str | None = None,
+    db_path: Path | None = None,
+) -> dict:
+    """Compare recent_n-most-recent rows against baseline_n before them.
+
+    Returns a dict with `recent_mean`, `baseline_mean`, `delta`, `recent_n`,
+    `baseline_n` — or {'insufficient_samples': True, 'sample_count': N}
+    when there aren't enough rows.
+    """
+    if field not in _NUMERIC_COLUMNS:
+        raise LedgerError(f"Cannot roll non-numeric field: {field}")
+    conn = _connect(db_path)
+    try:
+        sql_parts = [
+            f"SELECT {field} FROM session_outcomes",  # nosec B608
+            f"WHERE {field} IS NOT NULL",
+        ]
+        params: list = []
+        if query_type:
+            sql_parts.append("AND query_type = ?")
+            params.append(query_type)
+        sql_parts.append("ORDER BY timestamp DESC LIMIT ?")
+        params.append(recent_n + baseline_n)
+        sql = " ".join(sql_parts)
+        rows = [
+            row[0]
+            for row in conn.execute(sql, params).fetchall()
+            if row[0] is not None
+        ]
+    finally:
+        conn.close()
+
+    if len(rows) < recent_n + 1:
+        return {"insufficient_samples": True, "sample_count": len(rows)}
+    recent = rows[:recent_n]
+    baseline = rows[recent_n : recent_n + baseline_n]
+    if not baseline:
+        return {"insufficient_samples": True, "sample_count": len(rows)}
+    recent_mean = sum(recent) / len(recent)
+    baseline_mean = sum(baseline) / len(baseline)
+    return {
+        "recent_mean": round(recent_mean, 4),
+        "baseline_mean": round(baseline_mean, 4),
+        "delta": round(recent_mean - baseline_mean, 4),
+        "recent_n": len(recent),
+        "baseline_n": len(baseline),
+    }
+
+
+def distribution_shift(
+    field: str,
+    *,
+    recent_n: int = 10,
+    baseline_n: int = 100,
+    db_path: Path | None = None,
+) -> dict:
+    """Return the Jensen–Shannon distance between recent and baseline
+    label distributions for a categorical field (query_type / complexity).
+
+    Returns {js_distance: float, recent: {label: freq}, baseline: {label: freq}}
+    or {'insufficient_samples': True, 'sample_count': N}.
+    """
+    if field not in {"query_type", "complexity"}:
+        raise LedgerError(f"Cannot report distribution for field: {field}")
+    conn = _connect(db_path)
+    try:
+        sql = (
+            f"SELECT {field} FROM session_outcomes "  # nosec B608
+            f"WHERE {field} IS NOT NULL "
+            "ORDER BY timestamp DESC LIMIT ?"
+        )
+        rows = [
+            row[0]
+            for row in conn.execute(sql, (recent_n + baseline_n,)).fetchall()
+        ]
+    finally:
+        conn.close()
+    if len(rows) < recent_n + 1:
+        return {"insufficient_samples": True, "sample_count": len(rows)}
+    recent = rows[:recent_n]
+    baseline = rows[recent_n : recent_n + baseline_n]
+    if not baseline:
+        return {"insufficient_samples": True, "sample_count": len(rows)}
+    labels = set(recent) | set(baseline)
+    recent_counts = Counter(recent)
+    baseline_counts = Counter(baseline)
+    recent_dist = {lbl: recent_counts.get(lbl, 0) / len(recent) for lbl in labels}
+    baseline_dist = {lbl: baseline_counts.get(lbl, 0) / len(baseline) for lbl in labels}
+    mix = {
+        lbl: (recent_dist[lbl] + baseline_dist[lbl]) / 2 for lbl in labels
+    }
+
+    def _kl(p, q):
+        total = 0.0
+        for lbl in labels:
+            if p[lbl] > 0 and q[lbl] > 0:
+                total += p[lbl] * math.log2(p[lbl] / q[lbl])
+        return total
+
+    js = 0.5 * _kl(recent_dist, mix) + 0.5 * _kl(baseline_dist, mix)
+    return {
+        "js_distance": round(math.sqrt(max(0.0, js)), 4),
+        "recent": {lbl: round(v, 3) for lbl, v in recent_dist.items()},
+        "baseline": {lbl: round(v, 3) for lbl, v in baseline_dist.items()},
+    }

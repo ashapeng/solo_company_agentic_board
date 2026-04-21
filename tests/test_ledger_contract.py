@@ -257,5 +257,100 @@ class RollingStatsTest(unittest.TestCase):
         self.assertTrue(callable(distribution_shift))
 
 
+class RollingStatsBehaviorTest(unittest.TestCase):
+    _seed_counter = 0
+
+    def _seed(self, db_path, scores, query_type="product"):
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        try:
+            for _i, score in enumerate(scores):
+                RollingStatsBehaviorTest._seed_counter += 1
+                seq = RollingStatsBehaviorTest._seed_counter
+                # Build a strictly increasing ISO timestamp from seq so that
+                # later _seed calls always produce newer timestamps.
+                ts = f"2026-04-{10 + (seq // 2400):02d}T{(seq // 100) % 24:02d}:{seq % 60:02d}:00Z"
+                conn.execute(
+                    "INSERT INTO session_outcomes "
+                    "(session_id, timestamp, query_type, verification_score, "
+                    "harness_config_version) VALUES (?, ?, ?, ?, ?)",
+                    (f"board_{seq}", ts, query_type, score, 1),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_rolling_stats_reports_delta(self):
+        import tempfile
+        from pathlib import Path
+        from server.harness.ledger import init_db, rolling_stats
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "l.db"
+            init_db(db_path)
+            # Baseline older rows at score 8; recent rows at score 4.
+            # Timestamps: baseline_n (older) inserted first → ORDER BY DESC
+            # picks recent_n most-recent LAST-inserted.
+            self._seed(db_path, scores=[8] * 100)  # older rows
+            self._seed(db_path, scores=[4] * 10)   # more recent rows
+            result = rolling_stats(
+                "verification_score", db_path=db_path,
+                recent_n=10, baseline_n=100,
+            )
+        self.assertNotIn("insufficient_samples", result)
+        self.assertEqual(result["recent_n"], 10)
+        self.assertEqual(result["baseline_n"], 100)
+        self.assertAlmostEqual(result["recent_mean"], 4.0, places=1)
+        self.assertAlmostEqual(result["baseline_mean"], 8.0, places=1)
+        self.assertLess(result["delta"], -3.0)
+
+    def test_rolling_stats_reports_insufficient_samples(self):
+        import tempfile
+        from pathlib import Path
+        from server.harness.ledger import init_db, rolling_stats
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "l.db"
+            init_db(db_path)
+            result = rolling_stats(
+                "verification_score", db_path=db_path,
+                recent_n=10, baseline_n=100,
+            )
+        self.assertTrue(result.get("insufficient_samples"))
+
+    def test_distribution_shift_zero_for_identical(self):
+        import tempfile
+        from pathlib import Path
+        from server.harness.ledger import init_db, distribution_shift
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "l.db"
+            init_db(db_path)
+            # Insert same label pattern across both windows.
+            self._seed(db_path, scores=[8] * 110, query_type="product")
+            result = distribution_shift(
+                "query_type", db_path=db_path,
+                recent_n=10, baseline_n=100,
+            )
+        self.assertAlmostEqual(result["js_distance"], 0.0, places=3)
+
+    def test_distribution_shift_detects_label_drift(self):
+        import tempfile
+        from pathlib import Path
+        from server.harness.ledger import init_db, distribution_shift
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "l.db"
+            init_db(db_path)
+            # 100 baseline rows of type A, 10 recent rows of type B.
+            self._seed(db_path, scores=[8] * 100, query_type="product")
+            self._seed(db_path, scores=[8] * 10, query_type="strategic")
+            result = distribution_shift(
+                "query_type", db_path=db_path,
+                recent_n=10, baseline_n=100,
+            )
+        self.assertGreater(result["js_distance"], 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
