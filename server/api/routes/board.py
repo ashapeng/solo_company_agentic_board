@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -22,6 +23,20 @@ from ..schemas import FeedbackRequest, MemberInfo, QueryRequest, RoleGapReviewRe
 
 
 router = APIRouter()
+
+SESSION_ID_PATTERN = re.compile(r"^board_\d+$")
+
+
+def _validate_session_id(session_id: str) -> None:
+    """Reject any session_id that escapes the sessions directory."""
+    if not SESSION_ID_PATTERN.match(session_id):
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_session_id",
+                "message": "session_id must match ^board_\\d+$",
+            },
+        )
 
 
 @router.get("/members")
@@ -163,17 +178,14 @@ async def list_sessions():
     return sorted(set(sessions), reverse=True)
 
 
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    for dirname in ("data/sessions", "data/conversations"):
-        filepath = Path(f"{dirname}/{session_id}.json")
-        if filepath.exists():
-            return json.loads(filepath.read_text())
-    raise HTTPException(404, "Session not found")
-
-
-@router.get("/sessions/{session_id}/adapter")
+# NOTE: The sub-routes (/adapter, /delegation-plan, /feedback) MUST be declared
+# before the greedy /sessions/{session_id:path} base route. If the base route is
+# declared first, it swallows the sub-paths as part of session_id and the path-
+# traversal validator still fires, but the real sub-handlers are never reached.
+# Do NOT reorder these routes alphabetically or for any other cosmetic reason.
+@router.get("/sessions/{session_id:path}/adapter")
 async def get_session_adapter(session_id: str):
+    _validate_session_id(session_id)
     for dirname in ("data/sessions", "data/conversations"):
         filepath = Path(f"{dirname}/{session_id}.json")
         if filepath.exists():
@@ -181,8 +193,9 @@ async def get_session_adapter(session_id: str):
     raise HTTPException(404, "Session not found")
 
 
-@router.get("/sessions/{session_id}/delegation-plan")
+@router.get("/sessions/{session_id:path}/delegation-plan")
 async def get_session_delegation_plan(session_id: str):
+    _validate_session_id(session_id)
     persisted = get_delegation_plan(session_id)
     if persisted.get("tasks"):
         return persisted
@@ -202,8 +215,9 @@ async def get_session_delegation_plan(session_id: str):
     raise HTTPException(404, "Session not found")
 
 
-@router.post("/sessions/{session_id}/feedback")
+@router.post("/sessions/{session_id:path}/feedback")
 async def feedback(session_id: str, req: FeedbackRequest):
+    _validate_session_id(session_id)
     if req.rating not in ("positive", "negative"):
         raise HTTPException(422, detail="rating must be 'positive' or 'negative'")
     if req.note and len(req.note) > 500:
@@ -215,6 +229,16 @@ async def feedback(session_id: str, req: FeedbackRequest):
         raise HTTPException(404, detail=f"Session not found: {session_id}")
 
     return {"status": "recorded", "session_id": session_id}
+
+
+@router.get("/sessions/{session_id:path}")
+async def get_session(session_id: str):
+    _validate_session_id(session_id)
+    for dirname in ("data/sessions", "data/conversations"):
+        filepath = Path(f"{dirname}/{session_id}.json")
+        if filepath.exists():
+            return json.loads(filepath.read_text())
+    raise HTTPException(404, "Session not found")
 
 
 @router.post("/role-gap/review")

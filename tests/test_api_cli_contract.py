@@ -39,7 +39,7 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._old_remote = os.environ.get("AGENTIC_BOARD_ALLOW_REMOTE")
         os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = "1"
-        self.session_path = Path("data/sessions/api_contract_test.json")
+        self.session_path = Path("data/sessions/board_1700000000.json")
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -59,7 +59,7 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_session_adapter_endpoint_uses_stable_contract(self):
         self.session_path.write_text(json.dumps({
-            "session_id": "api_contract_test",
+            "session_id": "board_1700000000",
             "user_query": "What should we build?",
             "stage3": {
                 "content": "### Executive Summary\nShip a concierge MVP.\n\n### SOTB Update\n- Decision: concierge MVP."
@@ -67,12 +67,12 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
             "memory": {"requires_approval": True},
         }), encoding="utf-8")
 
-        payload = await get_session_adapter("api_contract_test")
+        payload = await get_session_adapter("board_1700000000")
 
-        self.assertEqual("api_contract_test", payload["session_id"])
+        self.assertEqual("board_1700000000", payload["session_id"])
         self.assertIn("concierge MVP", payload["decision"]["executive_summary"])
         self.assertTrue(payload["memory"]["requires_approval"])
-        self.assertEqual("data/sessions/api_contract_test.json", payload["artifacts"]["session_json_path"])
+        self.assertEqual("data/sessions/board_1700000000.json", payload["artifacts"]["session_json_path"])
 
     async def test_sotb_review_endpoint_returns_diff_without_applying(self):
         payload = await review_sotb(SotbReviewRequest(
@@ -218,7 +218,7 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
 }
 ```
 """,
-            session_id="api_execution_contract",
+            session_id="board_1700000001",
         )
         record_delegation_plan(self.plan)
         self.task_id = self.plan["tasks"][0]["id"]
@@ -258,7 +258,7 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_session_delegation_plan_route_returns_persisted_tasks(self):
-        plan = await get_session_delegation_plan("api_execution_contract")
+        plan = await get_session_delegation_plan("board_1700000001")
 
         self.assertEqual(self.task_id, plan["tasks"][0]["id"])
         self.assertTrue(plan["requires_approval"])

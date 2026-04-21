@@ -228,20 +228,20 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
         from server.board.ledger import record_session
         from tests.test_ledger_contract import _make_session
 
-        record_session(_make_session("fb_test"), config_version=1, db_path=self.db_path)
+        record_session(_make_session("board_1700000010"), config_version=1, db_path=self.db_path)
 
         with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
-            result = await feedback("fb_test", FeedbackRequest(rating="positive", note="Good"))
+            result = await feedback("board_1700000010", FeedbackRequest(rating="positive", note="Good"))
 
         self.assertEqual(result["status"], "recorded")
-        self.assertEqual(result["session_id"], "fb_test")
+        self.assertEqual(result["session_id"], "board_1700000010")
 
     async def test_invalid_rating_raises_422(self):
         from fastapi import HTTPException
 
         with self.assertRaises(HTTPException) as ctx:
             with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
-                await feedback("any_id", FeedbackRequest(rating="meh"))
+                await feedback("board_1700000011", FeedbackRequest(rating="meh"))
 
         self.assertEqual(ctx.exception.status_code, 422)
 
@@ -250,7 +250,7 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
-                await feedback("no_such", FeedbackRequest(rating="positive"))
+                await feedback("board_1700000012", FeedbackRequest(rating="positive"))
 
         self.assertEqual(ctx.exception.status_code, 404)
 
@@ -259,7 +259,7 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as ctx:
             with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
-                await feedback("any_id", FeedbackRequest(rating="positive", note="x" * 501))
+                await feedback("board_1700000011", FeedbackRequest(rating="positive", note="x" * 501))
 
         self.assertEqual(ctx.exception.status_code, 422)
 
@@ -267,14 +267,14 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
         from server.board.ledger import record_session
         from tests.test_ledger_contract import _make_session
 
-        record_session(_make_session("fb_overwrite"), config_version=1, db_path=self.db_path)
+        record_session(_make_session("board_1700000013"), config_version=1, db_path=self.db_path)
 
         with patch("server.api._FEEDBACK_DB_PATH", self.db_path):
-            await feedback("fb_overwrite", FeedbackRequest(rating="negative", note="Bad"))
-            await feedback("fb_overwrite", FeedbackRequest(rating="positive", note="Changed mind"))
+            await feedback("board_1700000013", FeedbackRequest(rating="negative", note="Bad"))
+            await feedback("board_1700000013", FeedbackRequest(rating="positive", note="Changed mind"))
 
         rows = query_outcomes(db_path=self.db_path)
-        row = next(r for r in rows if r["session_id"] == "fb_overwrite")
+        row = next(r for r in rows if r["session_id"] == "board_1700000013")
         self.assertEqual(row["feedback_rating"], "positive")
         self.assertEqual(row["feedback_note"], "Changed mind")
 
