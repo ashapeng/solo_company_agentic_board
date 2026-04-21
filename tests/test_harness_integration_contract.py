@@ -279,5 +279,52 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["feedback_note"], "Changed mind")
 
 
+class DriftRecommendationTest(unittest.TestCase):
+    def test_drift_fires_when_recent_sessions_regress(self):
+        import tempfile
+        from pathlib import Path
+
+        from server.harness import ledger as ledger_mod
+        from server.harness.reviews import run_harness_review
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            ledger_mod.init_db(db_path)
+            conn = ledger_mod._connect(db_path)
+            try:
+                # 100 baseline rows at score 8 (older timestamps).
+                for i in range(100):
+                    conn.execute(
+                        "INSERT INTO session_outcomes (session_id, timestamp, "
+                        "query_type, verification_score, harness_config_version) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (f"board_b{i}", f"2026-04-10T{i % 24:02d}:00:{i % 60:02d}Z",
+                         "product", 8, 1),
+                    )
+                # 10 recent rows at score 3 (newer timestamps).
+                for i in range(10):
+                    conn.execute(
+                        "INSERT INTO session_outcomes (session_id, timestamp, "
+                        "query_type, verification_score, harness_config_version) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (f"board_r{i}", f"2026-04-20T{i:02d}:00:00Z",
+                         "product", 3, 1),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Patch the ledger's default DB path for the duration of the call.
+            original = ledger_mod._DEFAULT_DB_PATH
+            ledger_mod._DEFAULT_DB_PATH = db_path
+            try:
+                review = run_harness_review(dry_run=True)
+            finally:
+                ledger_mod._DEFAULT_DB_PATH = original
+
+        categories = {r["category"] for r in review.get("recommendations", [])}
+        self.assertIn("drift", categories)
+
+
 if __name__ == "__main__":
     unittest.main()

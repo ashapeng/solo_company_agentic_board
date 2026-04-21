@@ -91,6 +91,10 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
     if reliability:
         recommendations.append(reliability)
 
+    drift = _drift_recommendation()
+    if drift:
+        recommendations.append(drift)
+
     try:
         from .meta import tuner_accuracy
         accuracy = tuner_accuracy()
@@ -257,6 +261,44 @@ def _apply_change(config, category: str, change: dict) -> None:
             config.per_query_type = per_qt
         except dataclasses.FrozenInstanceError:
             setattr(config, "per_query_type", per_qt)
+
+
+def _drift_recommendation() -> HarnessRecommendation | None:
+    from .ledger import rolling_stats, distribution_shift
+
+    try:
+        verification = rolling_stats("verification_score")
+        distribution = distribution_shift("query_type")
+    except Exception as exc:
+        return HarnessRecommendation(
+            category="drift",
+            summary="Drift check failed.",
+            details={"error": str(exc)},
+        )
+
+    if verification.get("insufficient_samples"):
+        return None
+
+    notes: list[str] = []
+    delta = verification.get("delta", 0.0)
+    if isinstance(delta, (int, float)) and delta < -0.5:
+        notes.append(
+            f"verification score regressed: delta={delta} "
+            f"(recent={verification.get('recent_mean')}, "
+            f"baseline={verification.get('baseline_mean')})"
+        )
+    js = distribution.get("js_distance", 0.0)
+    if isinstance(js, (int, float)) and js > 0.3:
+        notes.append(
+            f"classifier label distribution shifted: js={js}"
+        )
+    if not notes:
+        return None
+    return HarnessRecommendation(
+        category="drift",
+        summary="; ".join(notes),
+        details={"verification": verification, "distribution": distribution},
+    )
 
 
 def _reliability_recommendation() -> HarnessRecommendation | None:
