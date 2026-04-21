@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import time
+from collections import deque
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from server.board.config import BOARD_MEMBERS
@@ -23,6 +26,39 @@ from ..schemas import FeedbackRequest, MemberInfo, QueryRequest, RoleGapReviewRe
 
 
 router = APIRouter()
+
+_DELIBERATE_REQUESTS: dict[str, deque[float]] = {}
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(0, value)
+
+
+def _enforce_deliberate_rate_limit(request: Request) -> None:
+    limit = _positive_int_env("AGENTIC_BOARD_DELIBERATE_RATE_LIMIT", 5)
+    window = _positive_int_env("AGENTIC_BOARD_DELIBERATE_RATE_WINDOW_SECONDS", 60)
+    if limit <= 0:
+        return
+
+    bucket_key = request.client.host if request.client else "anon"
+    bucket = _DELIBERATE_REQUESTS.setdefault(bucket_key, deque())
+    now = time.monotonic()
+    cutoff = now - window
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        retry_after = max(1, int(bucket[0] + window - now) + 1)
+        raise HTTPException(
+            429,
+            detail={"code": "rate_limited", "retry_after": retry_after},
+            headers={"Retry-After": str(retry_after)},
+        )
+    bucket.append(now)
+
 
 SESSION_ID_PATTERN = re.compile(r"^board_\d+$")
 
@@ -58,7 +94,8 @@ async def list_members() -> list[MemberInfo]:
 
 
 @router.post("/deliberate")
-async def deliberate(req: QueryRequest):
+async def deliberate(req: QueryRequest, request: Request):
+    _enforce_deliberate_rate_limit(request)
     orchestrator = BoardOrchestrator()
     try:
         session = await orchestrator.deliberate(
@@ -81,7 +118,8 @@ async def deliberate(req: QueryRequest):
 
 
 @router.post("/deliberate/stream")
-async def deliberate_stream(req: QueryRequest):
+async def deliberate_stream(req: QueryRequest, request: Request):
+    _enforce_deliberate_rate_limit(request)
     queue: asyncio.Queue[dict] = asyncio.Queue()
 
     def on_stage_start(stage, name):

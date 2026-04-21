@@ -49,6 +49,10 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
             os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = self._old_remote
         if self.session_path.exists():
             self.session_path.unlink()
+        from server.api.routes import board as board_routes
+        bucket = getattr(board_routes, "_DELIBERATE_REQUESTS", None)
+        if bucket is not None and hasattr(bucket, "clear"):
+            bucket.clear()
 
     async def test_members_endpoint_exposes_roster_metadata(self):
         payload = await list_members()
@@ -84,16 +88,30 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("candidate_sotb.md", payload["diff"])
 
     async def test_deliberate_endpoint_returns_stable_error_code(self):
+        fake_request = Request({
+            "type": "http",
+            "method": "POST",
+            "path": "/deliberate",
+            "headers": [],
+            "client": ("127.0.0.1", 9999),
+        })
         with patch("server.api.BoardOrchestrator.deliberate", new_callable=AsyncMock) as mock_deliberate:
             mock_deliberate.side_effect = BoardDeliberationError("not enough responses")
 
             with self.assertRaises(HTTPException) as raised:
-                await deliberate(QueryRequest(query="Should we pivot?"))
+                await deliberate(QueryRequest(query="Should we pivot?"), fake_request)
 
         self.assertEqual(503, raised.exception.status_code)
         self.assertEqual("deliberation_failed", raised.exception.detail["code"])
 
     async def test_deliberate_endpoint_returns_session_contract(self):
+        fake_request = Request({
+            "type": "http",
+            "method": "POST",
+            "path": "/deliberate",
+            "headers": [],
+            "client": ("127.0.0.1", 9999),
+        })
         session = BoardSession(
             session_id="api_contract_test",
             user_query="Should we pivot?",
@@ -108,7 +126,7 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
             payload = await deliberate(QueryRequest(
                 query="Should we pivot?",
                 verify=True,
-            ))
+            ), fake_request)
 
         self.assertEqual("api_contract_test", payload["session_id"])
         self.assertEqual(8, payload["verification"]["score"])
