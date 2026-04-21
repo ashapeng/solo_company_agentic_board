@@ -144,6 +144,18 @@ def _as_string_list(value: Any) -> list[str]:
     return []
 
 
+def get_clarification_gate(roster: dict | None = None) -> dict:
+    """Return the clarification-gate configuration from roster.yaml."""
+    roster = roster or load_roster()
+    gate = roster.get("clarification_gate") or {}
+    return {
+        "ambiguous_terms": [str(t) for t in (gate.get("ambiguous_terms") or [])],
+        "min_terms_present": int(gate.get("min_terms_present", 2)),
+        "max_query_words": int(gate.get("max_query_words", 14)),
+        "gating_capabilities": [str(c) for c in (gate.get("gating_capabilities") or [])],
+    }
+
+
 def _build_role_gap_memo(unavailable: list[str], stage_profile: str) -> str | None:
     if not unavailable:
         return None
