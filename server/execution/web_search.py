@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,13 @@ from .search_cache import SearchCache
 
 _cache = SearchCache(maxsize=128, ttl_seconds=1800)
 _SESSION_BUCKETS: dict[str, deque[float]] = {}
+
+
+def _sweep_empty_session_buckets() -> None:
+    """Drop any buckets that emptied between requests."""
+    empties = [key for key, bucket in _SESSION_BUCKETS.items() if not bucket]
+    for key in empties:
+        _SESSION_BUCKETS.pop(key, None)
 
 
 class WebSearchError(Exception):
@@ -35,6 +43,13 @@ async def web_search(
     if selected in {"", "disabled", "none"}:
         return _disabled_result(query)
 
+    # Cache probe BEFORE rate limit — cache hits cost zero provider calls.
+    normalized_query = unicodedata.normalize("NFC", query).strip().lower()
+    cache_key = (normalized_query, selected, max_results)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     # Per-session rate limit.
     bucket_key = session_id or "anon"
     try:
@@ -47,6 +62,7 @@ async def web_search(
         window = 60
 
     if limit > 0 and window > 0:
+        _sweep_empty_session_buckets()
         now = time.monotonic()
         bucket = _SESSION_BUCKETS.setdefault(bucket_key, deque())
         while bucket and bucket[0] <= now - window:
@@ -60,15 +76,6 @@ async def web_search(
                 "warnings": [f"session rate limit: {limit}/{window}s"],
             }
         bucket.append(now)
-        # Sweep any now-empty other buckets opportunistically.
-        if not bucket:
-            _SESSION_BUCKETS.pop(bucket_key, None)
-
-    # Cache probe (only for providers that return deterministic results; fake & tavily both qualify).
-    cache_key = (query.strip().lower(), selected, max_results)
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
 
     if selected == "fake":
         results = _fake_results(query)

@@ -425,25 +425,32 @@ class BoardOrchestrator:
         if callback:
             callback(*args)
 
-    async def _collect_member_evidence(self, query: str) -> dict[str, str]:
-        """For members with evidence_required, run web_search and build a system-prompt addendum.
+    def _session_id_for_search(self) -> str:
+        return getattr(self, "_current_session_id", None) or "anon"
 
-        Returns a dict mapping member_id -> addendum string. Members without
-        evidence_required are omitted. On any retrieval failure, the member is
-        omitted and a warning is logged.
+    async def _collect_member_evidence(self, query: str):
+        """For members with evidence_required=True, fetch web search results
+        and build a markdown addendum. Returns (addenda, packet_ids) where
+        addenda is {member_id: prompt_addendum} and packet_ids is
+        {member_id: real_evidence_packet_id}.
         """
         from server.execution.web_search import web_search
 
         addenda: dict[str, str] = {}
-        session_key = getattr(self, "_current_session_id", None) or "anon"
+        packet_ids: dict[str, str] = {}
         for member in self.council:
             if not getattr(member, "evidence_required", False):
                 continue
             try:
-                result = await web_search(query, session_id=session_key)
+                result = await web_search(
+                    query,
+                    session_id=self._session_id_for_search(),
+                )
             except Exception as exc:
                 logger.warning(
-                    "Evidence retrieval failed for %s: %s", member.id, exc,
+                    "Evidence retrieval failed for %s: %s",
+                    member.id,
+                    exc,
                 )
                 continue
             results = result.get("results") or []
@@ -454,9 +461,16 @@ class BoardOrchestrator:
                 title = (item.get("title") or "Untitled").strip()
                 url = (item.get("url") or "").strip()
                 snippet = (item.get("snippet") or "").strip()
+                if len(snippet) > 500:
+                    snippet = snippet[:500].rstrip() + "…"
                 lines.append(f"- [{title}]({url}) — {snippet}")
             addenda[member.id] = "\n".join(lines)
-        return addenda
+
+            packet = result.get("evidence_packet") or {}
+            pid = packet.get("id") or packet.get("packet_id")
+            if pid:
+                packet_ids[member.id] = str(pid)
+        return addenda, packet_ids
 
     def stage0_intake(
         self,
@@ -905,12 +919,9 @@ class BoardOrchestrator:
         # can key the web-search rate limiter per-session.
         self._current_session_id = session_id
 
-        evidence_addenda = await self._collect_member_evidence(effective_query)
+        evidence_addenda, evidence_packet_ids = await self._collect_member_evidence(effective_query)
         self._evidence_addenda = evidence_addenda
-        session.evidence_packets = {
-            mid: f"evidence_{session_id}_{mid}"
-            for mid in evidence_addenda
-        }
+        session.evidence_packets = evidence_packet_ids
 
         # Stage 1: All members analyze independently (parallel)
         query_type = None
