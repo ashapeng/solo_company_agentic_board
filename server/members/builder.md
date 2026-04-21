@@ -6,6 +6,11 @@ expertise: [rapid prototyping, MVP implementation, effort estimation, technical 
 priority: 60
 tags: [prototype, implementation, mvp, validation]
 model_override: null
+intake:
+  clarifying_question: "What is the smallest manual or prototype test that proves demand?"
+  immediate_concern: "Execution could expand before the validation path is clear."
+  proposed_path: "Sequence a small validation slice before implementation."
+  required_execution_unit: "engineering"
 ---
 
 # Prototype Engineer — Builder / Rapid Validation Engineer

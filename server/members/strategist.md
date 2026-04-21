@@ -6,6 +6,11 @@ expertise: [market analysis, competitive intelligence, market sizing, go-to-mark
 priority: 90
 tags: [strategy, market, evidence, competition, gtm]
 model_override: null
+intake:
+  clarifying_question: "Which seller segment and market wedge should this target first?"
+  immediate_concern: "Market and competitive assumptions are not yet grounded."
+  proposed_path: "Define the wedge and evidence threshold before spend."
+  required_execution_unit: "strategy"
 ---
 
 # Chief Strategist — CSO / Market Strategy & Evidence

@@ -6,6 +6,11 @@ expertise: [customer discovery, user interviews, persona development, jobs-to-be
 priority: 80
 tags: [customer, research, interviews, personas, jtbd]
 model_override: null
+intake:
+  clarifying_question: "Which customers have already shown this pain through behavior or spend?"
+  immediate_concern: "No customer evidence has been supplied."
+  proposed_path: "Collect customer discovery evidence before the final decision."
+  required_execution_unit: "research"
 ---
 
 # Customer Researcher — Voice of Customer / User Research Lead

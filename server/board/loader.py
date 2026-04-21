@@ -112,7 +112,8 @@ def load_members(
     for filepath in sorted(members_dir.glob("*.md")):
         # Skip templates/private files. Shelved members can be included explicitly
         # by stage profile using their file stem without the leading underscore.
-        if filepath.name.startswith("_"):
+        is_shelved = filepath.name.startswith("_")
+        if is_shelved:
             shelved_id = filepath.stem.lstrip("_")
             if shelved_id not in include_shelved_ids:
                 logger.debug("Skipping template/private file: %s", filepath.name)
@@ -171,7 +172,8 @@ def load_members(
             tags=tags,
             intake=_parse_member_intake(frontmatter.get("intake")),
         )
-        if member.id != "chairperson" and member.intake is None:
+        # Intake frontmatter is required for active council members (not shelved, not chairperson)
+        if not is_shelved and member.id != "chairperson" and member.intake is None:
             raise ValueError(
                 f"Council member '{member.id}' is missing required 'intake:' frontmatter block."
             )

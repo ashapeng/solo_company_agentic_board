@@ -40,6 +40,11 @@ expertise: market, evidence
 priority: 90
 tags: [strategy, market]
 model_override: null
+intake:
+  clarifying_question: "Which seller segment and market wedge should this target first?"
+  immediate_concern: "Market and competitive assumptions are not yet grounded."
+  proposed_path: "Define the wedge and evidence threshold before spend."
+  required_execution_unit: "strategy"
 ---
 
 # Chief Strategist
@@ -64,6 +69,11 @@ expertise: [security]
 priority: 80
 tags: security
 model_override: null
+intake:
+  clarifying_question: "What security risks does this expose?"
+  immediate_concern: "Security implications have not been assessed."
+  proposed_path: "Run security review before rollout."
+  required_execution_unit: "legal"
 ---
 
 # Security Guardian

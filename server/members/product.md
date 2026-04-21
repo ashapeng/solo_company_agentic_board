@@ -6,6 +6,11 @@ expertise: [product management, MVP definition, feature prioritization, value pr
 priority: 85
 tags: [product, mvp, prioritization, value, pmf]
 model_override: null
+intake:
+  clarifying_question: "Who is the exact buyer and what painful job are they hiring this for?"
+  immediate_concern: "The request describes a solution before validating the problem."
+  proposed_path: "Run problem validation before feature scoping."
+  required_execution_unit: "product"
 ---
 
 # Product Lead — CPO / Product Strategy & Definition
