@@ -60,14 +60,16 @@ class CacheHitTest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("WEB_SEARCH_PROVIDER", None)
         try:
-            import server.execution.web_search as ws
+            import importlib
+            ws = importlib.import_module("server.execution.web_search")
             if hasattr(ws, "_cache"):
                 ws._cache.clear()
         except Exception:
             pass
 
     def test_repeat_query_reuses_cached_result(self):
-        import server.execution.web_search as ws
+        import importlib
+        ws = importlib.import_module("server.execution.web_search")
 
         async def run():
             first = await ws.web_search("cache-me")

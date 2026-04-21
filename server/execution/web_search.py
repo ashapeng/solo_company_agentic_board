@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote_plus
@@ -10,6 +12,10 @@ from urllib.parse import quote_plus
 import httpx
 
 from . import evidence
+from .search_cache import SearchCache
+
+_cache = SearchCache(maxsize=128, ttl_seconds=1800)
+_SESSION_BUCKETS: dict[str, deque[float]] = {}
 
 
 class WebSearchError(Exception):
@@ -21,11 +27,49 @@ async def web_search(
     *,
     provider: str | None = None,
     max_results: int = 5,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Search the web from execution workflows and persist an evidence packet."""
     selected = (provider or os.getenv("WEB_SEARCH_PROVIDER") or "disabled").lower()
+
     if selected in {"", "disabled", "none"}:
         return _disabled_result(query)
+
+    # Per-session rate limit.
+    bucket_key = session_id or "anon"
+    try:
+        limit = int(os.getenv("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT", "20") or 0)
+    except ValueError:
+        limit = 20
+    try:
+        window = int(os.getenv("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS", "60") or 0)
+    except ValueError:
+        window = 60
+
+    if limit > 0 and window > 0:
+        now = time.monotonic()
+        bucket = _SESSION_BUCKETS.setdefault(bucket_key, deque())
+        while bucket and bucket[0] <= now - window:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return {
+                "query": query,
+                "provider": selected,
+                "results": [],
+                "evidence_packet": None,
+                "warnings": [f"session rate limit: {limit}/{window}s"],
+            }
+        bucket.append(now)
+        # Sweep any now-empty other buckets opportunistically.
+        if not bucket:
+            _SESSION_BUCKETS.pop(bucket_key, None)
+
+    # Cache probe (only for providers that return deterministic results; fake & tavily both qualify).
+    cache_key = (query.strip().lower(), selected, max_results)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     if selected == "fake":
         results = _fake_results(query)
     elif selected == "tavily":
@@ -55,13 +99,15 @@ async def web_search(
         freshness="current",
         warnings=[],
     )
-    return {
+    response = {
         "query": query,
         "provider": selected,
         "results": results,
         "evidence_packet": packet,
         "warnings": [],
     }
+    _cache.put(cache_key, response)
+    return response
 
 
 def _disabled_result(query: str) -> dict[str, Any]:

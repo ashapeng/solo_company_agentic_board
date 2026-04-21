@@ -282,27 +282,21 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan["requires_approval"])
 
     async def test_web_search_route_rate_limits_requests(self):
-        old_limit = os.environ.get("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT")
-        old_window = os.environ.get("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS")
-        try:
-            os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT"] = "1"
-            os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS"] = "60"
+        from unittest.mock import MagicMock
+        mock_request = MagicMock(spec=Request)
+        mock_request.client = MagicMock()
+        mock_request.client.host = "127.0.0.1"
 
-            with patch("server.api.routes.execution.web_search", new_callable=AsyncMock) as mock_search:
-                mock_search.return_value = {"results": [], "warnings": []}
+        with patch("server.api.routes.execution.web_search", new_callable=AsyncMock) as mock_search:
+            # First call succeeds; second call returns a rate-limit warning (per-session model).
+            mock_search.side_effect = [
+                {"results": [], "warnings": []},
+                {"results": [], "warnings": ["session rate limit: 1/60s"]},
+            ]
 
-                first = await execution_web_search(WebSearchRequest(query="market sizing", provider="disabled"))
-                with self.assertRaises(HTTPException) as raised:
-                    await execution_web_search(WebSearchRequest(query="competitor scan", provider="disabled"))
-        finally:
-            if old_limit is None:
-                os.environ.pop("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT", None)
-            else:
-                os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT"] = old_limit
-            if old_window is None:
-                os.environ.pop("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS", None)
-            else:
-                os.environ["AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS"] = old_window
+            first = await execution_web_search(WebSearchRequest(query="market sizing", provider="fake"), mock_request)
+            with self.assertRaises(HTTPException) as raised:
+                await execution_web_search(WebSearchRequest(query="competitor scan", provider="fake"), mock_request)
 
         self.assertEqual({"results": [], "warnings": []}, first)
         self.assertEqual(429, raised.exception.status_code)

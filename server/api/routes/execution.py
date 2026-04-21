@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import time
-from collections import deque
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from server.execution import (
     ExecutionError,
@@ -34,7 +32,6 @@ from ..schemas import (
 
 
 router = APIRouter()
-_WEB_SEARCH_REQUESTS: deque[float] = deque()
 
 
 @router.get("/execution-units")
@@ -128,38 +125,23 @@ async def read_evidence(packet_id: str):
 
 
 @router.post("/web-search")
-async def execution_web_search(req: WebSearchRequest):
+async def execution_web_search(req: WebSearchRequest, request: Request):
     if not req.query.strip():
         raise HTTPException(422, detail="query is required")
-    _enforce_web_search_rate_limit()
-    return await web_search(
+    client_host = request.client.host if request.client else "anon"
+    result = await web_search(
         req.query,
         provider=req.provider,
         max_results=req.max_results,
+        session_id=f"ip:{client_host}",
     )
-
-
-def _enforce_web_search_rate_limit() -> None:
-    limit = _positive_int_env("AGENTIC_BOARD_WEB_SEARCH_RATE_LIMIT", 20)
-    window_seconds = _positive_int_env("AGENTIC_BOARD_WEB_SEARCH_RATE_WINDOW_SECONDS", 60)
-    if limit <= 0:
-        return
-
-    now = time.monotonic()
-    cutoff = now - window_seconds
-    while _WEB_SEARCH_REQUESTS and _WEB_SEARCH_REQUESTS[0] <= cutoff:
-        _WEB_SEARCH_REQUESTS.popleft()
-    if len(_WEB_SEARCH_REQUESTS) >= limit:
+    warnings = result.get("warnings", []) or []
+    if any("rate limit" in w.lower() for w in warnings):
         raise HTTPException(
             429,
-            detail=f"web search rate limit exceeded: {limit} request(s) per {window_seconds} seconds",
+            detail={
+                "code": "web_search_rate_limited",
+                "message": "; ".join(warnings),
+            },
         )
-    _WEB_SEARCH_REQUESTS.append(now)
-
-
-def _positive_int_env(name: str, default: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-    return max(0, value)
+    return result
