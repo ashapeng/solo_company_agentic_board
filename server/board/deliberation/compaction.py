@@ -13,6 +13,11 @@ import re
 
 from server.harness.config import HarnessConfig, resolve_stage1_compaction_policy
 
+from .structured import parse_stage1, parse_stage2
+
+_STAGE1_JSON_WARNING = "stage1_json_parse_failed"
+_STAGE2_JSON_WARNING = "stage2_json_parse_failed"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,6 +117,42 @@ def _compact_single_stage1(
     sections: list[str] | None = None,
     detail_sections: list[str] | None = None,
 ) -> str:
+    parsed = parse_stage1(content)
+    if parsed is not None:
+        active_sections = sections or ["confidence", "tldr", "recommendation", "top_risk"]
+        return _render_stage1_from_json(parsed, active_sections)
+    return _compact_single_stage1_markdown(
+        content, sections=sections, detail_sections=detail_sections,
+    )
+
+
+def _render_stage1_from_json(parsed, sections: list[str]) -> str:
+    parts: list[str] = []
+    if "confidence" in sections:
+        parts.append(f"> Confidence: {parsed.confidence}")
+    if "tldr" in sections and parsed.tldr:
+        parts.append(f"## TL;DR\n{parsed.tldr}")
+    if "analysis" in sections and parsed.analysis:
+        parts.append(f"## Analysis\n{parsed.analysis}")
+    if "recommendation" in sections and parsed.recommendation:
+        parts.append(f"## Recommendation\n{parsed.recommendation}")
+    if "top_risk" in sections and parsed.risks:
+        severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        top = min(parsed.risks, key=lambda r: severity_order.get(r.severity, 99))
+        parts.append(f"## Top Risk\n- **{top.severity}** {top.description}")
+    if "open_questions" in sections and parsed.open_questions:
+        parts.append(
+            "## Open Questions\n" + "\n".join(f"- {q}" for q in parsed.open_questions)
+        )
+    return "\n\n".join(parts)
+
+
+def _compact_single_stage1_markdown(
+    content: str,
+    *,
+    sections: list[str] | None = None,
+    detail_sections: list[str] | None = None,
+) -> str:
     """Compact a single Stage 1 response to its key signals.
 
     Extracts:
@@ -128,6 +169,8 @@ def _compact_single_stage1(
     if "confidence" in active_sections:
         confidence = _extract_confidence(content)
         parts.append(f"> Confidence: {confidence}")
+
+    content_parts_start = len(parts)  # track where content sections begin
 
     if "tldr" in active_sections:
         tldr = _extract_section(content, "TL;DR")
@@ -158,7 +201,16 @@ def _compact_single_stage1(
         if open_questions:
             parts.append(f"## Open Questions\n{open_questions}")
 
-    return "\n\n".join(parts)
+    # Rescue: if no content sections were found, try bold-header variants
+    if not [p for p in parts[content_parts_start:] if p]:
+        bold_tldr = re.search(r"\*\*TL;DR:?\*\*\s*(.+)", content, re.IGNORECASE)
+        bold_rec = re.search(r"\*\*Recommendation:?\*\*\s*(.+)", content, re.IGNORECASE)
+        if bold_tldr:
+            parts.append(f"## TL;DR\n{bold_tldr.group(1).strip()}")
+        if bold_rec:
+            parts.append(f"## Recommendation\n{bold_rec.group(1).strip()}")
+
+    return "\n\n".join(p for p in parts if p)
 
 
 def _stage1_compaction_elements(content: str) -> dict[str, str]:
@@ -182,6 +234,59 @@ def extract_stage1_compaction_elements(content: str) -> dict[str, str]:
     }
 
 
+def compact_stage1_with_warnings(
+    responses,
+    *,
+    query_type=None,
+    config=None,
+):
+    """Like compact_stage1_responses but also returns a list of parse warnings."""
+    from .orchestrator import MemberResponse
+
+    sections, detail_sections = resolve_stage1_compaction_policy(
+        query_type=query_type, config=config,
+    )
+    warnings: list[str] = []
+    compacted = []
+    for resp in responses:
+        if parse_stage1(resp.content) is None:
+            warnings.append(f"{_STAGE1_JSON_WARNING}:{resp.member_id}")
+        compacted.append(
+            MemberResponse(
+                member_id=resp.member_id,
+                stage=resp.stage,
+                content=_compact_single_stage1(
+                    resp.content,
+                    sections=sections,
+                    detail_sections=detail_sections,
+                ),
+                model=resp.model,
+                elapsed_seconds=resp.elapsed_seconds,
+            )
+        )
+    return compacted, warnings
+
+
+def compact_stage2_with_warnings(responses):
+    from .orchestrator import MemberResponse
+
+    warnings: list[str] = []
+    compacted = []
+    for resp in responses:
+        if parse_stage2(resp.content) is None:
+            warnings.append(f"{_STAGE2_JSON_WARNING}:{resp.member_id}")
+        compacted.append(
+            MemberResponse(
+                member_id=resp.member_id,
+                stage=resp.stage,
+                content=_compact_single_stage2(resp.content),
+                model=resp.model,
+                elapsed_seconds=resp.elapsed_seconds,
+            )
+        )
+    return compacted, warnings
+
+
 def compact_stage1_responses(
     responses: list,
     *,
@@ -193,29 +298,9 @@ def compact_stage1_responses(
     The original responses are NOT modified. Compacted versions are used
     only for inter-stage passing; the session retains full raw responses.
     """
-    from .orchestrator import MemberResponse
-
-    sections, detail_sections = resolve_stage1_compaction_policy(
-        query_type=query_type,
-        config=config,
+    compacted, _ = compact_stage1_with_warnings(
+        responses, query_type=query_type, config=config,
     )
-
-    compacted = []
-    for resp in responses:
-        compact_content = _compact_single_stage1(
-            resp.content,
-            sections=sections,
-            detail_sections=detail_sections,
-        )
-        compacted.append(
-            MemberResponse(
-                member_id=resp.member_id,
-                stage=resp.stage,
-                content=compact_content,
-                model=resp.model,
-                elapsed_seconds=resp.elapsed_seconds,
-            )
-        )
     return compacted
 
 
@@ -224,6 +309,26 @@ def compact_stage1_responses(
 # ---------------------------------------------------------------------------
 
 def _compact_single_stage2(content: str) -> str:
+    parsed = parse_stage2(content)
+    if parsed is not None:
+        return _render_stage2_from_json(parsed)
+    return _compact_single_stage2_markdown(content)
+
+
+def _render_stage2_from_json(parsed) -> str:
+    parts = [f"> Confidence: {parsed.confidence}"]
+    if parsed.updated_position:
+        parts.append(f"### Updated Position\n{parsed.updated_position}")
+    if parsed.peer_challenges:
+        parts.append(
+            "### Peer Challenges\n" + "\n".join(f"- {c}" for c in parsed.peer_challenges)
+        )
+    if parsed.ranking:
+        parts.append("### Ranking\n" + "\n".join(f"- {r}" for r in parsed.ranking))
+    return "\n\n".join(parts)
+
+
+def _compact_single_stage2_markdown(content: str) -> str:
     """Compact a single Stage 2 response for chairman synthesis.
 
     Extracts:
@@ -262,18 +367,5 @@ def compact_stage2_responses(responses: list) -> list:
 
     Preserves structure for _format_identified_responses() in Stage 3.
     """
-    from .orchestrator import MemberResponse
-
-    compacted = []
-    for resp in responses:
-        compact_content = _compact_single_stage2(resp.content)
-        compacted.append(
-            MemberResponse(
-                member_id=resp.member_id,
-                stage=resp.stage,
-                content=compact_content,
-                model=resp.model,
-                elapsed_seconds=resp.elapsed_seconds,
-            )
-        )
+    compacted, _ = compact_stage2_with_warnings(responses)
     return compacted

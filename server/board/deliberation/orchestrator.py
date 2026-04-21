@@ -29,7 +29,12 @@ from server.harness.ledger import record_session as _record_to_ledger
 from server.memory.review import propose_memory_update
 from server.memory.sotb import read_sotb
 
-from .compaction import compact_stage1_responses, compact_stage2_responses
+from .compaction import (
+    compact_stage1_responses,
+    compact_stage2_responses,
+    compact_stage1_with_warnings,
+    compact_stage2_with_warnings,
+)
 from ..config import BoardMember, get_board_members, get_members_by_id, get_chairman_model, get_council_models
 from ..llm import query_llm, LLMResponse
 from ..metrics import CallMetrics, SessionMetrics
@@ -867,6 +872,14 @@ class BoardOrchestrator:
             complexity=complexity,
         )
 
+        # Record Stage 1 JSON parse warnings
+        _, _s1_warnings = compact_stage1_with_warnings(
+            session.stage1_responses,
+            query_type=query_type,
+            config=get_config(),
+        )
+        session.structured_output_warnings.extend(_s1_warnings)
+
         # Stage 2: Peer review with anonymized responses (parallel)
         session.stage2_responses = await self.stage2(
             effective_query,
@@ -874,6 +887,10 @@ class BoardOrchestrator:
             query_type=query_type,
             complexity=complexity,
         )
+
+        # Record Stage 2 JSON parse warnings
+        _, _s2_warnings = compact_stage2_with_warnings(session.stage2_responses)
+        session.structured_output_warnings.extend(_s2_warnings)
 
         # Read institutional memory before synthesis
         sotb = read_sotb()
@@ -891,7 +908,8 @@ class BoardOrchestrator:
             from .verification import verify_synthesis
 
             # Get compacted stage 2 for verification context
-            compacted_s2 = compact_stage2_responses(session.stage2_responses)
+            compacted_s2, _s2v_warnings = compact_stage2_with_warnings(session.stage2_responses)
+            session.structured_output_warnings.extend(_s2v_warnings)
             compacted_s2_text = "\n".join(r.content for r in compacted_s2)
 
             result = await verify_synthesis(
