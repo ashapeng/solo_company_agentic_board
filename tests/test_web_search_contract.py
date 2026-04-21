@@ -33,5 +33,52 @@ class WebSearchContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(source["retrieved_at"])
 
 
+class SearchCacheTest(unittest.TestCase):
+    def test_put_then_get_returns_value(self):
+        from server.execution.search_cache import SearchCache
+
+        cache = SearchCache(maxsize=4, ttl_seconds=60)
+        cache.put(("a", "b"), {"x": 1})
+        self.assertEqual(cache.get(("a", "b")), {"x": 1})
+
+    def test_get_returns_none_for_missing(self):
+        from server.execution.search_cache import SearchCache
+
+        cache = SearchCache()
+        self.assertIsNone(cache.get(("missing",)))
+
+    def test_lru_eviction(self):
+        from server.execution.search_cache import SearchCache
+
+        cache = SearchCache(maxsize=2, ttl_seconds=60)
+        cache.put(("a",), {"v": 1})
+        cache.put(("b",), {"v": 2})
+        cache.put(("c",), {"v": 3})
+        self.assertIsNone(cache.get(("a",)))
+        self.assertEqual(cache.get(("b",)), {"v": 2})
+        self.assertEqual(cache.get(("c",)), {"v": 3})
+
+    def test_ttl_expiration(self):
+        import time as _time
+        from server.execution.search_cache import SearchCache
+
+        cache = SearchCache(maxsize=4, ttl_seconds=0)
+        cache.put(("a",), {"v": 1})
+        # ttl=0 means ALL entries are considered expired.
+        # Ensure the wall-clock monotonic delta is > 0.
+        _time.sleep(0.001)
+        self.assertIsNone(cache.get(("a",)))
+
+    def test_clear_empties_cache(self):
+        from server.execution.search_cache import SearchCache
+
+        cache = SearchCache()
+        cache.put(("a",), {"v": 1})
+        cache.put(("b",), {"v": 2})
+        cache.clear()
+        self.assertIsNone(cache.get(("a",)))
+        self.assertIsNone(cache.get(("b",)))
+
+
 if __name__ == "__main__":
     unittest.main()
