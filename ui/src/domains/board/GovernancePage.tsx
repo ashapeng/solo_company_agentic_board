@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent, RefObject } from 'react';
+import type { CSSProperties, FormEvent, ReactNode, RefObject } from 'react';
 import {
   Activity,
   AudioLines,
   Check,
+  ChevronRight,
   FileText,
   MoreHorizontal,
+  Pin,
+  PinOff,
   Plus,
   Send,
   Sparkles,
@@ -209,19 +212,36 @@ export function GovernancePage({
     prevManualRef.current = manualMemberIds;
   }, [manualMemberIds]);
 
+  // BriefingDrawer (left) open/pin state
+  const [leftOpen, setLeftOpen] = useState(false);
+  const [leftPinned, setLeftPinned] = useState(() => {
+    try { return localStorage.getItem('boardroom.pinLeft') === '1'; } catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('boardroom.pinLeft', leftPinned ? '1' : '0'); } catch { /* ignore */ }
+  }, [leftPinned]);
+
+  // Auto-open when first question submitted (stage events fire OR active phase arrives)
+  useEffect(() => {
+    if ((stageEvents.length > 0 || activePhase) && !leftOpen) {
+      setLeftOpen(true);
+    }
+  }, [stageEvents.length, activePhase, leftOpen]);
+
+  // Esc dismisses drawer (respect pin — do nothing if pinned)
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (leftOpen && !leftPinned) setLeftOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [leftOpen, leftPinned]);
+
   return (
     <div className="min-h-[calc(100vh-5rem)] bg-background text-on-surface">
-      <div className="flex flex-col gap-0 lg:flex-row">
-        <aside className="flex w-full flex-col gap-8 bg-surface-container-low/50 p-8 lg:w-80">
-          <LeftInsights
-            tableStatus={tableStatus}
-            activePhase={activePhase}
-            stageEvents={stageEvents}
-            liveFeed={liveFeed}
-            sotb={sotb}
-          />
-        </aside>
-
+      <div className="flex flex-col gap-0">
         <section className="relative flex flex-1 flex-col items-center justify-start gap-6 p-6 md:p-8">
           <CenterArena
             members={members}
@@ -332,7 +352,90 @@ export function GovernancePage({
           />
         </aside>
       </div>
+
+      <BriefingDrawer
+        open={leftOpen}
+        pinned={leftPinned}
+        onClose={() => setLeftOpen(false)}
+        onTogglePin={() => setLeftPinned((v) => !v)}
+      >
+        <LeftInsights
+          tableStatus={tableStatus}
+          activePhase={activePhase}
+          stageEvents={stageEvents}
+          liveFeed={liveFeed}
+          sotb={sotb}
+        />
+      </BriefingDrawer>
+
+      {!leftOpen && (stageEvents.length > 0 || activePhase) && (
+        <button
+          type="button"
+          onClick={() => setLeftOpen(true)}
+          className="fixed left-[72px] top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-r-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[4px_0_12px_-4px_rgba(26,22,20,0.10)]"
+          aria-label="Open Briefing Room"
+        >
+          <ChevronRight className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
+        </button>
+      )}
     </div>
+  );
+}
+
+function BriefingDrawer({
+  open,
+  pinned,
+  onClose,
+  onTogglePin,
+  children,
+}: {
+  open: boolean;
+  pinned: boolean;
+  onClose: () => void;
+  onTogglePin: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.aside
+          key="briefing-drawer"
+          initial={{ x: -320, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          exit={{ x: -320, opacity: 0 }}
+          transition={{ ease: 'easeOut', duration: 0.28 }}
+          className="fixed left-[72px] top-0 bottom-0 z-30 w-[320px] overflow-y-auto bg-surface-container-low p-6 shadow-[8px_0_32px_-8px_rgba(26,22,20,0.10)]"
+          aria-label="Briefing Room"
+        >
+          <header className="mb-4 flex items-start justify-between gap-2">
+            <div>
+              <p className="text-[10px] tracking-wider uppercase text-primary">Strategic Materials</p>
+              <h2 className="font-headline text-xl text-on-surface">Briefing Room</h2>
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={onTogglePin}
+                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+                aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
+                title={pinned ? 'Unpin' : 'Pin open'}
+              >
+                {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+                aria-label="Close drawer"
+              >
+                <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+          {children}
+        </motion.aside>
+      )}
+    </AnimatePresence>
   );
 }
 
