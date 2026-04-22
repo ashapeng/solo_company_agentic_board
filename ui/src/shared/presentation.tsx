@@ -44,15 +44,16 @@ export const MEMBER_ORDER = [
 ];
 
 export const MEMBER_TONES: Record<string, string> = {
-  chairperson: '#003d9b',
-  strategist: '#6366f1',
-  product: '#0ea5e9',
-  researcher: '#10b981',
-  critic: '#0f172a',
-  architect: '#f59e0b',
-  builder: '#14b8a6',
-  guardian: '#ef4444',
-  operator: '#8b5cf6',
+  chairperson:  "#8C6608",  // deep brass
+  strategist:   "#1E3A5F",  // navy
+  product:      "#6B21A8",  // deep violet
+  researcher:   "#047857",  // forest green
+  critic:       "#9B2C2C",  // burgundy
+  architect:    "#B45309",  // burnt amber
+  builder:      "#9D174D",  // deep fuchsia
+  // Shelved (not currently loaded but preserve for type-stability):
+  guardian:     "#1F2937",  // slate
+  operator:     "#78350F",  // dark umber
 };
 
 export const MEMBER_IMAGES: Record<string, string> = {
@@ -243,16 +244,70 @@ export function stageShortLabel(stage?: number) {
   return 'stage';
 }
 
-export function memberTone(id: string) {
-  return MEMBER_TONES[id] || '#003d9b';
+const TOPIC_STOPWORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'to', 'for', 'of', 'in', 'on',
+  'at', 'by', 'with', 'from', 'as', 'into', 'is', 'are', 'was', 'were',
+  'be', 'been', 'being', 'do', 'does', 'did', 'have', 'has', 'had',
+  'should', 'would', 'could', 'can', 'will', 'shall', 'we', 'you',
+  'i', 'our', 'your', 'my', 'me', 'us', 'it', 'this', 'that', 'these',
+  'those', 'how', 'what', 'why', 'when', 'where', 'which', 'who',
+]);
+
+export function synthesizeTopic(
+  query?: string,
+  queryType?: string,
+  fallback = 'Awaiting board question',
+): string {
+  const cleaned = String(query || '').trim();
+  if (!cleaned) return fallback;
+
+  const typedLabel = humanize(queryType || '');
+  const firstSentence = cleaned
+    .split(/(?<=[.!?])\s+/)[0]
+    .replace(/\s+/g, ' ')
+    .trim();
+  const base = firstSentence || cleaned;
+
+  const keywords = base
+    .replace(/["'`]/g, '')
+    .split(/[\s,;:—-]+/)
+    .filter(Boolean)
+    .filter((word) => !TOPIC_STOPWORDS.has(word.toLowerCase()))
+    .slice(0, 6)
+    .map((word) => {
+      if (/^[A-Z0-9]{2,}$/.test(word)) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    });
+
+  let title = keywords.join(' ').trim();
+  if (!title) title = base.slice(0, 48);
+  if (title.length > 58) title = title.slice(0, 55).trimEnd() + '…';
+
+  if (typedLabel) return `${typedLabel}: ${title}`;
+  return title;
 }
 
-export function taskStatusClass(status: DelegatedTask['status']) {
-  if (status === 'completed') return 'bg-[#edf8f1] text-[#2d8a52]';
-  if (status === 'blocked' || status === 'rejected') return 'bg-[#fff5f2] text-[#b42318]';
-  if (status === 'running') return 'bg-[#eff6ff] text-[#003d9b]';
-  if (status === 'approved') return 'bg-[#f0fdf4] text-[#166534]';
-  return 'bg-white text-[#64748b]';
+export function memberTone(id: string): string {
+  return MEMBER_TONES[id] || "#8C6608";
+}
+
+export function taskStatusClass(status: DelegatedTask['status']): string {
+  switch (status) {
+    case "proposed":
+      return "bg-surface-container-high text-on-surface-variant";
+    case "approved":
+      return "bg-secondary-container/10 text-secondary-container";
+    case "running":
+      return "bg-primary/15 text-primary-container";
+    case "completed":
+      return "bg-surface-container-high text-primary-container";
+    case "blocked":
+      return "bg-error-container text-error";
+    case "rejected":
+      return "bg-error-container text-error";
+    default:
+      return "bg-surface-container-high text-on-surface-variant";
+  }
 }
 
 export function metricsByStage(metrics: SessionMetrics) {
