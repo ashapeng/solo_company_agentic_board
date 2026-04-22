@@ -54,6 +54,42 @@ const STAGE_PIPS: Array<{ stage: number; label: string }> = [
 
 type StagePhase = 'pending' | 'active' | 'complete' | 'verified' | 'failed';
 
+/**
+ * Choose up to `max` visible seats. Chairperson is always included.
+ * Remaining slots filled by stable MEMBER_ORDER (used as an implicit
+ * priority — BoardMember has no numeric `priority` field), with any
+ * `promotedIds` forcibly bubbled above other non-chair candidates.
+ */
+function selectVisibleSeats(
+  candidates: BoardMember[],
+  promotedIds: Set<string>,
+  max: number = 5,
+): { visible: BoardMember[]; overflow: BoardMember[] } {
+  if (candidates.length <= max) return { visible: candidates, overflow: [] };
+
+  const chair = candidates.find((m) => m.id === 'chairperson');
+  const others = candidates.filter((m) => m.id !== 'chairperson');
+
+  // Stable-sort: promoted first (keep their relative MEMBER_ORDER rank),
+  // then others by their MEMBER_ORDER position (unknown ids fall to the end).
+  const orderIndex = (id: string) => {
+    const i = MEMBER_ORDER.indexOf(id);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const sorted = [...others].sort((a, b) => {
+    const aPromoted = promotedIds.has(a.id) ? 1 : 0;
+    const bPromoted = promotedIds.has(b.id) ? 1 : 0;
+    if (aPromoted !== bPromoted) return bPromoted - aPromoted;
+    return orderIndex(a.id) - orderIndex(b.id);
+  });
+
+  const slots = max - (chair ? 1 : 0);
+  const visibleOthers = sorted.slice(0, slots);
+  const overflowOthers = sorted.slice(slots);
+  const visible = chair ? [chair, ...visibleOthers] : visibleOthers;
+  return { visible, overflow: overflowOthers };
+}
+
 function computeStagePhase(
   stage: number,
   stageEvents: StageEvent[],
@@ -133,6 +169,15 @@ export function GovernancePage({
   const hasActiveSession = Boolean(session || stageEvents.length || activePhase);
   const verified = Boolean(session?.verification?.passed);
   const [rosterOpen, setRosterOpen] = useState(false);
+  const [promotedIds, setPromotedIds] = useState<Set<string>>(new Set());
+
+  const promoteSeat = (memberId: string) => {
+    setPromotedIds((current) => {
+      const next = new Set(current);
+      next.add(memberId);
+      return next;
+    });
+  };
 
   // Track recently-added manual members for a transient "+" badge
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set());
@@ -189,6 +234,8 @@ export function GovernancePage({
             verified={verified}
             running={running}
             justAddedIds={justAddedIds}
+            promotedIds={promotedIds}
+            promoteSeat={promoteSeat}
           />
 
           <CeoComposer
@@ -392,6 +439,8 @@ function CenterArena({
   verified,
   running,
   justAddedIds,
+  promotedIds,
+  promoteSeat,
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
@@ -403,6 +452,8 @@ function CenterArena({
   verified: boolean;
   running: boolean;
   justAddedIds: Set<string>;
+  promotedIds: Set<string>;
+  promoteSeat: (memberId: string) => void;
 }) {
   const activeQuery = session?.user_query || query || '';
   const hasQuery = Boolean(activeQuery.trim());
@@ -421,6 +472,8 @@ function CenterArena({
         verified={verified}
         running={running}
         justAddedIds={justAddedIds}
+        promotedIds={promotedIds}
+        promoteSeat={promoteSeat}
       />
     </div>
   );
@@ -438,6 +491,8 @@ function RoundTable({
   verified,
   running,
   justAddedIds,
+  promotedIds,
+  promoteSeat,
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
@@ -450,6 +505,8 @@ function RoundTable({
   verified: boolean;
   running: boolean;
   justAddedIds: Set<string>;
+  promotedIds: Set<string>;
+  promoteSeat: (memberId: string) => void;
 }) {
   const displayIds = new Set(displayCouncil.map((member) => member.id));
   const manualSet = new Set(manualMemberIds);
@@ -476,12 +533,17 @@ function RoundTable({
     return false;
   });
 
+  const { visible, overflow } = selectVisibleSeats(visibleOrbitMembers, promotedIds, 5);
+  const pillAngle =
+    overflow.length > 0 ? (visible.length / (visible.length + 1)) * 360 - 90 : null;
+  const slotCount = visible.length + (pillAngle !== null ? 1 : 0);
+
   return (
     <div className="board-orbit relative mx-auto hidden w-full max-w-[440px] aspect-square items-center justify-center md:flex">
       <div className="absolute inset-0">
         <AnimatePresence>
-          {visibleOrbitMembers.map((member, index) => {
-            const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
+          {visible.map((member, index) => {
+            const angle = (index / Math.max(slotCount, 1)) * 360 - 90;
             const state = seatStates[member.id] || {};
             const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
             const left = `calc(50% + ${Math.cos((angle * Math.PI) / 180) * radius}px)`;
@@ -511,9 +573,78 @@ function RoundTable({
             );
           })}
         </AnimatePresence>
+
+        {pillAngle !== null && (
+          <div
+            className="absolute"
+            style={{
+              left: `calc(50% + ${Math.cos((pillAngle * Math.PI) / 180) * radius}px)`,
+              top: `calc(50% + ${Math.sin((pillAngle * Math.PI) / 180) * radius}px)`,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
+            <OverflowSeat overflow={overflow} onPromote={promoteSeat} />
+          </div>
+        )}
       </div>
 
       <MobileRoster members={visibleOrbitMembers} seatStates={seatStates} />
+    </div>
+  );
+}
+
+function OverflowSeat({
+  overflow,
+  onPromote,
+}: {
+  overflow: BoardMember[];
+  onPromote: (memberId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-container-high text-sm font-headline text-on-surface hover:bg-surface-container-highest transition-colors"
+        aria-label={`${overflow.length} more member${overflow.length === 1 ? '' : 's'}`}
+        title={`${overflow.length} more`}
+      >
+        +{overflow.length}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-30 w-56 rounded-lg bg-surface-container-lowest p-2 shadow-[0_8px_32px_rgba(26,22,20,0.15)]"
+          onMouseLeave={() => setOpen(false)}
+        >
+          <ul className="flex flex-col gap-1">
+            {overflow.map((member) => {
+              const imageUrl = MEMBER_IMAGES[member.id];
+              return (
+                <li key={member.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onPromote(member.id);
+                      setOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-container-low transition-colors"
+                  >
+                    {imageUrl ? (
+                      <img src={imageUrl} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                    ) : (
+                      <span className="h-6 w-6 shrink-0 rounded-full bg-surface-container-highest" />
+                    )}
+                    <span className="font-body text-sm text-on-surface">{member.title}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
