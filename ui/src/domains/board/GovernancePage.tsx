@@ -48,6 +48,7 @@ import type {
   StageEvent,
   TableStatus,
 } from '../../shared/types';
+import { recordRoutingSignal } from '../../shared/api';
 
 const STAGE_PIPS: Array<{ stage: number; label: string }> = [
   { stage: 1, label: 'Independent' },
@@ -680,6 +681,14 @@ function RightOutlook({
       </div>
 
       <DecisionPreview session={session} error={error} verify={verify} routingLabel={routingLabel} />
+
+      {session?.decision && (
+        <MissingVoiceRow
+          sessionId={session.session_id ?? null}
+          routedIds={new Set(session.classification?.relevant_member_ids ?? [])}
+          allMembers={members}
+        />
+      )}
 
       <div>
         <h3 className="mb-3 font-headline text-lg text-on-surface">Execution Roadmap</h3>
@@ -1481,6 +1490,73 @@ function LiveConversation({
         )}
       </ul>
     </article>
+  );
+}
+
+function MissingVoiceRow({
+  sessionId,
+  routedIds,
+  allMembers,
+}: {
+  sessionId: string | null;
+  routedIds: Set<string>;
+  allMembers: BoardMember[];
+}) {
+  const [flagged, setFlagged] = useState<Set<string>>(new Set());
+
+  // Candidates: any known member NOT routed in this session AND not chairperson
+  // (chairperson is always at the table by convention).
+  const candidates = allMembers.filter(
+    (m) => m.id !== 'chairperson' && !routedIds.has(m.id),
+  );
+
+  if (candidates.length === 0 || !sessionId) return null;
+
+  const handleFlag = (memberId: string) => {
+    if (flagged.has(memberId)) return;
+    setFlagged((current) => {
+      const next = new Set(current);
+      next.add(memberId);
+      return next;
+    });
+    recordRoutingSignal(sessionId, memberId, 'missing_voice_flag').catch(() => {
+      // Best-effort — leave the chip flagged locally even if network failed.
+    });
+  };
+
+  return (
+    <section className="mt-6">
+      <p className="mb-3 text-xs italic font-body text-on-surface-variant">
+        Should any voice have been at the table?
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {candidates.map((member) => {
+          const isFlagged = flagged.has(member.id);
+          const imageUrl = MEMBER_IMAGES[member.id];
+          return (
+            <button
+              key={member.id}
+              type="button"
+              disabled={isFlagged}
+              onClick={() => handleFlag(member.id)}
+              className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-body transition-colors ${
+                isFlagged
+                  ? 'bg-error-container text-error cursor-default'
+                  : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+              }`}
+              aria-label={isFlagged ? `Flagged ${member.title}` : `Flag ${member.title} as missing voice`}
+            >
+              {imageUrl ? (
+                <img src={imageUrl} alt="" aria-hidden="true" className="h-5 w-5 rounded-full object-cover" />
+              ) : (
+                <span className="h-5 w-5 rounded-full bg-surface-container-highest" aria-hidden="true" />
+              )}
+              <span>{isFlagged ? 'Flagged' : member.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
