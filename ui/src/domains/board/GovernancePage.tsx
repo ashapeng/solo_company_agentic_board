@@ -7,7 +7,6 @@ import {
   MoreHorizontal,
   Send,
   Sparkles,
-  User,
   Users,
   X,
 } from 'lucide-react';
@@ -393,6 +392,9 @@ function RoundTable({
   const orderedMembers = MEMBER_ORDER
     .map((id) => members.find((member) => member.id === id))
     .filter((member): member is BoardMember => Boolean(member));
+  // User IS the Chairperson/CEO. No avatar represents them at the table —
+  // the board is convened around the user, who sits outside the visible orbit.
+  const orbitMembers = orderedMembers.filter((member) => member.id !== 'chairperson');
   const radius = 180;
 
   return (
@@ -430,8 +432,8 @@ function RoundTable({
         />
 
         <div className="absolute inset-0">
-          {orderedMembers.map((member, index) => {
-            const angle = (index / Math.max(orderedMembers.length, 1)) * 360 - 90;
+          {orbitMembers.map((member, index) => {
+            const angle = (index / Math.max(orbitMembers.length, 1)) * 360 - 90;
             const state = seatStates[member.id] || {};
             const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
             return (
@@ -447,17 +449,10 @@ function RoundTable({
               />
             );
           })}
-
-          <div className="absolute left-1/2 bottom-4 -translate-x-1/2 flex flex-col items-center gap-1 opacity-50">
-            <div className="grid h-8 w-8 place-items-center rounded-full bg-surface-container-highest">
-              <User className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
-            </div>
-            <span className="text-[10px] font-body text-on-surface-variant">CEO</span>
-          </div>
         </div>
       </div>
 
-      <MobileRoster members={orderedMembers} seatStates={seatStates} />
+      <MobileRoster members={orbitMembers} seatStates={seatStates} />
     </div>
   );
 }
