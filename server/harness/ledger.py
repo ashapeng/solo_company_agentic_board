@@ -230,6 +230,47 @@ def record_feedback(
         conn.close()
 
 
+def record_routing_signal(
+    session_id: str,
+    member_id: str,
+    source: str,
+    db_path: Path | None = None,
+) -> None:
+    """Append a routing-signal entry to the session's routing_misses column.
+
+    source: 'manual_add' or 'missing_voice_flag'.
+    Raises LedgerError if session_id not found.
+    """
+    if source not in ("manual_add", "missing_voice_flag"):
+        raise LedgerError(f"invalid source: {source!r}")
+
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT routing_misses FROM session_outcomes WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise LedgerError(f"session_id not found: {session_id}")
+
+        current_raw = row["routing_misses"]
+        current = json.loads(current_raw) if current_raw else []
+        entry = {
+            "member_id": member_id,
+            "source": source,
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        }
+        current.append(entry)
+
+        conn.execute(
+            "UPDATE session_outcomes SET routing_misses = ? WHERE session_id = ?",
+            (json.dumps(current), session_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     existing = {
         row[1]
