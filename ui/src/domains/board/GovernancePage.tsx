@@ -170,6 +170,8 @@ export function GovernancePage({
             onSubmit={onSubmit}
             stagePhases={stagePhases}
             routingLabel={routingLabel}
+            session={session}
+            verified={verified}
           />
 
           <div className="flex flex-col items-center gap-3 mt-4">
@@ -417,7 +419,7 @@ function RoundTable({
   const orderedMembers = MEMBER_ORDER
     .map((id) => members.find((member) => member.id === id))
     .filter((member): member is BoardMember => Boolean(member));
-  const radius = 180;
+  const radius = 260;
 
   // Chairperson (the user / CEO) is always present at the table.
   // Other members appear when the CEO adds them manually, when the classifier
@@ -438,16 +440,7 @@ function RoundTable({
   });
 
   return (
-    <div className="board-orbit relative mx-auto hidden w-full max-w-[520px] aspect-square items-center justify-center md:flex">
-      <TopicCard
-        session={session}
-        activeQuery={activeQuery}
-        hasQuery={hasQuery}
-        stagePhases={stagePhases}
-        verified={verified}
-        running={running}
-      />
-
+    <div className="board-orbit relative mx-auto hidden w-full max-w-[640px] aspect-square items-center justify-center md:flex">
       <div className="absolute inset-0">
         {visibleOrbitMembers.map((member, index) => {
           const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
@@ -489,68 +482,44 @@ function MobileRoster({
   );
 }
 
-function TopicCard({
-  session,
+function TopicBar({
   activeQuery,
   hasQuery,
-  stagePhases,
-  verified,
   running,
+  verified,
+  session,
 }: {
-  session: BoardSession | null;
   activeQuery: string;
   hasQuery: boolean;
-  stagePhases: StagePhase[];
-  verified: boolean;
   running: boolean;
+  verified: boolean;
+  session: BoardSession | null;
 }) {
-  const haloClass = verified
-    ? 'shadow-[0_0_40px_-10px_rgba(184,134,11,0.35)]'
-    : 'shadow-[0_0_40px_-10px_rgba(184,134,11,0.20)]';
+  const hasDecision = Boolean(session?.decision);
+  const label = !hasQuery
+    ? 'Awaiting board question'
+    : hasDecision
+    ? verified ? 'Decision ready · verified' : 'Decision ready'
+    : running
+    ? 'Deliberating…'
+    : activeQuery;
+
+  const icon = !hasQuery ? (
+    <AudioLines className="h-3.5 w-3.5 text-primary-container" aria-hidden="true" />
+  ) : running ? (
+    <AudioLines className="h-3.5 w-3.5 text-primary-container animate-pulse" aria-hidden="true" />
+  ) : hasDecision ? (
+    <Check className="h-3.5 w-3.5 text-primary-container" aria-hidden="true" />
+  ) : (
+    <Sparkles className="h-3.5 w-3.5 text-primary-container" aria-hidden="true" />
+  );
 
   return (
-    <div
-      className={`glass-panel absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 w-72 h-36 rounded-xl ${haloClass}`}
-    >
-      <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 py-4">
-        {hasQuery ? (
-          <>
-            <blockquote className="line-clamp-2 text-center font-headline text-sm italic leading-snug text-on-surface">
-              &ldquo;{activeQuery}&rdquo;
-            </blockquote>
-            <div className="flex items-center gap-2">
-              {stagePhases.map((phase, idx) => (
-                <span
-                  key={`stage-pip-${idx}`}
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    phase === 'verified'
-                      ? 'bg-primary'
-                      : phase === 'complete'
-                      ? 'bg-secondary-container'
-                      : phase === 'active'
-                      ? 'bg-secondary-container animate-pulse'
-                      : phase === 'failed'
-                      ? 'bg-error'
-                      : 'bg-surface-container-highest'
-                  }`}
-                  aria-hidden="true"
-                />
-              ))}
-            </div>
-            {session?.classification?.query_type && (
-              <p className="text-[10px] tracking-wider text-on-surface-variant/70">
-                {humanize(session.classification.query_type)}
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            <AudioLines className={`h-7 w-7 text-primary ${running ? 'animate-pulse' : ''}`} aria-hidden="true" />
-            <p className="font-body text-sm text-on-surface">Awaiting board question</p>
-            <p className="text-[10px] tracking-wider text-on-surface-variant/70">CEO composer ready</p>
-          </>
-        )}
-      </div>
+    <div className="flex items-center gap-2 px-1 text-on-surface-variant">
+      {icon}
+      <p className={`flex-1 truncate font-headline italic text-sm ${hasQuery && !hasDecision && !running ? 'text-on-surface' : ''}`}>
+        {label}
+      </p>
     </div>
   );
 }
@@ -700,6 +669,8 @@ function CeoComposer({
   onSubmit,
   stagePhases,
   routingLabel,
+  session,
+  verified,
 }: {
   query: string;
   setQuery: (value: string) => void;
@@ -711,13 +682,25 @@ function CeoComposer({
   onSubmit: (event: FormEvent) => void;
   stagePhases: StagePhase[];
   routingLabel: string;
+  session: BoardSession | null;
+  verified: boolean;
 }) {
   const isDisabled = running || !query.trim();
+  const activeQuery = session?.user_query || query || '';
+  const hasQuery = Boolean(activeQuery.trim());
   return (
     <form
       onSubmit={onSubmit}
       className="mt-12 flex w-full max-w-2xl flex-col gap-4 rounded-xl bg-surface-container-lowest p-6"
     >
+      <TopicBar
+        activeQuery={activeQuery}
+        hasQuery={hasQuery}
+        running={running}
+        verified={verified}
+        session={session}
+      />
+
       <StagePipRow stagePhases={stagePhases} />
 
       <div className="relative">
