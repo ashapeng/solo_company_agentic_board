@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, Check, Circle, Rocket, Settings, Users } from 'lucide-react';
+import { Landmark, LogIn, Settings, ShieldCheck, Users } from 'lucide-react';
 import {
   GovernancePage,
   PortfolioPage,
@@ -10,9 +10,9 @@ import {
   type BoardMember,
   type BoardSession,
   type Classification,
+  type LiveFeedItem,
   type SeatState,
   type StageEvent,
-  type StageMember,
   type StreamEvent,
   type TableStatus,
   type Tab,
@@ -27,18 +27,24 @@ import {
 import { PerformancePage, loadMetricsSummary, type SessionMetrics } from './domains/harness';
 import { loadSotb } from './domains/memory';
 import {
-  MEMBER_ICONS,
-  MEMBER_IMAGES,
   STAGE_NAMES,
   addStageMember,
+  humanize,
   initialSeatStates,
   orderMembers,
   resetSeatStates,
-  roleShort,
   stageShortLabel,
   statusForStageStart,
   upsertStage,
 } from './shared/presentation';
+
+type NavItem = { id: Tab; label: string; icon: typeof Users };
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'portfolio', label: 'Portfolio', icon: Users },
+  { id: 'governance', label: 'Governance', icon: Landmark },
+  { id: 'performance', label: 'Compliance', icon: ShieldCheck },
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
@@ -52,6 +58,9 @@ export default function App() {
   const [session, setSession] = useState<BoardSession | null>(null);
   const [stageEvents, setStageEvents] = useState<StageEvent[]>([]);
   const [seatStates, setSeatStates] = useState<Record<string, SeatState>>({});
+  const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
+  const [activePhase, setActivePhase] = useState<string | null>(null);
+  const liveFeedCounter = useRef(0);
   const [tableStatus, setTableStatus] = useState<TableStatus>({
     label: 'Ready',
     title: 'Waiting for a CEO decision',
@@ -62,6 +71,22 @@ export default function App() {
   const [metricsSummary, setMetricsSummary] = useState<{ session_id?: string | null; metrics?: SessionMetrics }>({});
   const [sotb, setSotb] = useState<{ content?: string; path?: string }>({});
   const resultRef = useRef<HTMLDivElement | null>(null);
+
+  const [railExpanded, setRailExpanded] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('boardroom.railExpanded') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('boardroom.railExpanded', railExpanded ? '1' : '0');
+    } catch {
+      /* ignore quota */
+    }
+  }, [railExpanded]);
 
   useEffect(() => {
     loadMembers()
@@ -121,6 +146,9 @@ export default function App() {
     setError('');
     setSession(null);
     setStageEvents([]);
+    setLiveFeed([]);
+    setActivePhase(null);
+    liveFeedCounter.current = 0;
     setSessionLabel('Session in progress');
     setSeatStates(resetSeatStates(orderedMembers, fullBoard, manualMemberIds));
     setTableStatus({
@@ -154,7 +182,66 @@ export default function App() {
     }
   }
 
+  function pushLiveFeed(item: Omit<LiveFeedItem, 'id' | 'timestamp'>) {
+    liveFeedCounter.current += 1;
+    const entry: LiveFeedItem = {
+      ...item,
+      id: `feed-${liveFeedCounter.current}`,
+      timestamp: Date.now(),
+    };
+    setLiveFeed((current) => [entry, ...current].slice(0, 8));
+  }
+
   function handleStreamEvent(data: StreamEvent) {
+    if (data.event === 'council_selected' && Array.isArray(data.member_ids)) {
+      const selected = new Set(data.member_ids);
+      setSeatStates((states) => {
+        const next = { ...states };
+        for (const memberId of selected) {
+          next[memberId] = {
+            ...(next[memberId] || {}),
+            selected: true,
+            status: next[memberId]?.status === 'done' ? 'done' : 'selected',
+            label: next[memberId]?.label === 'selected' || !next[memberId]?.label ? 'selected' : next[memberId]?.label,
+          };
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (data.event === 'phase_change' && data.phase) {
+      setActivePhase(data.phase);
+      const message = data.message || humanize(data.phase);
+      pushLiveFeed({ kind: 'phase', text: message });
+      setTableStatus((current) => ({
+        ...current,
+        label: 'Post synthesis',
+        title: humanize(data.phase),
+        detail: message,
+      }));
+      return;
+    }
+
+    if (data.event === 'member_speaking' && data.stage && data.member_id) {
+      setSeatStates((states) => ({
+        ...states,
+        [data.member_id!]: {
+          ...(states[data.member_id!] || {}),
+          status: 'active',
+          label: data.stage === 3 ? 'synthesizing' : `speaking • ${stageShortLabel(data.stage)}`,
+        },
+      }));
+      pushLiveFeed({
+        kind: 'speaking',
+        memberId: data.member_id,
+        memberTitle: data.member_title,
+        stage: data.stage,
+        text: `${data.member_title || data.member_id} is ${data.stage === 3 ? 'synthesizing' : stageShortLabel(data.stage) === 'analysis' ? 'giving an independent read' : 'challenging peers'}`,
+      });
+      return;
+    }
+
     if (data.event === 'stage_start' && data.stage) {
       setTableStatus(statusForStageStart(data.stage, data.name));
       setStageEvents((events) => upsertStage(events, data.stage!, {
@@ -163,6 +250,11 @@ export default function App() {
         count: 0,
         members: [],
       }));
+      pushLiveFeed({
+        kind: 'stage',
+        stage: data.stage,
+        text: `Stage ${data.stage}: ${STAGE_NAMES[data.stage] || data.name || 'in progress'}`,
+      });
       if (data.stage === 3) {
         setSeatStates((states) => ({
           ...states,
@@ -197,6 +289,13 @@ export default function App() {
         ...current,
         detail: `${data.member_title || data.member_id} completed ${stageShortLabel(data.stage)}.`,
       }));
+      pushLiveFeed({
+        kind: 'done',
+        memberId: data.member_id,
+        memberTitle: data.member_title,
+        stage: data.stage,
+        text: `${data.member_title || data.member_id} finished ${stageShortLabel(data.stage)}`,
+      });
       return;
     }
 
@@ -215,6 +314,13 @@ export default function App() {
           label: 'failed',
         },
       }));
+      pushLiveFeed({
+        kind: 'failed',
+        memberId: data.member_id,
+        memberTitle: data.member_title,
+        stage: data.stage,
+        text: `${data.member_title || data.member_id} failed ${stageShortLabel(data.stage)}`,
+      });
       return;
     }
 
@@ -237,6 +343,8 @@ export default function App() {
       setSession(nextSession);
       setSessionLabel(nextSession?.session_id || 'Session complete');
       markSelectedMembers(nextSession?.classification);
+      setActivePhase(null);
+      pushLiveFeed({ kind: 'phase', text: 'Board decision ready' });
       setTableStatus({
         label: 'Complete',
         title: 'Board decision ready',
@@ -307,213 +415,159 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-[#0f172a] selection:bg-[#dae2ff] selection:text-[#001848]">
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+    <div className="min-h-screen flex bg-background text-on-surface">
+      <IconRail
+        active={activeTab}
+        onSelect={setActiveTab}
+        expanded={railExpanded}
+        onToggleExpand={() => setRailExpanded((v) => !v)}
         sessionLabel={sessionLabel}
-        memberCount={orderedMembers.length}
       />
 
-      <div className="flex min-h-screen pt-16">
-        <Sidebar
-          members={orderedMembers}
-          selectedMemberIds={manualMemberIds}
-          fullBoard={fullBoard}
-          onToggleMember={toggleManualMember}
-          onClear={() => setManualMemberIds([])}
-        />
+      <main
+        className="flex-1 min-h-screen min-w-0"
+        style={{ marginLeft: railExpanded ? 240 : 72 }}
+      >
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+          >
+            {activeTab === 'governance' && (
+              <GovernancePage
+                members={orderedMembers}
+                activeCouncilMembers={activeCouncilMembers}
+                manualMemberIds={manualMemberIds}
+                toggleManualMember={toggleManualMember}
+                fullBoard={fullBoard}
+                verify={verify}
+                setVerify={setVerify}
+                setFullBoard={setFullBoard}
+                query={query}
+                setQuery={setQuery}
+                running={running}
+                onSubmit={submitQuery}
+                tableStatus={tableStatus}
+                stageEvents={stageEvents}
+                seatStates={seatStates}
+                session={session}
+                error={error}
+                routingLabel={routingLabel}
+                sotb={sotb}
+                executionAgents={executionAgents}
+                onApproveTask={approveDelegatedTask}
+                onPlanTask={planDelegatedTask}
+                resultRef={resultRef}
+                liveFeed={liveFeed}
+                activePhase={activePhase}
+              />
+            )}
+            {activeTab === 'performance' && (
+              <PerformancePage metrics={currentMetrics} session={session} />
+            )}
+            {activeTab === 'portfolio' && (
+              <PortfolioPage members={orderedMembers} seatStates={seatStates} executionAgents={executionAgents} />
+            )}
+          </motion.div>
+        </AnimatePresence>
 
-        <main className="min-w-0 flex-1 md:ml-20">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-            >
-              {activeTab === 'governance' && (
-                <GovernancePage
-                  members={orderedMembers}
-                  activeCouncilMembers={activeCouncilMembers}
-                  manualMemberIds={manualMemberIds}
-                  fullBoard={fullBoard}
-                  verify={verify}
-                  setVerify={setVerify}
-                  setFullBoard={setFullBoard}
-                  query={query}
-                  setQuery={setQuery}
-                  running={running}
-                  onSubmit={submitQuery}
-                  tableStatus={tableStatus}
-                  stageEvents={stageEvents}
-                  seatStates={seatStates}
-                  session={session}
-                  error={error}
-                  routingLabel={routingLabel}
-                  sotb={sotb}
-                  executionAgents={executionAgents}
-                  onApproveTask={approveDelegatedTask}
-                  onPlanTask={planDelegatedTask}
-                  resultRef={resultRef}
-                />
-              )}
-              {activeTab === 'performance' && (
-                <PerformancePage metrics={currentMetrics} session={session} />
-              )}
-              {activeTab === 'portfolio' && (
-                <PortfolioPage members={orderedMembers} seatStates={seatStates} executionAgents={executionAgents} />
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </main>
-      </div>
+        <footer className="px-8 py-3 text-[10px] text-on-surface-variant/50">
+          The Executive Atelier &copy; 2026. Authority and Craftsmanship.
+        </footer>
+      </main>
     </div>
   );
 }
 
-function Navbar({
-  activeTab,
-  setActiveTab,
+function IconRail({
+  active,
+  onSelect,
+  expanded,
+  onToggleExpand,
   sessionLabel,
-  memberCount,
 }: {
-  activeTab: Tab;
-  setActiveTab: (tab: Tab) => void;
+  active: Tab;
+  onSelect: (tab: Tab) => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
   sessionLabel: string;
-  memberCount: number;
 }) {
-  const tabs: Array<{ id: Tab; label: string }> = [
-    { id: 'portfolio', label: 'Portfolio' },
-    { id: 'governance', label: 'Governance' },
-    { id: 'performance', label: 'Compliance' },
-  ];
-
   return (
-    <nav className="fixed top-0 z-50 flex h-16 w-full items-center justify-between border-b border-[#e2e8f0] bg-white/80 px-4 shadow-sm backdrop-blur-xl md:px-8">
-      <div className="flex min-w-0 items-center gap-8">
-        <div className="min-w-0">
-          <p className="truncate font-headline text-xl font-extrabold tracking-tight text-primary md:text-2xl">The Executive Atelier</p>
-          <p className="sr-only">{memberCount} board members loaded</p>
-        </div>
-        <div className="hidden h-16 items-center gap-1 md:flex">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`h-full border-b-2 px-3 text-sm font-bold transition-colors ${
-                activeTab === tab.id
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="hidden max-w-[260px] truncate rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-3 py-2 text-sm font-semibold text-slate-500 lg:inline">
-          {sessionLabel}
-        </span>
-        <button className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900" type="button" aria-label="Notifications">
-          <Bell className="h-5 w-5" />
-        </button>
-        <button className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900" type="button" aria-label="Settings">
-          <Settings className="h-5 w-5" />
-        </button>
-        <img
-          src={MEMBER_IMAGES.product}
-          alt=""
-          aria-hidden="true"
-          className="hidden h-10 w-10 rounded-full border-2 border-primary-container bg-surface-container-high object-cover p-0.5 sm:block"
-        />
-      </div>
-    </nav>
-  );
-}
-
-function Sidebar({
-  members,
-  selectedMemberIds,
-  fullBoard,
-  onToggleMember,
-  onClear,
-}: {
-  members: BoardMember[];
-  selectedMemberIds: string[];
-  fullBoard: boolean;
-  onToggleMember: (id: string) => void;
-  onClear: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <aside
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
-      className={`fixed left-0 top-16 z-40 hidden h-[calc(100vh-4rem)] flex-col gap-2 overflow-hidden bg-slate-50 p-4 transition-[width] duration-300 md:flex ${
-        expanded ? 'w-72' : 'w-20'
+    <nav
+      className={`fixed left-0 top-0 h-screen z-40 flex flex-col py-4 transition-[width] duration-200 bg-surface-container-low ${
+        expanded ? 'w-[240px]' : 'w-[72px]'
       }`}
+      aria-label="Primary"
     >
-      <div className="mb-2 flex items-center gap-3 overflow-hidden px-1 py-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
-          <Users className="h-5 w-5" />
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        className="flex items-center gap-3 px-4 py-3 hover:bg-surface-container-high transition-colors"
+        aria-label="Toggle navigation width"
+      >
+        <div className="w-10 h-10 flex items-center justify-center font-headline text-lg font-bold text-primary-container italic">
+          EA
         </div>
         {expanded && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-w-0">
-            <h2 className="truncate font-headline text-sm font-extrabold text-primary">Execution Units</h2>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Agentic Teams</p>
-          </motion.div>
+          <span className="font-headline italic text-lg text-on-surface">
+            The Executive Atelier
+          </span>
         )}
-      </div>
+      </button>
 
-      <div className="no-scrollbar flex-1 space-y-1 overflow-y-auto">
-        {members.map((member) => {
-          const selected = fullBoard || selectedMemberIds.includes(member.id);
-          const Icon = MEMBER_ICONS[member.id] || Circle;
+      <ul className="flex flex-col gap-1 mt-6 px-2">
+        {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+          const isActive = id === active;
           return (
-            <button
-              key={member.id}
-              type="button"
-              onClick={() => onToggleMember(member.id)}
-              className={`group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors ${
-                selected ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-              aria-pressed={selected}
-            >
-              <span className="flex shrink-0 items-center justify-center">
-                {selected ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
-              </span>
-              {expanded && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold">{member.title}</span>
-                  <span className={`block truncate text-xs ${selected ? 'text-primary/70' : 'text-slate-500'}`}>
-                    {member.governance_seat || roleShort(member.role)}
-                  </span>
-                </motion.div>
-              )}
-            </button>
+            <li key={id}>
+              <button
+                type="button"
+                onClick={() => onSelect(id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors ${
+                  isActive
+                    ? 'accent-bar-left bg-surface-container-high text-on-surface'
+                    : 'text-on-surface-variant/60 hover:bg-surface-container-low hover:text-on-surface'
+                }`}
+                title={expanded ? undefined : label}
+              >
+                <Icon className="w-5 h-5 shrink-0" />
+                {expanded && <span className="font-body text-sm">{label}</span>}
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
-      {expanded && (
-        <div className="mt-auto border-t border-slate-200 pt-4">
-          <button
-            type="button"
-            onClick={onClear}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary-container"
+      <div className="mt-auto px-2 pb-2 flex flex-col gap-1">
+        {expanded && sessionLabel && (
+          <div
+            className="mx-1 mb-2 truncate rounded-lg bg-surface-container-lowest px-3 py-2 text-[11px] font-medium text-on-surface-variant"
+            title={sessionLabel}
           >
-            <Rocket className="h-4 w-4" />
-            Deploy Agent
-          </button>
-          <p className="mt-3 px-2 text-xs font-semibold text-slate-500">Adaptive routing when no unit is locked.</p>
-        </div>
-      )}
-    </aside>
+            {sessionLabel}
+          </div>
+        )}
+        <button
+          type="button"
+          className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant/60 hover:bg-surface-container-low hover:text-on-surface"
+          title={expanded ? undefined : 'Settings'}
+        >
+          <Settings className="w-5 h-5 shrink-0" />
+          {expanded && <span className="font-body text-sm">Settings</span>}
+        </button>
+        <button
+          type="button"
+          className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant/60 hover:bg-surface-container-low hover:text-on-surface"
+          title={expanded ? undefined : 'Account'}
+        >
+          <LogIn className="w-5 h-5 shrink-0" />
+          {expanded && <span className="font-body text-sm">Account</span>}
+        </button>
+      </div>
+    </nav>
   );
 }
