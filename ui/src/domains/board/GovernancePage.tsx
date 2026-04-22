@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, RefObject } from 'react';
 import {
   Activity,
@@ -134,6 +134,36 @@ export function GovernancePage({
   const verified = Boolean(session?.verification?.passed);
   const [rosterOpen, setRosterOpen] = useState(false);
 
+  // Track recently-added manual members for a transient "+" badge
+  const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set());
+  const prevManualRef = useRef<string[]>(manualMemberIds);
+
+  useEffect(() => {
+    const prev = prevManualRef.current;
+    const added = manualMemberIds.filter((id) => !prev.includes(id));
+    if (added.length > 0) {
+      setJustAddedIds((current) => {
+        const next = new Set(current);
+        added.forEach((id) => next.add(id));
+        return next;
+      });
+      const timeouts = added.map((id) =>
+        setTimeout(() => {
+          setJustAddedIds((current) => {
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+          });
+        }, 2000),
+      );
+      prevManualRef.current = manualMemberIds;
+      return () => {
+        timeouts.forEach(clearTimeout);
+      };
+    }
+    prevManualRef.current = manualMemberIds;
+  }, [manualMemberIds]);
+
   return (
     <div className="min-h-[calc(100vh-5rem)] bg-background text-on-surface">
       <div className="flex flex-col gap-0 lg:flex-row">
@@ -158,6 +188,7 @@ export function GovernancePage({
             stagePhases={stagePhases}
             verified={verified}
             running={running}
+            justAddedIds={justAddedIds}
           />
 
           <CeoComposer
@@ -360,6 +391,7 @@ function CenterArena({
   stagePhases,
   verified,
   running,
+  justAddedIds,
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
@@ -370,6 +402,7 @@ function CenterArena({
   stagePhases: StagePhase[];
   verified: boolean;
   running: boolean;
+  justAddedIds: Set<string>;
 }) {
   const activeQuery = session?.user_query || query || '';
   const hasQuery = Boolean(activeQuery.trim());
@@ -387,6 +420,7 @@ function CenterArena({
         stagePhases={stagePhases}
         verified={verified}
         running={running}
+        justAddedIds={justAddedIds}
       />
     </div>
   );
@@ -403,6 +437,7 @@ function RoundTable({
   stagePhases,
   verified,
   running,
+  justAddedIds,
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
@@ -414,6 +449,7 @@ function RoundTable({
   stagePhases: StagePhase[];
   verified: boolean;
   running: boolean;
+  justAddedIds: Set<string>;
 }) {
   const displayIds = new Set(displayCouncil.map((member) => member.id));
   const manualSet = new Set(manualMemberIds);
@@ -469,6 +505,7 @@ function RoundTable({
                   member={member}
                   state={state}
                   muted={isMuted}
+                  isManualAdd={justAddedIds.has(member.id)}
                 />
               </motion.div>
             );
@@ -543,89 +580,104 @@ function BoardAvatar({
   member,
   state = {},
   muted,
+  isManualAdd = false,
 }: {
   member: BoardMember;
   state?: SeatState;
   muted?: boolean;
+  isManualAdd?: boolean;
 }) {
-  const Icon = MEMBER_ICONS[member.id] || Users;
   const status = state.status || (state.selected ? 'selected' : 'idle');
-  const imageUrl = MEMBER_IMAGES[member.id];
-  const tone = memberTone(member.id);
   const isSpeaking = status === 'active';
   const isDone = status === 'done';
   const isFailed = status === 'failed';
-  const isSelected = status === 'selected';
+  const isSelected = status === 'selected' || Boolean(state.selected);
+  const isChairperson = member.id === 'chairperson';
 
-  let ringClass = '';
-  if (isSpeaking) {
-    ringClass = 'ring-2 ring-primary ring-offset-4 ring-offset-background';
-  } else if (isSelected) {
-    ringClass = 'ring-2 ring-primary-fixed-dim ring-offset-2 ring-offset-background';
-  } else if (isDone) {
-    ringClass = 'ring-2 ring-offset-2 ring-offset-background';
-  } else if (isFailed) {
-    ringClass = 'ring-2 ring-error ring-offset-2 ring-offset-background';
-  }
+  const tone = memberTone(member.id);
+  const size = isDone || isFailed ? 48 : 64;
+  const baseOpacity = muted ? 0.45 : isFailed ? 0.55 : isDone ? 0.7 : isSelected ? 0.9 : 1;
 
-  const opacityClass = muted
-    ? 'opacity-40'
-    : isSpeaking
-    ? 'opacity-100'
-    : isDone
-    ? 'opacity-85'
-    : isSelected
-    ? 'opacity-90'
-    : 'opacity-70';
+  const ringClass =
+    muted
+      ? ''
+      : isSpeaking
+      ? 'ring-2 ring-primary ring-offset-4 ring-offset-background'
+      : isFailed
+      ? 'ring-2 ring-error'
+      : isSelected
+      ? 'ring-2 ring-secondary-container ring-offset-2 ring-offset-background'
+      : '';
 
-  const doneRingStyle: CSSProperties = isDone ? { '--tw-ring-color': tone } as CSSProperties : {};
+  const doneChairRingClass = isDone && isChairperson ? 'ring-1 ring-primary/50' : '';
+
+  const imageUrl = MEMBER_IMAGES[member.id];
+  const MemberIcon = MEMBER_ICONS[member.id] || Users;
+
+  const toneRingStyle: CSSProperties | undefined =
+    isDone && !isFailed && !isSpeaking && !isSelected && !isChairperson
+      ? { boxShadow: `0 0 0 2px ${tone}` }
+      : undefined;
 
   return (
-    <div
-      className={`member-orbit-seat group relative z-20 h-16 w-16 transition-opacity ${opacityClass}`}
-    >
-      {isSpeaking && (
-        <span className="speaking-halo pointer-events-none absolute inset-[-10px] rounded-full" aria-hidden="true" />
-      )}
-      <div className="avatar-pop relative h-16 w-16 cursor-pointer">
+    <div className="relative flex flex-col items-center gap-1" style={{ opacity: baseOpacity }}>
+      <div className="relative" style={{ width: size, height: size }}>
+        {isSpeaking && !muted && <div className="speaking-halo" aria-hidden="true" />}
+
         {imageUrl ? (
           <img
             src={imageUrl}
             alt=""
             aria-hidden="true"
-            className={`h-16 w-16 rounded-full bg-surface-container-highest p-1 object-cover ${ringClass}`}
-            style={doneRingStyle}
+            className={`relative z-10 h-full w-full rounded-full object-cover transition-[width,height] duration-200 ${ringClass} ${doneChairRingClass}`}
+            style={toneRingStyle}
           />
         ) : (
           <div
-            className={`grid h-16 w-16 place-items-center rounded-full bg-surface-container-highest p-1 text-primary ${ringClass}`}
-            style={doneRingStyle}
+            className={`relative z-10 grid h-full w-full place-items-center rounded-full bg-surface-container-highest text-primary ${ringClass} ${doneChairRingClass}`}
+            style={toneRingStyle}
           >
-            <Icon className="h-6 w-6" />
+            <MemberIcon className="h-5 w-5" aria-hidden="true" />
           </div>
         )}
 
-        {isSpeaking && (
-          <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-primary">
-            <span className="h-2 w-2 rounded-full bg-background" aria-hidden="true" />
-          </span>
+        {isSpeaking && !muted && (
+          <div
+            aria-hidden="true"
+            className="absolute bottom-0 right-0 z-20 h-3.5 w-3.5 rounded-full bg-primary ring-2 ring-background animate-pulse"
+          />
         )}
 
-        {isDone && (
-          <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-surface-container-highest">
-            <Check className="h-2.5 w-2.5 text-primary" aria-hidden="true" />
-          </span>
+        {isDone && !isFailed && (
+          <div className="absolute -bottom-0.5 -right-0.5 z-20 grid h-4 w-4 place-items-center rounded-full bg-surface-container-lowest ring-2 ring-background">
+            <Check className="h-2.5 w-2.5 text-primary-container" aria-hidden="true" />
+          </div>
         )}
 
         {isFailed && (
-          <span className="absolute -bottom-1 -right-1 grid h-4 w-4 place-items-center rounded-full bg-error-container">
+          <div className="absolute -bottom-0.5 -right-0.5 z-20 grid h-4 w-4 place-items-center rounded-full bg-error-container ring-2 ring-background">
             <X className="h-2.5 w-2.5 text-error" aria-hidden="true" />
-          </span>
+          </div>
         )}
+
+        <AnimatePresence>
+          {isManualAdd && (
+            <motion.div
+              key="manual-badge"
+              initial={{ opacity: 1, scale: 1 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.3 }}
+              transition={{ duration: 0.5 }}
+              className="absolute -top-0.5 -right-0.5 z-20 grid h-4 w-4 place-items-center rounded-full bg-secondary-container text-on-secondary font-body text-[10px] font-semibold"
+              aria-hidden="true"
+            >
+              +
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-      <div className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 text-center whitespace-nowrap">
-        <p className="text-xs font-body text-on-surface-variant">{roleLabelFor(member)}</p>
-      </div>
+
+      <span className="text-[10px] font-body text-on-surface-variant">{roleLabelFor(member)}</span>
     </div>
   );
 }
