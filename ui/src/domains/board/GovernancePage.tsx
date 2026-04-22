@@ -12,7 +12,6 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import tableTextureUrl from '../../../assets/council-table-texture.png';
 import { AgentExecutionPanel } from '../execution';
 import { FeedbackWidget, SotbCard } from '../memory';
 import {
@@ -324,13 +323,6 @@ function RightOutlook({
         <h2 className="font-headline text-2xl tracking-tight text-on-surface">Strategic Outlook</h2>
       </div>
 
-      <SelectedDigest
-        members={members}
-        states={seatStates}
-        activeCouncilMembers={activeCouncilMembers}
-        fullBoard={fullBoard}
-      />
-
       <DecisionPreview session={session} error={error} verify={verify} routingLabel={routingLabel} />
 
       <div>
@@ -433,57 +425,33 @@ function RoundTable({
 
   return (
     <div className="board-orbit relative mx-auto hidden w-full max-w-[520px] aspect-square items-center justify-center md:flex">
-      <div
-        className="relative h-full w-full overflow-hidden rounded-[100%]"
-        style={{
-          background:
-            'radial-gradient(ellipse at center, #F4EFE6 0%, #E8DFCC 60%, #DDD2BA 100%)',
-          boxShadow: '0 20px 60px -20px rgba(184, 134, 11, 0.25)',
-        }}
-      >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-[0.12]"
-          style={{
-            backgroundImage: `url(${tableTextureUrl})`,
-            backgroundSize: 'cover',
-            mixBlendMode: 'multiply',
-          }}
-        />
-        <div
-          className="pointer-events-none absolute left-1/2 top-1/2 h-3/4 w-3/4 -translate-x-1/2 -translate-y-1/2 rounded-full blur-[100px]"
-          style={{ background: 'rgba(184, 134, 11, 0.05)' }}
-          aria-hidden="true"
-        />
+      <TopicCard
+        session={session}
+        activeQuery={activeQuery}
+        hasQuery={hasQuery}
+        stagePhases={stagePhases}
+        verified={verified}
+        running={running}
+      />
 
-        <TopicCard
-          session={session}
-          activeQuery={activeQuery}
-          hasQuery={hasQuery}
-          stagePhases={stagePhases}
-          verified={verified}
-          running={running}
-        />
-
-        <div className="absolute inset-0">
-          {visibleOrbitMembers.map((member, index) => {
-            const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
-            const state = seatStates[member.id] || {};
-            const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
-            return (
-              <BoardAvatar
-                key={member.id}
-                member={member}
-                state={state}
-                muted={isMuted}
-                style={{
-                  left: `calc(50% + ${Math.cos((angle * Math.PI) / 180) * radius}px)`,
-                  top: `calc(50% + ${Math.sin((angle * Math.PI) / 180) * radius}px)`,
-                } as CSSProperties}
-              />
-            );
-          })}
-        </div>
+      <div className="absolute inset-0">
+        {visibleOrbitMembers.map((member, index) => {
+          const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
+          const state = seatStates[member.id] || {};
+          const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
+          return (
+            <BoardAvatar
+              key={member.id}
+              member={member}
+              state={state}
+              muted={isMuted}
+              style={{
+                left: `calc(50% + ${Math.cos((angle * Math.PI) / 180) * radius}px)`,
+                top: `calc(50% + ${Math.sin((angle * Math.PI) / 180) * radius}px)`,
+              } as CSSProperties}
+            />
+          );
+        })}
       </div>
 
       <MobileRoster members={orbitMembers} seatStates={seatStates} />
@@ -1046,66 +1014,6 @@ function LiveConversation({
           </li>
         )}
       </ul>
-    </article>
-  );
-}
-
-function SelectedDigest({
-  members,
-  states,
-  activeCouncilMembers,
-  fullBoard,
-}: {
-  members: BoardMember[];
-  states: Record<string, SeatState>;
-  activeCouncilMembers: BoardMember[];
-  fullBoard: boolean;
-}) {
-  const selectedMembers = activeCouncilMembers.length
-    ? activeCouncilMembers
-    : fullBoard
-    ? members
-    : members.filter((member) => states[member.id]?.selected || ['active', 'done', 'failed'].includes(states[member.id]?.status || 'idle'));
-
-  return (
-    <article>
-      <h3 className="mb-3 font-headline text-lg text-on-surface">At the Table</h3>
-      <div className="grid gap-2">
-        {selectedMembers.length ? (
-          selectedMembers.slice(0, 7).map((member) => {
-            const state = states[member.id] || {};
-            const status = state.status || 'idle';
-            const tone = memberTone(member.id);
-            const isActive = status === 'active' || status === 'done';
-            const imageUrl = MEMBER_IMAGES[member.id];
-            return (
-              <div
-                key={member.id}
-                className={`relative flex items-center gap-3 rounded-lg px-3 py-2 ${isActive ? 'bg-surface-container-high accent-bar-left' : 'bg-surface-container-lowest'}`}
-              >
-                {imageUrl ? (
-                  <img src={imageUrl} alt="" aria-hidden="true" className="h-8 w-8 shrink-0 rounded-full bg-surface-container-highest object-cover" />
-                ) : (
-                  <span className="h-8 w-8 shrink-0 rounded-full bg-surface-container-highest" aria-hidden="true" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-body text-sm font-semibold text-on-surface">{member.title}</p>
-                  <p className="truncate text-xs font-body text-on-surface-variant">{state.label || 'selected'}</p>
-                </div>
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: tone }}
-                  aria-hidden="true"
-                />
-              </div>
-            );
-          })
-        ) : (
-          <p className="rounded-lg bg-surface-container-lowest p-3 text-sm font-body italic text-on-surface-variant">
-            Adaptive routing will select the council.
-          </p>
-        )}
-      </div>
     </article>
   );
 }
