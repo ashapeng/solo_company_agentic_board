@@ -12,6 +12,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { AgentExecutionPanel } from '../execution';
 import { FeedbackWidget, SotbCard } from '../memory';
 import {
@@ -442,23 +443,37 @@ function RoundTable({
   return (
     <div className="board-orbit relative mx-auto hidden w-full max-w-[440px] aspect-square items-center justify-center md:flex">
       <div className="absolute inset-0">
-        {visibleOrbitMembers.map((member, index) => {
-          const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
-          const state = seatStates[member.id] || {};
-          const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
-          return (
-            <BoardAvatar
-              key={member.id}
-              member={member}
-              state={state}
-              muted={isMuted}
-              style={{
-                left: `calc(50% + ${Math.cos((angle * Math.PI) / 180) * radius}px)`,
-                top: `calc(50% + ${Math.sin((angle * Math.PI) / 180) * radius}px)`,
-              } as CSSProperties}
-            />
-          );
-        })}
+        <AnimatePresence>
+          {visibleOrbitMembers.map((member, index) => {
+            const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
+            const state = seatStates[member.id] || {};
+            const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
+            const left = `calc(50% + ${Math.cos((angle * Math.PI) / 180) * radius}px)`;
+            const top = `calc(50% + ${Math.sin((angle * Math.PI) / 180) * radius}px)`;
+            return (
+              <motion.div
+                key={member.id}
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.6 }}
+                transition={{
+                  duration: 0.24,
+                  ease: 'easeOut',
+                  delay: index * 0.12,
+                }}
+                layout
+                className="absolute"
+                style={{ left, top, transform: 'translate(-50%, -50%)' }}
+              >
+                <BoardAvatar
+                  member={member}
+                  state={state}
+                  muted={isMuted}
+                />
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
       </div>
 
       <MobileRoster members={visibleOrbitMembers} seatStates={seatStates} />
@@ -528,12 +543,10 @@ function BoardAvatar({
   member,
   state = {},
   muted,
-  style,
 }: {
   member: BoardMember;
   state?: SeatState;
   muted?: boolean;
-  style: CSSProperties;
 }) {
   const Icon = MEMBER_ICONS[member.id] || Users;
   const status = state.status || (state.selected ? 'selected' : 'idle');
@@ -569,8 +582,7 @@ function BoardAvatar({
 
   return (
     <div
-      className={`member-orbit-seat group absolute z-20 h-16 w-16 -translate-x-1/2 -translate-y-1/2 transition-opacity ${opacityClass}`}
-      style={style}
+      className={`member-orbit-seat group relative z-20 h-16 w-16 transition-opacity ${opacityClass}`}
     >
       {isSpeaking && (
         <span className="speaking-halo pointer-events-none absolute inset-[-10px] rounded-full" aria-hidden="true" />
