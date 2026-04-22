@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { CSSProperties, FormEvent, RefObject } from 'react';
 import {
   Activity,
@@ -5,6 +6,7 @@ import {
   Check,
   FileText,
   MoreHorizontal,
+  Plus,
   Send,
   Sparkles,
   Users,
@@ -130,6 +132,7 @@ export function GovernancePage({
   const stagePhases = STAGE_PIPS.map((pip) => computeStagePhase(pip.stage, stageEvents, session, verify));
   const hasActiveSession = Boolean(session || stageEvents.length || activePhase);
   const verified = Boolean(session?.verification?.passed);
+  const [rosterOpen, setRosterOpen] = useState(false);
 
   return (
     <div className="min-h-[calc(100vh-5rem)] bg-background text-on-surface">
@@ -169,12 +172,35 @@ export function GovernancePage({
             routingLabel={routingLabel}
           />
 
-          <MemberRosterPicker
-            members={members}
-            manualMemberIds={manualMemberIds}
-            fullBoard={fullBoard}
-            toggleManualMember={toggleManualMember}
-          />
+          <div className="flex flex-col items-center gap-3 mt-4">
+            {!rosterOpen && (
+              <button
+                type="button"
+                onClick={() => setRosterOpen(true)}
+                className="flex items-center gap-1.5 font-body text-sm text-on-surface-variant hover:text-primary-container transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add members
+              </button>
+            )}
+            {rosterOpen && (
+              <>
+                <MemberRosterPicker
+                  members={members}
+                  manualMemberIds={manualMemberIds}
+                  fullBoard={fullBoard}
+                  toggleManualMember={toggleManualMember}
+                />
+                <button
+                  type="button"
+                  onClick={() => setRosterOpen(false)}
+                  className="text-xs font-body text-on-surface-variant/70 hover:text-on-surface-variant"
+                >
+                  Hide roster
+                </button>
+              </>
+            )}
+          </div>
 
           <StageResponseDeck stageEvents={stageEvents} />
 
@@ -397,6 +423,14 @@ function RoundTable({
   const orbitMembers = orderedMembers.filter((member) => member.id !== 'chairperson');
   const radius = 180;
 
+  const sessionActive =
+    session !== null ||
+    hasQuery ||
+    stagePhases.some((phase) => phase !== 'pending') ||
+    Object.values(seatStates).some((state) => state?.status && state.status !== 'idle');
+
+  const visibleOrbitMembers = sessionActive ? orbitMembers : [];
+
   return (
     <div className="board-orbit relative mx-auto hidden w-full max-w-[520px] aspect-square items-center justify-center md:flex">
       <div
@@ -432,8 +466,8 @@ function RoundTable({
         />
 
         <div className="absolute inset-0">
-          {orbitMembers.map((member, index) => {
-            const angle = (index / Math.max(orbitMembers.length, 1)) * 360 - 90;
+          {visibleOrbitMembers.map((member, index) => {
+            const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
             const state = seatStates[member.id] || {};
             const isMuted = displayCouncil.length > 0 && !displayIds.has(member.id) && !state.selected && state.status !== 'done';
             return (
