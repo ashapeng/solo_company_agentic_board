@@ -54,6 +54,11 @@ class FeedbackRequest(BaseModel):
     note: str | None = None
 
 
+class RoutingSignalRequest(BaseModel):
+    member_id: str
+    source: Literal["manual_add", "missing_voice_flag"]
+
+
 class TaskApprovalRequest(BaseModel):
     approve: bool = True
 
