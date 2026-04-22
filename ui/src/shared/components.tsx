@@ -4,18 +4,18 @@ import { compactList, humanize } from './presentation';
 export function PanelHeading({ icon, kicker, title }: { icon: ReactNode; kicker: string; title: string }) {
   return (
     <div>
-      <p className="flex items-center gap-2 text-xs font-extrabold uppercase text-[#003d9b]">
-        {icon}
+      <p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-on-surface-variant">
+        <span className="text-primary">{icon}</span>
         {kicker}
       </p>
-      <h2 className="mt-1 text-2xl font-extrabold leading-tight text-[#0f172a]">{title}</h2>
+      <h2 className="mt-2 font-headline text-2xl font-bold leading-tight tracking-tight text-on-surface">{title}</h2>
     </div>
   );
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <h2 className="font-headline text-sm font-extrabold uppercase tracking-[0.22em] text-on-surface-variant">
+    <h2 className="font-headline text-lg font-bold tracking-tight text-on-surface">
       {children}
     </h2>
   );
@@ -23,11 +23,11 @@ export function SectionLabel({ children }: { children: ReactNode }) {
 
 export function MaterialCard({ icon, title, subtitle }: { icon: ReactNode; title: string; subtitle: string }) {
   return (
-    <article className="flex items-center rounded-lg bg-surface-container-highest p-3 transition-colors hover:bg-surface-container-high">
-      <span className="mr-3 text-primary">{icon}</span>
+    <article className="flex items-center rounded-lg bg-surface-container-lowest p-4 transition-colors hover:bg-surface-container-low">
+      <span className="mr-3 text-on-surface-variant">{icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-extrabold text-on-surface">{title}</p>
-        <p className="truncate text-xs font-semibold text-on-surface-variant">{subtitle}</p>
+        <p className="truncate text-sm font-semibold text-on-surface">{title}</p>
+        <p className="truncate text-xs font-medium text-on-surface-variant">{subtitle}</p>
       </div>
     </article>
   );
@@ -38,25 +38,29 @@ export function PlainList({ items }: { items?: string[] | string | null }) {
   const values = Array.isArray(items) ? items : [items];
   if (!values.length) return null;
   return (
-    <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed text-[#64748b]">
-      {values.map((item, index) => <li key={`${item}-${index}`}>{String(item)}</li>)}
+    <ul className="mt-3 space-y-2 pl-1 text-sm leading-relaxed text-on-surface">
+      {values.map((item, index) => (
+        <li key={`${item}-${index}`} className="flex gap-2">
+          <span aria-hidden="true" className="mt-[0.55em] h-1 w-1 shrink-0 rounded-full bg-primary" />
+          <span className="min-w-0 flex-1">{String(item)}</span>
+        </li>
+      ))}
     </ul>
   );
 }
 
 export function StageIndicator({ active, done }: { active?: boolean; done?: boolean }) {
-  return (
-    <span
-      className={`h-3 w-3 rounded-lg border ${
-        done ? 'border-[#2d8a52] bg-[#2d8a52]' : active ? 'border-[#003d9b] bg-[#003d9b]' : 'border-[#aebbb3] bg-white'
-      }`}
-    />
-  );
+  const color = done
+    ? 'bg-primary'
+    : active
+    ? 'bg-secondary-container animate-pulse'
+    : 'bg-surface-container-highest';
+  return <span className={`h-2.5 w-2.5 rounded-full ${color}`} />;
 }
 
 export function ErrorMessage({ message }: { message: string }) {
   return (
-    <div className="mt-4 rounded-lg border border-[#f0c8c2] bg-[#fff5f2] p-4 text-sm font-semibold text-[#b42318]">
+    <div className="mt-4 rounded-lg bg-error-container/15 p-4 text-sm font-medium text-error">
       {message}
     </div>
   );
@@ -64,9 +68,9 @@ export function ErrorMessage({ message }: { message: string }) {
 
 export function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mt-3 grid gap-1 border-t border-[#e2e8f0] pt-3 first:mt-0 first:border-t-0 first:pt-0">
-      <dt className="text-xs font-extrabold uppercase text-[#003d9b]">{label}</dt>
-      <dd className="text-sm leading-relaxed text-[#475569]">{value}</dd>
+    <div className="mt-3 grid gap-1 first:mt-0">
+      <dt className="text-xs font-medium text-on-surface-variant">{label}</dt>
+      <dd className="text-sm font-medium leading-relaxed text-on-surface">{value}</dd>
     </div>
   );
 }
@@ -76,10 +80,13 @@ export function TagRow({ title, items }: { title: string; items: string[] }) {
   if (!values.length) return null;
   return (
     <div className="mt-5">
-      <p className="mb-2 text-xs font-extrabold uppercase text-[#003d9b]">{title}</p>
+      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-on-surface-variant">{title}</p>
       <div className="flex flex-wrap gap-2">
         {values.map((item) => (
-          <span key={item} className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1 text-xs font-bold text-[#475569]">
+          <span
+            key={item}
+            className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant"
+          >
             {humanize(item)}
           </span>
         ))}
@@ -90,14 +97,13 @@ export function TagRow({ title, items }: { title: string; items: string[] }) {
 
 export function MetricCard({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail: string }) {
   return (
-    <article className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm">
+    <article className="rounded-lg bg-surface-container-lowest p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <p className="text-sm font-extrabold uppercase text-[#64748b]">{label}</p>
-        <div className="grid h-10 w-10 place-items-center rounded-lg bg-[#eff6ff] text-[#003d9b]">{icon}</div>
+        <p className="text-xs font-medium uppercase tracking-wider text-on-surface-variant">{label}</p>
+        <div className="grid h-10 w-10 place-items-center rounded-lg bg-surface-container-high text-primary">{icon}</div>
       </div>
-      <p className="text-4xl font-extrabold text-[#0f172a]">{value}</p>
-      <p className="mt-3 text-sm font-semibold text-[#64748b]">{detail}</p>
+      <p className="font-headline text-3xl font-bold leading-tight tracking-tight text-on-surface">{value}</p>
+      <p className="mt-3 text-xs font-medium text-on-surface-variant">{detail}</p>
     </article>
   );
 }
-

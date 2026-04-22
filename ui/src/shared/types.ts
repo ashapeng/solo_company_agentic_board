@@ -186,12 +186,24 @@ export type StreamEvent = {
   name?: string;
   member_id?: string;
   member_title?: string;
+  member_ids?: string[];
   model?: string;
   elapsed?: number;
   count?: number;
+  phase?: string;
   session?: BoardSession;
   error?: string;
   message?: string;
+};
+
+export type LiveFeedItem = {
+  id: string;
+  timestamp: number;
+  memberId?: string;
+  memberTitle?: string;
+  stage?: number;
+  kind: 'speaking' | 'done' | 'failed' | 'stage' | 'phase';
+  text: string;
 };
 
 export type TableStatus = {

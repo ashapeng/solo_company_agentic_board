@@ -3,6 +3,7 @@ export type {
   BoardSession,
   Classification,
   Decision,
+  LiveFeedItem,
   SeatStatus,
   SeatState,
   StageEvent,
