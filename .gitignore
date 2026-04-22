@@ -25,3 +25,4 @@ Thumbs.db
 # Override global gitignore for project docs
 !docs/architecture/
 .worktrees/
+.superpowers/
