@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS session_outcomes (
     clarification_questions_count INTEGER,
     clarification_answers_count INTEGER,
     delegation_task_count INTEGER,
-    harness_config_version INTEGER
+    harness_config_version INTEGER,
+    routing_misses TEXT DEFAULT '[]'
 );
 """
 
@@ -246,6 +247,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "verifier_provider": "TEXT",
         "chairman_provider": "TEXT",
         "applied_review_id": "TEXT",
+        "routing_misses": "TEXT",
     }
     for column, column_type in additions.items():
         if column not in existing:
