@@ -1,6 +1,28 @@
+import { MoreHorizontal } from 'lucide-react';
 import type { DelegatedTask, DelegationPlan, ExecutionAgent } from '../../shared/types';
 import { PlainList } from '../../shared/components';
 import { humanize, taskStatusClass } from '../../shared/presentation';
+
+function statusKickerColor(status: DelegatedTask['status']): string {
+  if (status === 'running') return 'text-primary';
+  if (status === 'completed') return 'text-primary-fixed-dim';
+  if (status === 'approved') return 'text-secondary';
+  if (status === 'blocked' || status === 'rejected') return 'text-error';
+  return 'text-on-surface-variant';
+}
+
+function progressForStatus(status: DelegatedTask['status']): number {
+  if (status === 'running') return 60;
+  if (status === 'completed') return 100;
+  if (status === 'approved') return 25;
+  if (status === 'blocked' || status === 'rejected') return 40;
+  return 10;
+}
+
+function subtaskAccentClass(status: string): string {
+  if (status === 'running' || status === 'completed') return 'accent-bar-left';
+  return '';
+}
 
 export function AgentExecutionPanel({
   delegationPlan,
@@ -20,66 +42,136 @@ export function AgentExecutionPanel({
 
   if (!tasks.length) {
     return (
-      <div className="relative grid gap-5 pl-5">
-        <div className="absolute bottom-2 left-1 top-2 w-px bg-primary-fixed" />
-        <article className="relative text-on-surface">
-          <span className="absolute -left-[1.28rem] top-1 h-2.5 w-2.5 rounded-full bg-primary" />
-          <p className="text-[11px] font-extrabold uppercase text-primary">Awaiting Delegation</p>
-          <h3 className="mt-1 text-sm font-extrabold">Manager agents stand by</h3>
-          <p className="mt-1 text-sm leading-relaxed">{routingLabel} will create approval-gated tasks after synthesis.</p>
-          {delegationPlan?.warnings?.map((warning) => (
-            <p key={warning} className="mt-2 text-xs font-semibold text-[#b42318]">{warning}</p>
-          ))}
-        </article>
+      <div className="flex flex-col gap-3 rounded-lg bg-surface-container-lowest p-5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-body text-[11px] font-medium tracking-wider text-primary-fixed-dim">
+            Awaiting Delegation
+          </p>
+          <MoreHorizontal className="h-4 w-4 text-on-surface-variant/60" aria-hidden="true" />
+        </div>
+        <h3 className="font-headline text-lg text-on-surface">Manager agents stand by</h3>
+        <p className="font-body text-sm italic leading-relaxed text-on-surface-variant">
+          No delegation planned yet. {routingLabel} will create approval-gated tasks after synthesis.
+        </p>
+        {delegationPlan?.warnings?.map((warning) => (
+          <p key={warning} className="font-body text-xs font-medium text-error">
+            {warning}
+          </p>
+        ))}
       </div>
     );
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="flex flex-col gap-4">
       {tasks.map((task) => {
         const agent = agentsById.get(task.manager_agent_id);
+        const kickerColor = statusKickerColor(task.status);
+        const progress = progressForStatus(task.status);
         return (
-          <article key={task.id} className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-3">
+          <article
+            key={task.id}
+            className="flex flex-col gap-3 rounded-lg bg-surface-container-lowest p-4"
+          >
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-extrabold uppercase text-primary">{agent?.title || humanize(task.manager_agent_id)}</p>
-                <h3 className="mt-1 text-sm font-extrabold leading-tight text-[#0f172a]">{task.title}</h3>
+              <div className="min-w-0 flex-1">
+                <p className={`text-xs font-body font-bold uppercase tracking-wider ${kickerColor}`}>
+                  {agent?.title || humanize(task.manager_agent_id)}
+                </p>
+                <h3 className="mt-1 font-body text-sm leading-tight text-on-surface">
+                  {task.title}
+                </h3>
               </div>
-              <span className={`shrink-0 rounded-lg px-2 py-1 text-[10px] font-extrabold uppercase ${taskStatusClass(task.status)}`}>
+              <span
+                className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-body font-semibold uppercase tracking-wider ${taskStatusClass(task.status)}`}
+              >
                 {task.status}
               </span>
+              <button
+                type="button"
+                aria-label="More actions"
+                className="shrink-0 rounded-lg p-1 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
             </div>
-            <p className="mt-2 text-sm leading-relaxed text-[#64748b]">{task.objective}</p>
-            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-extrabold uppercase text-[#64748b]">
-              <span className="rounded-lg border border-[#e2e8f0] bg-white px-2 py-1">{humanize(task.execution_unit_id)}</span>
-              <span className="rounded-lg border border-[#e2e8f0] bg-white px-2 py-1">{task.priority}</span>
-              <span className="rounded-lg border border-[#e2e8f0] bg-white px-2 py-1">Board: {humanize(task.accountable_board_member_id)}</span>
+
+            <p className="font-body text-sm leading-relaxed text-on-surface-variant">
+              {task.objective}
+            </p>
+
+            {task.status === 'running' && (
+              <div className="h-1 w-full rounded-full bg-surface-container-high">
+                <div
+                  className="h-1 rounded-full bg-secondary-container"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant">
+                {humanize(task.execution_unit_id)}
+              </span>
+              <span className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant">
+                Priority &middot; {task.priority}
+              </span>
+              <span className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant">
+                Board &middot; {humanize(task.accountable_board_member_id)}
+              </span>
             </div>
+
             <PlainList items={task.acceptance_criteria?.slice(0, 3)} />
+
             {task.subtask_plan?.subtasks?.length ? (
-              <div className="mt-3 grid gap-2 border-t border-[#e2e8f0] pt-3">
-                {task.subtask_plan.subtasks.map((subtask) => (
-                  <div key={subtask.id} className="rounded-lg border border-[#e2e8f0] bg-white px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-extrabold text-[#0f172a]">{subtask.title}</span>
-                      <span className="text-[10px] font-bold uppercase text-[#64748b]">{subtask.status}</span>
+              <div className="mt-1 flex flex-col gap-2 pt-2">
+                {task.subtask_plan.subtasks.map((subtask) => {
+                  const isActive = subtask.status === 'running' || subtask.status === 'completed';
+                  return (
+                    <div
+                      key={subtask.id}
+                      className={`rounded-lg bg-surface-container-low px-3 py-2 ${
+                        isActive ? subtaskAccentClass(subtask.status) : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-body text-xs font-semibold text-on-surface">
+                          {subtask.title}
+                        </span>
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-on-surface-variant">
+                          {subtask.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 font-body text-xs leading-relaxed text-on-surface-variant">
+                        {subtask.objective}
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs leading-relaxed text-[#64748b]">{subtask.objective}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
-            {task.result_summary && <p className="mt-3 text-sm font-semibold text-[#475569]">{task.result_summary}</p>}
+
+            {task.result_summary && (
+              <p className="font-body text-sm text-on-surface-variant">{task.result_summary}</p>
+            )}
             {task.artifacts?.length ? <PlainList items={task.artifacts} /> : null}
-            <div className="mt-3 flex flex-wrap gap-2">
+
+            <div className="flex flex-wrap gap-2">
               {task.status === 'proposed' && (
-                <button type="button" onClick={() => onApproveTask(task.id)} className="rounded-lg bg-[#0f172a] px-3 py-2 text-xs font-extrabold text-white hover:bg-[#003d9b]">
+                <button
+                  type="button"
+                  onClick={() => onApproveTask(task.id)}
+                  className="rounded-lg bg-surface-container-high/0 px-3 py-1.5 font-body text-sm text-primary-fixed-dim transition-colors hover:bg-surface-container-high hover:text-primary"
+                >
                   Approve Task
                 </button>
               )}
               {task.status === 'approved' && (
-                <button type="button" onClick={() => onPlanTask(task)} className="rounded-lg border border-[#cbd5e1] bg-white px-3 py-2 text-xs font-extrabold text-[#003d9b] hover:border-[#003d9b]">
+                <button
+                  type="button"
+                  onClick={() => onPlanTask(task)}
+                  className="rounded-lg bg-surface-container-high/0 px-3 py-1.5 font-body text-sm text-primary-fixed-dim transition-colors hover:bg-surface-container-high hover:text-primary"
+                >
                   Plan Subtasks
                 </button>
               )}
@@ -90,4 +182,3 @@ export function AgentExecutionPanel({
     </div>
   );
 }
-

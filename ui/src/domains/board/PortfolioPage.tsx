@@ -1,6 +1,7 @@
-import { Rocket, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import type { BoardMember, ExecutionAgent, SeatState } from '../../shared/types';
-import { Fact, PanelHeading, TagRow } from '../../shared/components';
+import { Fact, MaterialCard, PlainList, SectionLabel, TagRow } from '../../shared/components';
 import {
   MEMBER_ICONS,
   MEMBER_IMAGES,
@@ -9,6 +10,8 @@ import {
   memberTone,
   roleShort,
 } from '../../shared/presentation';
+
+type RingStyle = CSSProperties & { ['--tw-ring-color']?: string };
 
 export function PortfolioPage({
   members,
@@ -20,79 +23,133 @@ export function PortfolioPage({
   executionAgents: ExecutionAgent[];
 }) {
   return (
-    <div className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl px-4 py-6 md:px-6">
-      <header className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <PanelHeading icon={<Users className="h-4 w-4" />} kicker="Board Roster" title="Member Dossiers" />
-        <div className="rounded-lg border border-[#e2e8f0] bg-white px-4 py-3 text-sm font-bold text-[#64748b]">
-          {members.length} active members
+    <div className="flex min-h-screen flex-col gap-10 bg-background p-10">
+      <header className="flex flex-col gap-3">
+        <p className="font-body text-xs font-medium tracking-wider text-primary-fixed-dim">
+          Portfolio of Advisors
+        </p>
+        <h1 className="font-headline text-4xl italic text-on-surface">The Council</h1>
+        <p className="max-w-3xl font-body text-sm leading-relaxed text-on-surface-variant">
+          A seated roster of specialist advisors. Each dossier captures the seat, headline strength,
+          and focus the member is accountable for when the board is convened.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant">
+            {members.length} active members
+          </span>
+          {executionAgents.length > 0 && (
+            <span className="rounded-full bg-surface-container-high px-3 py-1 text-xs font-medium text-on-surface-variant">
+              {executionAgents.length} execution agents
+            </span>
+          )}
         </div>
       </header>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3">
         {members.map((member) => {
           const Icon = MEMBER_ICONS[member.id] || Users;
           const dossier = memberDossier(member);
           const state = seatStates[member.id] || {};
           const imageUrl = MEMBER_IMAGES[member.id];
+          const tone = memberTone(member.id);
+          const ringStyle: RingStyle = { ['--tw-ring-color']: tone };
           return (
-            <article key={member.id} className="rounded-lg border border-slate-100 bg-white p-6 shadow-[0_16px_40px_rgba(0,0,0,0.03)] transition hover:-translate-y-1 hover:shadow-xl" style={{ borderTopColor: memberTone(member.id) }}>
-              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
+            <article
+              key={member.id}
+              className="flex flex-col gap-4 rounded-xl bg-surface-container-lowest p-6 transition-transform hover:scale-[1.01]"
+            >
+              <div className="flex items-center gap-4">
                 {imageUrl ? (
-                  <img src={imageUrl} alt="" aria-hidden="true" className="h-14 w-14 rounded-full border-2 border-white object-cover shadow-lg ring-4 ring-primary-fixed" />
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    aria-hidden="true"
+                    className="h-16 w-16 rounded-full object-cover ring-2 ring-offset-2 ring-offset-surface-container-lowest"
+                    style={ringStyle}
+                  />
                 ) : (
-                  <div className="grid h-14 w-14 place-items-center rounded-full bg-primary/5" style={{ color: memberTone(member.id) }}>
-                    <Icon className="h-6 w-6" />
+                  <div
+                    className="grid h-16 w-16 place-items-center rounded-full bg-surface-container-high ring-2 ring-offset-2 ring-offset-surface-container-lowest"
+                    style={ringStyle}
+                  >
+                    <Icon className="h-6 w-6" style={{ color: tone }} />
                   </div>
                 )}
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-extrabold uppercase text-primary">{member.governance_seat || roleShort(member.role)}</p>
-                  <h2 className="truncate text-lg font-extrabold text-slate-900">{member.title}</h2>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[10px] font-medium uppercase tracking-wider text-primary-fixed-dim">
+                    {member.governance_seat || roleShort(member.role)}
+                  </p>
+                  <h2 className="truncate font-headline text-xl text-on-surface">{member.title}</h2>
+                  <p className="mt-1 text-xs font-medium text-on-surface-variant">
+                    {state.label || 'ready'}
+                  </p>
                 </div>
-                <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-bold uppercase text-slate-500">
-                  {state.label || 'ready'}
-                </span>
               </div>
 
-              <dl className="mt-5 grid gap-3">
-                <Fact label="Strength" value={dossier.strength} />
-                <Fact label="Focus" value={dossier.focus} />
-                <Fact label="Signal" value={dossier.signal} />
-              </dl>
+              <div>
+                <SectionLabel>Dossier</SectionLabel>
+                <dl className="mt-2 grid gap-1">
+                  <Fact label="Strength" value={dossier.strength} />
+                  <Fact label="Focus" value={dossier.focus} />
+                  <Fact label="Signal" value={dossier.signal} />
+                </dl>
+              </div>
 
               <TagRow title="Expertise" items={member.expertise} />
-              <TagRow title="Capabilities" items={member.capabilities || []} />
+
+              {member.capabilities?.length ? (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-on-surface-variant">
+                    Capabilities
+                  </p>
+                  <PlainList items={member.capabilities.slice(0, 4)} />
+                </div>
+              ) : null}
             </article>
           );
         })}
-      </div>
-
-      <section className="mt-10">
-        <header className="mb-5 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <PanelHeading icon={<Rocket className="h-4 w-4" />} kicker="Execution Agents" title="Manager Agents" />
-          <div className="rounded-lg border border-[#e2e8f0] bg-white px-4 py-3 text-sm font-bold text-[#64748b]">
-            {executionAgents.length} active agents
-          </div>
-        </header>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {executionAgents.map((agent) => (
-            <article key={agent.id} className="rounded-lg border border-slate-100 bg-white p-5 shadow-[0_16px_40px_rgba(0,0,0,0.03)]">
-              <p className="text-xs font-extrabold uppercase text-primary">{humanize(agent.execution_unit_id)}</p>
-              <h2 className="mt-1 text-lg font-extrabold text-slate-900">{agent.title}</h2>
-              <p className="mt-2 text-sm leading-relaxed text-[#64748b]">{agent.role}</p>
-              <TagRow title="Capabilities" items={agent.capabilities} />
-              <div className="mt-4 grid gap-2">
-                {agent.subagent_templates.slice(0, 3).map((template) => (
-                  <div key={template.id} className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-3 py-2">
-                    <p className="text-xs font-extrabold text-[#0f172a]">{template.title}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-[#64748b]">{template.purpose}</p>
-                  </div>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
       </section>
+
+      {executionAgents.length > 0 && (
+        <section className="flex flex-col gap-5">
+          <header className="flex flex-col gap-2">
+            <p className="font-body text-xs font-medium tracking-wider text-primary-fixed-dim">
+              Execution Fleet
+            </p>
+            <h2 className="font-headline text-2xl italic text-on-surface">Manager Agents</h2>
+            <p className="max-w-2xl font-body text-sm leading-relaxed text-on-surface-variant">
+              Approval-gated workers that pick up board decisions and translate them into subtasks.
+            </p>
+          </header>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {executionAgents.map((agent) => (
+              <article
+                key={agent.id}
+                className="flex flex-col gap-3 rounded-xl bg-surface-container-lowest p-5"
+              >
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-primary-fixed-dim">
+                    {humanize(agent.execution_unit_id)}
+                  </p>
+                  <h3 className="font-headline text-lg text-on-surface">{agent.title}</h3>
+                  <p className="font-body text-sm leading-relaxed text-on-surface-variant">
+                    {agent.role}
+                  </p>
+                </div>
+                <TagRow title="Capabilities" items={agent.capabilities} />
+                {agent.subagent_templates.slice(0, 3).map((template) => (
+                  <MaterialCard
+                    key={template.id}
+                    icon={<span className="text-xs">{'•'}</span>}
+                    title={template.title}
+                    subtitle={template.purpose}
+                  />
+                ))}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
-
