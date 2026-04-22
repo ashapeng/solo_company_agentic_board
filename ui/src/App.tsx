@@ -50,7 +50,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
   const [members, setMembers] = useState<BoardMember[]>([]);
   const [executionAgents, setExecutionAgents] = useState<ExecutionAgent[]>([]);
-  const [manualMemberIds, setManualMemberIds] = useState<string[]>([]);
+  const [manualMemberIds, setManualMemberIds] = useState<string[]>(['chairperson']);
   const [query, setQuery] = useState('');
   const [fullBoard, setFullBoard] = useState(false);
   const [verify, setVerify] = useState(false);
@@ -128,9 +128,15 @@ export default function App() {
   }, [fullBoard, manualMemberIds.length, orderedMembers, selectedSet]);
 
   const currentMetrics = session?.metrics || metricsSummary.metrics || {};
-  const routingLabel = fullBoard ? 'Full board' : manualMemberIds.length ? 'Manual council' : 'Adaptive routing';
+  const routingLabel = fullBoard
+    ? 'Full board'
+    : manualMemberIds.length > 1
+    ? 'Manual council'
+    : 'Adaptive routing';
 
   function toggleManualMember(id: string) {
+    // Chairperson (the user / CEO) is permanent — cannot be removed from the table.
+    if (id === 'chairperson') return;
     setFullBoard(false);
     setManualMemberIds((current) => (
       current.includes(id) ? current.filter((memberId) => memberId !== id) : [...current, id]
@@ -164,7 +170,9 @@ export default function App() {
         query: cleanQuery,
         full_board: fullBoard,
         verify,
-        member_ids: fullBoard || !manualMemberIds.length ? undefined : manualMemberIds,
+        // Chairperson is permanent; only switch to manual-council mode when the
+        // user has picked additional members beyond the chairperson.
+        member_ids: fullBoard || manualMemberIds.length <= 1 ? undefined : manualMemberIds,
       }, {
         onEvent: handleStreamEvent,
       });

@@ -419,7 +419,7 @@ function RoundTable({
   const orderedMembers = MEMBER_ORDER
     .map((id) => members.find((member) => member.id === id))
     .filter((member): member is BoardMember => Boolean(member));
-  const radius = 260;
+  const radius = 180;
 
   // Chairperson (the user / CEO) is always present at the table.
   // Other members appear when the CEO adds them manually, when the classifier
@@ -440,7 +440,7 @@ function RoundTable({
   });
 
   return (
-    <div className="board-orbit relative mx-auto hidden w-full max-w-[640px] aspect-square items-center justify-center md:flex">
+    <div className="board-orbit relative mx-auto hidden w-full max-w-[440px] aspect-square items-center justify-center md:flex">
       <div className="absolute inset-0">
         {visibleOrbitMembers.map((member, index) => {
           const angle = (index / Math.max(visibleOrbitMembers.length, 1)) * 360 - 90;
