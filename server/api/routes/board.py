@@ -146,6 +146,28 @@ async def deliberate_stream(req: QueryRequest, request: Request):
     def on_stage_start(stage, name):
         queue.put_nowait({"event": "stage_start", "stage": stage, "name": name})
 
+    def on_member_started(stage, member):
+        queue.put_nowait({
+            "event": "member_speaking",
+            "stage": stage,
+            "member_id": member.id,
+            "member_title": member.title,
+        })
+
+    def on_council_selected(member_ids, chairman_id):
+        queue.put_nowait({
+            "event": "council_selected",
+            "member_ids": list(member_ids or []),
+            "chairman_id": chairman_id,
+        })
+
+    def on_phase(phase, message):
+        queue.put_nowait({
+            "event": "phase_change",
+            "phase": phase,
+            "message": message,
+        })
+
     def on_member_done(stage, member, resp, error=None):
         if error:
             queue.put_nowait({
@@ -184,12 +206,15 @@ async def deliberate_stream(req: QueryRequest, request: Request):
     async def event_generator():
         orchestrator = BoardOrchestrator(
             on_stage_start=on_stage_start,
+            on_member_started=on_member_started,
             on_member_done=on_member_done,
             on_stage_done=on_stage_done,
             on_intake_card=on_intake_card,
             on_clarification_required=on_clarification_required,
             on_clarification_answered=on_clarification_answered,
             on_structured_output_warning=on_structured_output_warning,
+            on_council_selected=on_council_selected,
+            on_phase=on_phase,
         )
 
         task = asyncio.create_task(

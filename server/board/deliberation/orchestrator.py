@@ -393,12 +393,15 @@ class BoardOrchestrator:
         members: list[BoardMember] | None = None,
         chairman_id: str = "chairperson",
         on_stage_start: callable = None,
+        on_member_started: callable = None,
         on_member_done: callable = None,
         on_stage_done: callable = None,
         on_intake_card: callable = None,
         on_clarification_required: callable = None,
         on_clarification_answered: callable = None,
         on_structured_output_warning: callable = None,
+        on_council_selected: callable = None,
+        on_phase: callable = None,
     ):
         all_members = members or get_board_members()
         members_by_id = get_members_by_id()
@@ -410,12 +413,15 @@ class BoardOrchestrator:
 
         # Callbacks for progress reporting
         self._on_stage_start = on_stage_start
+        self._on_member_started = on_member_started
         self._on_member_done = on_member_done
         self._on_stage_done = on_stage_done
         self._on_intake_card = on_intake_card
         self._on_clarification_required = on_clarification_required
         self._on_clarification_answered = on_clarification_answered
         self._on_structured_output_warning = on_structured_output_warning
+        self._on_council_selected = on_council_selected
+        self._on_phase = on_phase
         self._token_budget_query_type: str | None = None
         self._token_budget_complexity: str | None = None
         self._evidence_addenda: dict[str, str] = {}
@@ -555,6 +561,8 @@ class BoardOrchestrator:
         addendum = getattr(self, "_evidence_addenda", {}).get(member.id)
         if stage == 1 and addendum:
             system_prompt = f"{member.system_prompt}\n\n{addendum}"
+
+        self._fire(self._on_member_started, stage, member)
 
         llm_resp = await query_llm(
             model,
@@ -709,6 +717,7 @@ class BoardOrchestrator:
 
         messages = [{"role": "user", "content": prompt}]
         cfg = get_config()
+        self._fire(self._on_member_started, 3, self.chairman)
         llm_resp = await query_llm(
             self.chairman_model, messages,
             system=self.chairman.system_prompt,
@@ -885,6 +894,12 @@ class BoardOrchestrator:
             mode_reason="Selected by manual scope." if member_ids else "Selected by capability routing.",
         )
 
+        self._fire(
+            self._on_council_selected,
+            [m.id for m in self.council],
+            self.chairman.id,
+        )
+
         t0 = time.monotonic()
 
         if not skip_classify:
@@ -969,6 +984,7 @@ class BoardOrchestrator:
 
         # Stage 4: Verification (opt-in)
         if verify and session.stage3_synthesis:
+            self._fire(self._on_phase, "verifying", "Quality gate auditing the chair synthesis.")
             from .verification import verify_synthesis
 
             # Get compacted stage 2 for verification context
@@ -1034,6 +1050,7 @@ class BoardOrchestrator:
                 council=self.council,
             )
             if _synthesis_has_actions(session.stage3_synthesis.content):
+                self._fire(self._on_phase, "delegation", "Chair drafting the execution delegation plan.")
                 session.delegation_plan = await self.build_delegation_plan(
                     user_query=effective_query,
                     synthesis_content=session.stage3_synthesis.content,
@@ -1054,6 +1071,7 @@ class BoardOrchestrator:
                 if "parse" in warning.lower() or session.delegation_plan.get("structured_output_failed"):
                     session.structured_output_warnings.append(warning)
                     self._fire(self._on_structured_output_warning, warning)
+            self._fire(self._on_phase, "memory", "Proposing SOTB memory update for CEO approval.")
             session.memory = propose_memory_update(
                 session.stage3_synthesis.content,
                 session_id=session_id,
@@ -1061,6 +1079,7 @@ class BoardOrchestrator:
             if session.memory.get("proposed_sotb_update"):
                 logger.info("SOTB update proposed for session %s; awaiting approval", session_id)
 
+        self._fire(self._on_phase, "finalizing", "Saving session and updating the learning ledger.")
         session.total_elapsed = round(time.monotonic() - t0, 2)
         session.save()
 
