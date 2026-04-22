@@ -19,10 +19,16 @@ from server.board.projection import BoardErrorCode, adapt_session_record
 from server.board.role_gap import review_role_gap
 from server.board.roster import load_roster
 from server.execution import get_delegation_plan, record_delegation_plan
-from server.harness.ledger import LedgerError, record_feedback
+from server.harness.ledger import LedgerError, record_feedback, record_routing_signal
 
 from .. import state
-from ..schemas import FeedbackRequest, MemberInfo, QueryRequest, RoleGapReviewRequest
+from ..schemas import (
+    FeedbackRequest,
+    MemberInfo,
+    QueryRequest,
+    RoleGapReviewRequest,
+    RoutingSignalRequest,
+)
 
 
 router = APIRouter()
@@ -262,11 +268,12 @@ async def list_sessions():
     return sorted(set(sessions), reverse=True)
 
 
-# NOTE: The sub-routes (/adapter, /delegation-plan, /feedback) MUST be declared
-# before the greedy /sessions/{session_id:path} base route. If the base route is
-# declared first, it swallows the sub-paths as part of session_id and the path-
-# traversal validator still fires, but the real sub-handlers are never reached.
-# Do NOT reorder these routes alphabetically or for any other cosmetic reason.
+# NOTE: The sub-routes (/adapter, /delegation-plan, /feedback, /routing-signal)
+# MUST be declared before the greedy /sessions/{session_id:path} base route. If
+# the base route is declared first, it swallows the sub-paths as part of
+# session_id and the path-traversal validator still fires, but the real
+# sub-handlers are never reached. Do NOT reorder these routes alphabetically or
+# for any other cosmetic reason.
 @router.get("/sessions/{session_id:path}/adapter")
 async def get_session_adapter(
     session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
@@ -320,6 +327,39 @@ async def feedback(
         raise HTTPException(404, detail=f"Session not found: {session_id}")
 
     return {"status": "recorded", "session_id": session_id}
+
+
+@router.post("/sessions/{session_id:path}/routing-signal")
+async def routing_signal(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+    req: RoutingSignalRequest = ...,  # type: ignore[assignment]
+):
+    _validate_session_id(session_id)
+
+    # Verify member_id is a known roster ID
+    member_ids = {m.id for m in BOARD_MEMBERS}
+    if req.member_id not in member_ids:
+        raise HTTPException(422, detail=f"unknown member_id: {req.member_id}")
+
+    try:
+        record_routing_signal(
+            session_id,
+            req.member_id,
+            req.source,
+            db_path=state._FEEDBACK_DB_PATH,
+        )
+    except LedgerError as exc:
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(404, detail="session not found") from exc
+        raise HTTPException(422, detail=msg) from exc
+
+    return {
+        "status": "recorded",
+        "session_id": session_id,
+        "member_id": req.member_id,
+        "source": req.source,
+    }
 
 
 @router.get("/sessions/{session_id:path}")

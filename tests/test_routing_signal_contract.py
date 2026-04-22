@@ -1,10 +1,12 @@
 """Contract tests for routing signal capture (Phase A-lite)."""
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from server.harness import ledger
 
@@ -148,3 +150,73 @@ def test_record_routing_signal_handles_null_column(tmp_db: Path) -> None:
 
     parsed = json.loads(row[0])
     assert len(parsed) == 1
+
+
+_TEST_TOKEN = "test-token-routing-signal"
+
+
+@pytest.fixture
+def test_client(tmp_path: Path, monkeypatch) -> TestClient:
+    """Build a FastAPI test client with ledger state pointed at tmp_path."""
+    db = tmp_path / "routing_ledger.db"
+    ledger.init_db(db)
+
+    # Seed a known session
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute(
+            "INSERT INTO session_outcomes (session_id, timestamp, routing_misses) VALUES (?, ?, ?)",
+            ("board_10", "2026-04-21T10:00:00Z", "[]"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from server.api import state as api_state
+    monkeypatch.setattr(api_state, "_FEEDBACK_DB_PATH", db)
+
+    # TestClient presents a non-local client host; authenticate via bearer token.
+    monkeypatch.setenv("AGENTIC_BOARD_ALLOW_REMOTE", "1")
+    monkeypatch.setenv("AGENTIC_BOARD_REMOTE_TOKEN", _TEST_TOKEN)
+
+    from server.api.app import app
+    client = TestClient(app)
+    client.headers.update({"Authorization": f"Bearer {_TEST_TOKEN}"})
+    return client
+
+
+def test_routing_signal_endpoint_records_success(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/sessions/board_10/routing-signal",
+        json={"member_id": "critic", "source": "missing_voice_flag"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "recorded"
+    assert body["session_id"] == "board_10"
+    assert body["member_id"] == "critic"
+
+
+def test_routing_signal_endpoint_rejects_bad_source(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/sessions/board_10/routing-signal",
+        json={"member_id": "critic", "source": "bogus"},
+    )
+    assert response.status_code == 422
+
+
+def test_routing_signal_endpoint_rejects_unknown_session(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/sessions/board_999/routing-signal",
+        json={"member_id": "critic", "source": "manual_add"},
+    )
+    assert response.status_code == 404
+
+
+def test_routing_signal_endpoint_rejects_invalid_session_id_format(test_client: TestClient) -> None:
+    response = test_client.post(
+        "/sessions/..%2Fetc%2Fpasswd/routing-signal",
+        json={"member_id": "critic", "source": "manual_add"},
+    )
+    # _validate_session_id rejects paths that don't match ^board_\d+$
+    assert response.status_code in (400, 404, 422)
