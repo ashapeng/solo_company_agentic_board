@@ -104,3 +104,54 @@ export async function streamDeliberation(
     }
   }
 }
+
+// ─── Routing signal (Phase A-lite) ─────────────────────────────────────────
+
+export type RoutingSignalSource = "manual_add" | "missing_voice_flag";
+
+export async function recordRoutingSignal(
+  sessionId: string,
+  memberId: string,
+  source: RoutingSignalSource,
+): Promise<void> {
+  const res = await fetch(`${API}/sessions/${sessionId}/routing-signal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ member_id: memberId, source }),
+  });
+  if (!res.ok) {
+    // Best-effort — do not throw; caller continues UI state transitions.
+    // eslint-disable-next-line no-console
+    console.warn(`routing-signal failed: ${res.status}`);
+  }
+}
+
+/**
+ * Buffer for routing signals that occur before the session is ledger-persisted.
+ * Flush via flushRoutingSignalBuffer() when the session reaches T6 completion.
+ */
+type BufferedSignal = { memberId: string; source: RoutingSignalSource; ts: string };
+const routingSignalBuffer: Map<string, BufferedSignal[]> = new Map();
+
+export function bufferRoutingSignal(
+  sessionId: string,
+  memberId: string,
+  source: RoutingSignalSource,
+): void {
+  const list = routingSignalBuffer.get(sessionId) ?? [];
+  list.push({ memberId, source, ts: new Date().toISOString() });
+  routingSignalBuffer.set(sessionId, list);
+}
+
+export async function flushRoutingSignalBuffer(sessionId: string): Promise<void> {
+  const list = routingSignalBuffer.get(sessionId);
+  if (!list || list.length === 0) return;
+  await Promise.all(
+    list.map((sig) => recordRoutingSignal(sessionId, sig.memberId, sig.source)),
+  );
+  routingSignalBuffer.delete(sessionId);
+}
+
+export function dropRoutingSignalBuffer(sessionId: string): void {
+  routingSignalBuffer.delete(sessionId);
+}
