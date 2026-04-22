@@ -26,6 +26,7 @@ import {
 } from './domains/execution';
 import { PerformancePage, loadMetricsSummary, type SessionMetrics } from './domains/harness';
 import { loadSotb } from './domains/memory';
+import { recordRoutingSignal } from './shared/api';
 import {
   STAGE_NAMES,
   addStageMember,
@@ -61,6 +62,7 @@ export default function App() {
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
   const [activePhase, setActivePhase] = useState<string | null>(null);
   const liveFeedCounter = useRef(0);
+  const pendingManualAdds = useRef<string[]>([]);
   const [tableStatus, setTableStatus] = useState<TableStatus>({
     label: 'Ready',
     title: 'Waiting for a CEO decision',
@@ -138,10 +140,35 @@ export default function App() {
     // Chairperson (the user / CEO) is permanent — cannot be removed from the table.
     if (id === 'chairperson') return;
     setFullBoard(false);
-    setManualMemberIds((current) => (
-      current.includes(id) ? current.filter((memberId) => memberId !== id) : [...current, id]
-    ));
+    setManualMemberIds((current) => {
+      const isAdding = !current.includes(id);
+      if (isAdding) {
+        // Manual-add routing signal: fire immediately if a session exists,
+        // otherwise queue locally and flush once the session_id+decision land.
+        const sessionId = session?.session_id;
+        if (sessionId) {
+          recordRoutingSignal(sessionId, id, 'manual_add').catch(() => {
+            /* best-effort */
+          });
+        } else {
+          pendingManualAdds.current.push(id);
+        }
+      }
+      return isAdding ? [...current, id] : current.filter((memberId) => memberId !== id);
+    });
   }
+
+  // Flush the pending manual-add log once the session has a real id and a decision.
+  useEffect(() => {
+    const sid = session?.session_id;
+    if (!sid || !session?.decision) return;
+    const queued = pendingManualAdds.current.splice(0);
+    queued.forEach((id) => {
+      recordRoutingSignal(sid, id, 'manual_add').catch(() => {
+        /* best-effort */
+      });
+    });
+  }, [session?.session_id, session?.decision]);
 
   async function submitQuery(event: FormEvent) {
     event.preventDefault();
