@@ -150,6 +150,7 @@ export function GovernancePage({
           <CenterArena
             members={members}
             displayCouncil={displayCouncil}
+            manualMemberIds={manualMemberIds}
             seatStates={seatStates}
             session={session}
             query={query}
@@ -349,6 +350,7 @@ function RightOutlook({
 function CenterArena({
   members,
   displayCouncil,
+  manualMemberIds,
   seatStates,
   session,
   query,
@@ -358,6 +360,7 @@ function CenterArena({
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
+  manualMemberIds: string[];
   seatStates: Record<string, SeatState>;
   session: BoardSession | null;
   query: string;
@@ -373,6 +376,7 @@ function CenterArena({
       <RoundTable
         members={members}
         displayCouncil={displayCouncil}
+        manualMemberIds={manualMemberIds}
         seatStates={seatStates}
         session={session}
         activeQuery={activeQuery}
@@ -388,6 +392,7 @@ function CenterArena({
 function RoundTable({
   members,
   displayCouncil,
+  manualMemberIds,
   seatStates,
   session,
   activeQuery,
@@ -398,6 +403,7 @@ function RoundTable({
 }: {
   members: BoardMember[];
   displayCouncil: BoardMember[];
+  manualMemberIds: string[];
   seatStates: Record<string, SeatState>;
   session: BoardSession | null;
   activeQuery: string;
@@ -407,21 +413,29 @@ function RoundTable({
   running: boolean;
 }) {
   const displayIds = new Set(displayCouncil.map((member) => member.id));
+  const manualSet = new Set(manualMemberIds);
   const orderedMembers = MEMBER_ORDER
     .map((id) => members.find((member) => member.id === id))
     .filter((member): member is BoardMember => Boolean(member));
-  // User IS the Chairperson/CEO. No avatar represents them at the table —
-  // the board is convened around the user, who sits outside the visible orbit.
-  const orbitMembers = orderedMembers.filter((member) => member.id !== 'chairperson');
   const radius = 180;
 
-  const sessionActive =
+  // Chairperson (the user / CEO) is always present at the table.
+  // Other members appear when the CEO adds them manually, when the classifier
+  // routes them, or when their seat is otherwise active.
+  const sessionLive =
     session !== null ||
     hasQuery ||
     stagePhases.some((phase) => phase !== 'pending') ||
     Object.values(seatStates).some((state) => state?.status && state.status !== 'idle');
 
-  const visibleOrbitMembers = sessionActive ? orbitMembers : [];
+  const visibleOrbitMembers = orderedMembers.filter((member) => {
+    if (member.id === 'chairperson') return true;
+    if (manualSet.has(member.id)) return true;
+    const status = seatStates[member.id]?.status;
+    if (status && status !== 'idle') return true;
+    if (sessionLive && displayIds.has(member.id)) return true;
+    return false;
+  });
 
   return (
     <div className="board-orbit relative mx-auto hidden w-full max-w-[520px] aspect-square items-center justify-center md:flex">
@@ -454,7 +468,7 @@ function RoundTable({
         })}
       </div>
 
-      <MobileRoster members={orbitMembers} seatStates={seatStates} />
+      <MobileRoster members={visibleOrbitMembers} seatStates={seatStates} />
     </div>
   );
 }
