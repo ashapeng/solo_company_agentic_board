@@ -4,6 +4,7 @@ import {
   Activity,
   AudioLines,
   Check,
+  ChevronLeft,
   ChevronRight,
   FileText,
   MoreHorizontal,
@@ -229,15 +230,37 @@ export function GovernancePage({
     }
   }, [stageEvents.length, activePhase, leftOpen]);
 
-  // Esc dismisses drawer (respect pin — do nothing if pinned)
+  // OutlookDrawer (right) open/pin state
+  const [rightOpen, setRightOpen] = useState(false);
+  const [rightPinned, setRightPinned] = useState(() => {
+    try { return localStorage.getItem('boardroom.pinRight') === '1'; } catch { return false; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('boardroom.pinRight', rightPinned ? '1' : '0'); } catch { /* ignore */ }
+  }, [rightPinned]);
+
+  // Auto-open when Stage 3 (synthesis) is active OR a decision exists
+  useEffect(() => {
+    const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
+    const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
+    const hasDecision = Boolean(session?.decision);
+    if ((stage3Active || hasDecision) && !rightOpen) {
+      setRightOpen(true);
+    }
+  }, [stageEvents, session, verify, rightOpen]);
+
+  // Esc dismisses drawer (respect pin — do nothing if pinned).
+  // Right drawer takes precedence since it holds higher value content.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (rightOpen && !rightPinned) { setRightOpen(false); return; }
       if (leftOpen && !leftPinned) setLeftOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [leftOpen, leftPinned]);
+  }, [leftOpen, leftPinned, rightOpen, rightPinned]);
 
   return (
     <div className="min-h-[calc(100vh-5rem)] bg-background text-on-surface">
@@ -334,23 +357,6 @@ export function GovernancePage({
           </div>
         </section>
 
-        <aside className="flex w-full flex-col gap-8 bg-surface-container-low p-8 lg:w-96">
-          <RightOutlook
-            members={members}
-            seatStates={seatStates}
-            activeCouncilMembers={activeCouncilMembers}
-            fullBoard={fullBoard}
-            session={session}
-            error={error}
-            verify={verify}
-            routingLabel={routingLabel}
-            manualCount={manualMemberIds.length}
-            executionAgents={executionAgents}
-            onApproveTask={onApproveTask}
-            onPlanTask={onPlanTask}
-            hasActiveSession={hasActiveSession}
-          />
-        </aside>
       </div>
 
       <BriefingDrawer
@@ -376,6 +382,40 @@ export function GovernancePage({
           aria-label="Open Briefing Room"
         >
           <ChevronRight className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
+        </button>
+      )}
+
+      <OutlookDrawer
+        open={rightOpen}
+        pinned={rightPinned}
+        onClose={() => setRightOpen(false)}
+        onTogglePin={() => setRightPinned((v) => !v)}
+      >
+        <RightOutlook
+          members={members}
+          seatStates={seatStates}
+          activeCouncilMembers={activeCouncilMembers}
+          fullBoard={fullBoard}
+          session={session}
+          error={error}
+          verify={verify}
+          routingLabel={routingLabel}
+          manualCount={manualMemberIds.length}
+          executionAgents={executionAgents}
+          onApproveTask={onApproveTask}
+          onPlanTask={onPlanTask}
+          hasActiveSession={hasActiveSession}
+        />
+      </OutlookDrawer>
+
+      {!rightOpen && (stageEvents.length > 0 || activePhase) && (
+        <button
+          type="button"
+          onClick={() => setRightOpen(true)}
+          className="fixed right-0 top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-l-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[-4px_0_12px_-4px_rgba(26,22,20,0.10)]"
+          aria-label="Open Strategic Outlook"
+        >
+          <ChevronLeft className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
         </button>
       )}
     </div>
@@ -412,6 +452,60 @@ function BriefingDrawer({
               <p className="text-[10px] tracking-wider uppercase text-primary">Strategic Materials</p>
               <h2 className="font-headline text-xl text-on-surface">Briefing Room</h2>
             </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={onTogglePin}
+                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+                aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
+                title={pinned ? 'Unpin' : 'Pin open'}
+              >
+                {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+                aria-label="Close drawer"
+              >
+                <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+          {children}
+        </motion.aside>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function OutlookDrawer({
+  open,
+  pinned,
+  onClose,
+  onTogglePin,
+  children,
+}: {
+  open: boolean;
+  pinned: boolean;
+  onClose: () => void;
+  onTogglePin: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.aside
+          key="outlook-drawer"
+          initial={{ x: 384, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          exit={{ x: 384, opacity: 0 }}
+          transition={{ ease: 'easeOut', duration: 0.28 }}
+          className="fixed right-0 top-0 bottom-0 z-30 w-[384px] overflow-y-auto bg-surface-container-low p-6 shadow-[-8px_0_32px_-8px_rgba(26,22,20,0.10)]"
+          aria-label="Strategic Outlook"
+        >
+          <header className="mb-4 flex items-start justify-between gap-2">
+            <h2 className="font-headline text-xl text-on-surface">Strategic Outlook</h2>
             <div className="flex gap-1">
               <button
                 type="button"
