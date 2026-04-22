@@ -250,6 +250,71 @@ export function GovernancePage({
     }
   }, [stageEvents, session, verify, rightOpen]);
 
+  // Density Rule 1 — Mutual exclusion: only one drawer open unless pinned.
+  // Pin acts as "respect override". Placed AFTER the auto-open effects so it
+  // runs last and reconciles whatever state the auto-openers set.
+  useEffect(() => {
+    if (leftOpen && rightOpen) {
+      if (!leftPinned && !rightPinned) {
+        // Neither pinned. Heuristic: if Stage 3 is active/complete the
+        // synthesis (right drawer) is primary — collapse left. Otherwise
+        // the briefing (left drawer) is primary — collapse right.
+        const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
+        const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
+        if (stage3Active) {
+          setLeftOpen(false);
+        } else {
+          setRightOpen(false);
+        }
+      } else if (!leftPinned && rightPinned) {
+        setLeftOpen(false);
+      } else if (leftPinned && !rightPinned) {
+        setRightOpen(false);
+      }
+      // both pinned → both stay
+    }
+  }, [leftOpen, rightOpen, leftPinned, rightPinned, stageEvents, session, verify]);
+
+  // Unread indicators — set when the auto-open trigger fires for a drawer
+  // that is currently closed (user or mutual-exclusion kept it shut).
+  const [leftUnread, setLeftUnread] = useState(false);
+  const [rightUnread, setRightUnread] = useState(false);
+  const prevStageEventCountRef = useRef(0);
+
+  useEffect(() => {
+    if (leftOpen) {
+      setLeftUnread(false);
+      prevStageEventCountRef.current = stageEvents.length;
+      return;
+    }
+    if (stageEvents.length > prevStageEventCountRef.current) {
+      setLeftUnread(true);
+    }
+    prevStageEventCountRef.current = stageEvents.length;
+  }, [stageEvents.length, leftOpen]);
+
+  useEffect(() => {
+    const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
+    const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
+    const hasDecision = Boolean(session?.decision);
+    if ((stage3Active || hasDecision) && !rightOpen) {
+      setRightUnread(true);
+    }
+    if (rightOpen) setRightUnread(false);
+  }, [stageEvents, session, verify, rightOpen]);
+
+  // Edge-tab helpers: open this drawer, and close the other one unless pinned.
+  // Keeps the mutual-exclusion reconciler honest with snappy UX.
+  const openLeftDrawer = () => {
+    setLeftOpen(true);
+    if (!rightPinned) setRightOpen(false);
+  };
+
+  const openRightDrawer = () => {
+    setRightOpen(true);
+    if (!leftPinned) setLeftOpen(false);
+  };
+
   // Esc dismisses drawer (respect pin — do nothing if pinned).
   // Right drawer takes precedence since it holds higher value content.
   useEffect(() => {
@@ -377,11 +442,17 @@ export function GovernancePage({
       {!leftOpen && (stageEvents.length > 0 || activePhase) && (
         <button
           type="button"
-          onClick={() => setLeftOpen(true)}
+          onClick={openLeftDrawer}
           className="fixed left-[72px] top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-r-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[4px_0_12px_-4px_rgba(26,22,20,0.10)]"
           aria-label="Open Briefing Room"
         >
           <ChevronRight className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
+          {leftUnread && (
+            <span
+              aria-hidden="true"
+              className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary"
+            />
+          )}
         </button>
       )}
 
@@ -411,11 +482,17 @@ export function GovernancePage({
       {!rightOpen && (stageEvents.length > 0 || activePhase) && (
         <button
           type="button"
-          onClick={() => setRightOpen(true)}
+          onClick={openRightDrawer}
           className="fixed right-0 top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-l-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[-4px_0_12px_-4px_rgba(26,22,20,0.10)]"
           aria-label="Open Strategic Outlook"
         >
           <ChevronLeft className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
+          {rightUnread && (
+            <span
+              aria-hidden="true"
+              className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary"
+            />
+          )}
         </button>
       )}
     </div>
