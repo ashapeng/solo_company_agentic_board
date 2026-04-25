@@ -54,6 +54,17 @@ async def test_kimi_k2_5_omits_temperature(monkeypatch):
     assert "temperature" not in _FakeOpenAI.last_create
 
 
+async def test_kimi_k2_6_omits_temperature(monkeypatch):
+    monkeypatch.setenv("MOONSHOT_API_KEY", "kimi-test")
+    with patch.dict("sys.modules", {"openai": SimpleNamespace(OpenAI=_FakeOpenAI)}):
+        await llm.query_llm(
+            "kimi/kimi-k2.6",
+            [{"role": "user", "content": "hi"}],
+            temperature=0.7,
+        )
+    assert "temperature" not in _FakeOpenAI.last_create
+
+
 async def test_kimi_k2_thinking_forces_one(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "kimi-test")
     with patch.dict("sys.modules", {"openai": SimpleNamespace(OpenAI=_FakeOpenAI)}):
@@ -69,7 +80,7 @@ async def test_kimi_other_model_passes_temperature(monkeypatch):
     monkeypatch.setenv("MOONSHOT_API_KEY", "kimi-test")
     with patch.dict("sys.modules", {"openai": SimpleNamespace(OpenAI=_FakeOpenAI)}):
         await llm.query_llm(
-            "kimi/kimi-k2.6",
+            "kimi/kimi-k3.0",
             [{"role": "user", "content": "hi"}],
             temperature=0.5,
         )

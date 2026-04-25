@@ -340,8 +340,8 @@ async def _send_kimi(
     # Per-model temperature rules
     if provider_model.startswith("kimi-k2-thinking"):
         kwargs["temperature"] = 1.0
-    elif provider_model.startswith("kimi-k2.5"):
-        pass  # provider enforces fixed sampling; do not pass temperature
+    elif provider_model.startswith(("kimi-k2.5", "kimi-k2.6")):
+        pass  # K2.5/K2.6: provider enforces fixed sampling; do not pass temperature
     else:
         kwargs["temperature"] = temperature
 
