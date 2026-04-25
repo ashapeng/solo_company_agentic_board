@@ -6,13 +6,11 @@ import pytest
 from server.board import llm
 
 
-@pytest.mark.asyncio
 async def test_query_llm_unknown_prefix_raises():
     with pytest.raises(RuntimeError, match="unknown provider prefix"):
         await llm.query_llm("totallymadeup/foo", [{"role": "user", "content": "hi"}])
 
 
-@pytest.mark.asyncio
 async def test_query_llm_bare_id_no_prefix_raises():
     """Bare 'provider/model' with no recognized native prefix must error
     rather than silently route to OpenRouter (the old default)."""
@@ -20,7 +18,6 @@ async def test_query_llm_bare_id_no_prefix_raises():
         await llm.query_llm("anthropic/claude-opus-4", [{"role": "user", "content": "hi"}])
 
 
-@pytest.mark.asyncio
 async def test_llm_provider_error_is_exposed():
     """LLMProviderError must be importable for fallback chain consumers."""
     assert hasattr(llm, "LLMProviderError")
