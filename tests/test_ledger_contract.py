@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from server.board.ledger import (
+from server.harness.ledger import (
     LedgerError,
     aggregate,
     init_db,
@@ -13,7 +13,7 @@ from server.board.ledger import (
     record_session,
 )
 from server.board.metrics import CallMetrics, SessionMetrics
-from server.board.orchestrator import BoardSession, MemberResponse
+from server.board.deliberation.orchestrator import BoardSession, MemberResponse
 
 
 def _make_session(

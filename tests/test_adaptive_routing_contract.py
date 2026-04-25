@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from server.board.classifier import classify_query, parse_classification
+from server.board.deliberation.classifier import classify_query, parse_classification
 from server.board.llm import LLMResponse
 from server.board.roster import (
     active_member_ids,
@@ -59,7 +59,7 @@ class AdaptiveRoutingContractTest(unittest.TestCase):
 
 class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_classifier_filters_invalid_capabilities_and_falls_back_to_decision_defaults(self):
-        with patch("server.board.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
             mock_query.return_value = LLMResponse(
                 content=(
                     "decision_type: product\n"
@@ -93,7 +93,7 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("product", classification.relevant_member_ids)
 
     async def test_classifier_surfaces_unavailable_capabilities_as_role_gap(self):
-        with patch("server.board.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
             mock_query.return_value = LLMResponse(
                 content=(
                     "decision_type: security\n"
@@ -114,8 +114,8 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("role-gap review", classification.role_gap_memo)
 
     async def test_classifier_failure_falls_back_to_full_board(self):
-        with patch("server.board.classifier.query_llm", new_callable=AsyncMock) as mock_query:
-            with patch("server.board.classifier.logger.warning"):
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+            with patch("server.board.deliberation.classifier.logger.warning"):
                 mock_query.side_effect = RuntimeError("classifier unavailable")
 
                 classification = await classify_query("Ambiguous company decision")

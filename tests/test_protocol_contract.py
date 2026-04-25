@@ -1,9 +1,9 @@
 from pathlib import Path
 import unittest
 
-from server.board.compaction import compact_stage1_responses, compact_stage2_responses
-from server.board.orchestrator import MemberResponse
-from server.board.prompts import format_stage1, format_stage2
+from server.board.deliberation.compaction import compact_stage1_responses, compact_stage2_responses
+from server.board.deliberation.orchestrator import MemberResponse
+from server.board.deliberation.prompts import format_stage1, format_stage2
 
 
 PROTOCOLS = Path("server/protocols")

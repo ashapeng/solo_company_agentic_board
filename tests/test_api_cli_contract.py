@@ -31,8 +31,8 @@ from server.api import (
     TaskStatusRequest,
     update_task_status,
 )
-from server.board.execution import parse_delegation_plan, record_delegation_plan
-from server.board.orchestrator import BoardDeliberationError, BoardSession
+from server.execution import parse_delegation_plan, record_delegation_plan
+from server.board.deliberation.orchestrator import BoardDeliberationError, BoardSession
 
 
 class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
@@ -214,7 +214,7 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmpdir.name) / "ledger.db"
-        from server.board import execution
+        import server.execution as execution
 
         self._old_db_path = execution._DEFAULT_DB_PATH
         execution._DEFAULT_DB_PATH = self.db_path
@@ -242,7 +242,7 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
         self.task_id = self.plan["tasks"][0]["id"]
 
     def tearDown(self):
-        from server.board import execution
+        import server.execution as execution
 
         execution._DEFAULT_DB_PATH = self._old_db_path
         self.tmpdir.cleanup()

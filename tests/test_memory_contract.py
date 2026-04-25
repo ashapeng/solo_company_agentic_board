@@ -1,6 +1,6 @@
 import unittest
 
-from server.board.memory_review import review_sotb_update
+from server.memory.review import review_sotb_update
 
 
 CURRENT_SOTB = """# State of the Board

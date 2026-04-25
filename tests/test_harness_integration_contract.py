@@ -4,26 +4,26 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from server.board.classifier import QueryClassification
-from server.board.harness_config import HarnessConfig, get_config
-from server.board.ledger import init_db, query_outcomes, LedgerError
+from server.board.deliberation.classifier import QueryClassification
+from server.harness.config import HarnessConfig, get_config
+from server.harness.ledger import init_db, query_outcomes, LedgerError
 from server.board.llm import LLMResponse
-from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
-from server.board.verification import VerificationResult, verify_synthesis
+from server.board.deliberation.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
+from server.board.deliberation.verification import VerificationResult, verify_synthesis
 from server.api import feedback, FeedbackRequest
 
 
 class ConfigWiringContractTest(unittest.TestCase):
     def test_orchestrator_no_longer_has_hardcoded_stage_max_tokens(self):
         """After migration, STAGE_MAX_TOKENS should not exist in orchestrator."""
-        import server.board.orchestrator as orch_module
+        import server.board.deliberation.orchestrator as orch_module
         self.assertFalse(
             hasattr(orch_module, "STAGE_MAX_TOKENS"),
             "STAGE_MAX_TOKENS should be deleted from orchestrator — now in harness_config",
         )
 
     def test_orchestrator_no_longer_has_hardcoded_response_thresholds(self):
-        import server.board.orchestrator as orch_module
+        import server.board.deliberation.orchestrator as orch_module
         self.assertFalse(hasattr(orch_module, "MAX_STAGE1_REQUIRED_RESPONSES"))
         self.assertFalse(hasattr(orch_module, "MAX_STAGE2_REQUIRED_RESPONSES"))
 
@@ -31,9 +31,9 @@ class ConfigWiringContractTest(unittest.TestCase):
 class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_orchestrator_uses_config_token_budget(self):
         """Orchestrator should pass config's max_tokens to query_llm."""
-        with patch("server.board.orchestrator.get_config") as mock_cfg:
+        with patch("server.board.deliberation.orchestrator.get_config") as mock_cfg:
             mock_cfg.return_value = HarnessConfig(stage1_max_tokens=999)
-            with patch("server.board.orchestrator.query_llm", new_callable=AsyncMock) as mock_llm:
+            with patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_llm:
                 mock_llm.return_value = LLMResponse(
                     content="Analysis.", model="test", input_tokens=1,
                     output_tokens=1, latency_seconds=0.1,
@@ -47,7 +47,7 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(call_kwargs.kwargs.get("max_tokens"), 999)
 
     async def test_orchestrator_uses_tuned_query_complexity_token_budget(self):
-        with patch("server.board.orchestrator.get_config") as mock_cfg:
+        with patch("server.board.deliberation.orchestrator.get_config") as mock_cfg:
             mock_cfg.return_value = HarnessConfig(per_query_type={
                 "strategic": {
                     "token_budgets": {
@@ -55,7 +55,7 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                     },
                 },
             })
-            with patch("server.board.orchestrator.query_llm", new_callable=AsyncMock) as mock_llm:
+            with patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_llm:
                 mock_llm.return_value = LLMResponse(
                     content="Analysis.", model="test", input_tokens=1,
                     output_tokens=1, latency_seconds=0.1,
@@ -76,9 +76,9 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_verification_uses_config_threshold(self):
         """verify_synthesis should use config's verification_threshold."""
-        with patch("server.board.verification.get_config") as mock_cfg:
+        with patch("server.board.deliberation.verification.get_config") as mock_cfg:
             mock_cfg.return_value = HarnessConfig(verification_threshold=9.0)
-            with patch("server.board.verification.query_llm", new_callable=AsyncMock) as mock_llm:
+            with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
                 mock_llm.return_value = LLMResponse(
                     content='{"score": 8, "deficiencies": [], "suggestions": []}',
                     model="verifier", input_tokens=1, output_tokens=1,
@@ -91,12 +91,12 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result.passed)
 
     async def test_verification_uses_tuned_query_type_threshold(self):
-        with patch("server.board.verification.get_config") as mock_cfg:
+        with patch("server.board.deliberation.verification.get_config") as mock_cfg:
             mock_cfg.return_value = HarnessConfig(
                 verification_threshold=7.0,
                 per_query_type={"strategic": {"verification_threshold": 9.0}},
             )
-            with patch("server.board.verification.query_llm", new_callable=AsyncMock) as mock_llm:
+            with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
                 mock_llm.return_value = LLMResponse(
                     content='{"score": 8, "deficiencies": [], "suggestions": []}',
                     model="verifier", input_tokens=1, output_tokens=1,
@@ -126,13 +126,13 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             reasoning="Strategic launch decision.",
         )
 
-        with patch("server.board.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
+        with patch("server.board.deliberation.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
             with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
                 with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
                     with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
-                        with patch("server.board.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
+                        with patch("server.board.deliberation.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
                             with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
-                                with patch("server.board.orchestrator._record_to_ledger"):
+                                with patch("server.board.deliberation.orchestrator._record_to_ledger"):
                                     mock_classify.return_value = classification
                                     mock_verify.return_value = VerificationResult(
                                         score=8,
@@ -174,7 +174,7 @@ class LedgerWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
                 with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
                     with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
-                        with patch("server.board.orchestrator._LEDGER_DB_PATH", self.db_path):
+                        with patch("server.board.deliberation.orchestrator._LEDGER_DB_PATH", self.db_path):
                             session = await orchestrator.deliberate(
                                 "Should we launch?",
                                 skip_classify=True,
@@ -198,7 +198,7 @@ class LedgerWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
                 with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
                     with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
-                        with patch("server.board.orchestrator._LEDGER_DB_PATH", self.db_path):
+                        with patch("server.board.deliberation.orchestrator._LEDGER_DB_PATH", self.db_path):
                             session = await orchestrator.deliberate(
                                 "Test query",
                                 skip_classify=True,
@@ -225,7 +225,7 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
             os.environ["AGENTIC_BOARD_ALLOW_REMOTE"] = self._old_remote
 
     async def test_valid_feedback_returns_200(self):
-        from server.board.ledger import record_session
+        from server.harness.ledger import record_session
         from tests.test_ledger_contract import _make_session
 
         record_session(_make_session("board_1700000010"), config_version=1, db_path=self.db_path)
@@ -264,7 +264,7 @@ class FeedbackEndpointContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 422)
 
     async def test_second_feedback_overwrites_first(self):
-        from server.board.ledger import record_session
+        from server.harness.ledger import record_session
         from tests.test_ledger_contract import _make_session
 
         record_session(_make_session("board_1700000013"), config_version=1, db_path=self.db_path)

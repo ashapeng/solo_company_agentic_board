@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from server.board.config import BoardMember
-from server.board.orchestrator import BoardDeliberationError, BoardOrchestrator, MemberResponse
+from server.board.deliberation.orchestrator import BoardDeliberationError, BoardOrchestrator, MemberResponse
 
 
 def _member(member_id: str) -> BoardMember:
@@ -47,7 +47,7 @@ class ErrorHandlingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             return _response(member.id, stage)
 
         with patch.object(orchestrator, "_query_member", side_effect=fake_query):
-            with patch("server.board.orchestrator.logger.warning"):
+            with patch("server.board.deliberation.orchestrator.logger.warning"):
                 responses = await orchestrator.stage1("query")
 
         self.assertEqual(["alpha", "beta", "gamma"], [response.member_id for response in responses])
@@ -67,7 +67,7 @@ class ErrorHandlingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("provider unavailable")
 
         with patch.object(orchestrator, "_query_member", side_effect=fake_query):
-            with patch("server.board.orchestrator.logger.warning"):
+            with patch("server.board.deliberation.orchestrator.logger.warning"):
                 with self.assertRaisesRegex(BoardDeliberationError, "Stage 1 failed: only 2/4"):
                     await orchestrator.stage1("query")
 
@@ -84,7 +84,7 @@ class ErrorHandlingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("provider unavailable")
 
         with patch.object(orchestrator, "_query_member", side_effect=fake_query):
-            with patch("server.board.orchestrator.logger.warning"):
+            with patch("server.board.deliberation.orchestrator.logger.warning"):
                 with self.assertRaisesRegex(BoardDeliberationError, "Stage 2 failed: only 1/3"):
                     await orchestrator.stage2("query", [_response("alpha", 1), _response("beta", 1)])
 

@@ -3,8 +3,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from server.board.llm import LLMResponse
-from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
-from server.board.verification import VerificationResult, verify_synthesis
+from server.board.deliberation.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
+from server.board.deliberation.verification import VerificationResult, verify_synthesis
 
 
 class VerificationContractTest(unittest.TestCase):
@@ -26,7 +26,7 @@ class VerificationContractTest(unittest.TestCase):
 
 class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_verify_synthesis_parses_plain_json(self):
-        with patch("server.board.verification.query_llm", new_callable=AsyncMock) as mock_query:
+        with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_query:
             mock_query.return_value = LLMResponse(
                 content='{"score": 6, "deficiencies": ["too vague"], "suggestions": ["add owner"]}',
                 model="verifier",
@@ -44,8 +44,8 @@ class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["add owner"], result.suggestions)
 
     async def test_verify_synthesis_defaults_to_indeterminate_failure_on_parse_error(self):
-        with patch("server.board.verification.query_llm", new_callable=AsyncMock) as mock_query:
-            with patch("server.board.verification.logger.warning"):
+        with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_query:
+            with patch("server.board.deliberation.verification.logger.warning"):
                 mock_query.return_value = LLMResponse(
                     content="not json",
                     model="verifier",
@@ -74,8 +74,8 @@ class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
             with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
                 with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=first_synthesis)):
-                    with patch("server.board.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
-                        with patch("server.board.orchestrator.query_llm", new_callable=AsyncMock) as mock_query:
+                    with patch("server.board.deliberation.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
+                        with patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_query:
                             with patch.object(BoardSession, "save", return_value=Path("data/sessions/board_verify.json")):
                                 mock_verify.side_effect = [
                                     VerificationResult(

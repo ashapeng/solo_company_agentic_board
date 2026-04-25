@@ -29,15 +29,15 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from server.board.config import BOARD_MEMBERS, BoardMember
-from server.board.memory import read_sotb
+from server.memory.sotb import read_sotb
 from server.board.metrics import SessionMetrics, _estimate_cost
-from server.board.orchestrator import BoardOrchestrator, BoardDeliberationError, BoardSession, MemberResponse
-from server.board.phase_d import (
+from server.board.deliberation.orchestrator import BoardOrchestrator, BoardDeliberationError, BoardSession, MemberResponse
+from server.harness.routing_compaction import (
     MIN_PHASE_D_SESSIONS_PER_QUERY_TYPE,
     tune_routing_and_compaction,
 )
-from server.board.phase_e import MIN_MODEL_SAMPLES, tune_model_assignments
-from server.board.tuner import (
+from server.harness.model_assignment import MIN_MODEL_SAMPLES, tune_model_assignments
+from server.harness.tuning import (
     MIN_FEEDBACK_SESSIONS_PER_QUERY_TYPE,
     tune_token_budgets,
     tune_verification_thresholds,

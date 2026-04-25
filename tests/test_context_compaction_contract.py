@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from server.board.compaction import compact_stage1_responses
+from server.board.deliberation.compaction import compact_stage1_responses
 from server.board.config import BoardMember
 from server.board.llm import LLMResponse
-from server.board.orchestrator import BoardOrchestrator, MemberResponse
+from server.board.deliberation.orchestrator import BoardOrchestrator, MemberResponse
 
 
 def _member(member_id: str) -> BoardMember:
@@ -125,7 +125,7 @@ class ContextCompactionAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                 latency_seconds=0.1,
             )
 
-        with patch("server.board.orchestrator.query_llm", new=AsyncMock(side_effect=fake_query_llm)):
+        with patch("server.board.deliberation.orchestrator.query_llm", new=AsyncMock(side_effect=fake_query_llm)):
             synthesis = await orchestrator.stage3(
                 "Should we build this?",
                 [_stage1_response("alpha"), _stage1_response("beta")],

@@ -6,12 +6,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from server.board.classifier import QueryClassification
-from server.board.compaction import compact_stage1_responses
-from server.board.harness_config import HarnessConfig, load_config
-from server.board.ledger import init_db
-from server.board.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
-from server.board.phase_d import extract_cited_member_ids, tune_routing_and_compaction
+from server.board.deliberation.classifier import QueryClassification
+from server.board.deliberation.compaction import compact_stage1_responses
+from server.harness.config import HarnessConfig, load_config
+from server.harness.ledger import init_db
+from server.board.deliberation.orchestrator import BoardOrchestrator, BoardSession, MemberResponse
+from server.harness.routing_compaction import extract_cited_member_ids, tune_routing_and_compaction
 
 
 def _insert_outcome(
@@ -220,13 +220,13 @@ class PhaseDRoutingContractTest(unittest.IsolatedAsyncioTestCase):
             elapsed_seconds=0.1,
         )
 
-        with patch("server.board.orchestrator.get_config", return_value=cfg):
-            with patch("server.board.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
+        with patch("server.board.deliberation.orchestrator.get_config", return_value=cfg):
+            with patch("server.board.deliberation.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
                 with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
                     with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
                         with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
                             with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
-                                with patch("server.board.orchestrator._record_to_ledger"):
+                                with patch("server.board.deliberation.orchestrator._record_to_ledger"):
                                     mock_classify.return_value = classification
                                     session = await orchestrator.deliberate(
                                         "Should we launch?",

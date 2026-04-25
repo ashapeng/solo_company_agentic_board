@@ -5,9 +5,9 @@ from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from server.board.harness_config import HarnessConfig, load_config
-from server.board.ledger import init_db
-from server.board.tuner import (
+from server.harness.config import HarnessConfig, load_config
+from server.harness.ledger import init_db
+from server.harness.tuning import (
     TOKEN_BUDGET_CEILINGS,
     TOKEN_BUDGET_FLOORS,
     VERIFICATION_THRESHOLD_CEILING,

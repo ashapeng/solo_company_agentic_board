@@ -1,9 +1,9 @@
 import unittest
 
-from server.board.memory_review import propose_memory_update
-from server.board.memory_review import review_sotb_update
+from server.memory.review import propose_memory_update
+from server.memory.review import review_sotb_update
 from server.board.role_gap import review_role_gap
-from server.board.schemas import adapt_session_record, project_board_decision
+from server.board.projection import adapt_session_record, project_board_decision
 
 
 SYNTHESIS = """### Executive Summary

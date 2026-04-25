@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.board.execution import (
+from server.execution import (
     ExecutionError,
     approve_delegated_task,
     create_evidence_packet,
@@ -16,12 +16,12 @@ from server.board.execution import (
     record_delegation_plan,
     update_delegated_task_status,
 )
-from server.board.harness_review import (
+from server.harness.reviews import (
     approve_harness_review,
     latest_harness_review,
     run_harness_review,
 )
-from server.board.schemas import adapt_session_record
+from server.board.projection import adapt_session_record
 
 
 SYNTHESIS_WITH_DELEGATION = """### Executive Summary
@@ -189,7 +189,7 @@ class DelegatedTaskLifecycleContractTest(unittest.TestCase):
 class EvidencePacketContractTest(unittest.TestCase):
     def test_evidence_packet_round_trip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            from server.board import execution
+            import server.execution as execution
 
             old_dir = execution._EVIDENCE_DIR
             execution._EVIDENCE_DIR = Path(tmpdir)
@@ -212,7 +212,7 @@ class EvidencePacketContractTest(unittest.TestCase):
 class HarnessReviewContractTest(unittest.TestCase):
     def test_harness_review_is_dry_run_and_approval_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            from server.board import harness_review
+            import server.harness.reviews as harness_review
 
             old_dir = harness_review._REVIEWS_DIR
             harness_review._REVIEWS_DIR = Path(tmpdir)

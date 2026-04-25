@@ -15,7 +15,7 @@ from server.board.config import (
 from server.board.loader import load_members
 from server.board.llm import LLMResponse
 from server.board.metrics import CallMetrics, SessionMetrics
-from server.board.orchestrator import BoardOrchestrator
+from server.board.deliberation.orchestrator import BoardOrchestrator
 
 
 class InfrastructureContractTest(unittest.TestCase):
@@ -167,7 +167,7 @@ class InfrastructureAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         )
         orchestrator = BoardOrchestrator(members=[member])
 
-        with patch("server.board.orchestrator.query_llm", new_callable=AsyncMock) as mock_query:
+        with patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_query:
             mock_query.return_value = LLMResponse(
                 content="member response",
                 model="test-model",

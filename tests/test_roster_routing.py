@@ -1,6 +1,6 @@
 import unittest
 
-from server.board.classifier import parse_classification
+from server.board.deliberation.classifier import parse_classification
 from server.board.loader import load_members
 from server.board.roster import load_roster, select_members_for_decision_type
 

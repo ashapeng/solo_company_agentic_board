@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from server.board.harness_config import (
+from server.harness.config import (
     HarnessConfig,
     load_config,
     resolve_stage_max_tokens,
