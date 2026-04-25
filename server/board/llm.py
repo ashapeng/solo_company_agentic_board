@@ -222,6 +222,67 @@ async def _send_zai(
     raise LLMProviderError(f"zai exhausted retries: {last_exc!r}") from last_exc
 
 
+async def _send_deepseek(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Send a request to DeepSeek via the OpenAI-compatible endpoint."""
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
+
+    api_key = _read_required_env("DEEPSEEK_API_KEY", "DeepSeek")
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    _, provider_model = _split_model_id(model)
+    full_messages = _full_messages(messages, system)
+
+    kwargs: dict[str, Any] = {
+        "model": provider_model,
+        "messages": full_messages,
+        "max_tokens": max_tokens,
+    }
+    if provider_model != "deepseek-reasoner":
+        kwargs["temperature"] = temperature
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+            response = await asyncio.to_thread(client.chat.completions.create, **kwargs)
+            latency = round(time.monotonic() - t0, 3)
+            input_tokens, output_tokens = _openai_shape_usage(response)
+            return LLMResponse(
+                content=_openai_shape_content(response),
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_seconds=latency,
+                finish_reason=_openai_shape_finish_reason(response),
+                response_id=_openai_shape_response_id(response),
+            )
+        except Exception as e:  # noqa: BLE001
+            if not _is_retryable(e):
+                raise
+            last_exc = e
+            if attempt < max_retries - 1:
+                backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+                logger.warning("DeepSeek call failed (attempt %d/%d): %s; retrying in %ds",
+                               attempt + 1, max_retries, e, backoff)
+                await asyncio.sleep(backoff)
+            else:
+                logger.error("DeepSeek call exhausted retries: %s", e)
+    raise LLMProviderError(f"deepseek exhausted retries: {last_exc!r}") from last_exc
+
+
 # ---------------------------------------------------------------------------
 # Provider dispatch table
 #
@@ -236,6 +297,7 @@ HandlerType = Callable[..., Awaitable[LLMResponse]]
 _PROVIDERS: dict[str, HandlerType] = {
     "glm": _send_zai,
     "zai": _send_zai,
+    "deepseek": _send_deepseek,
 }
 
 
