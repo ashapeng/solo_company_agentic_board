@@ -87,6 +87,19 @@ def _env_bool(name: str) -> bool | None:
     raise RuntimeError(f"{name} must be one of enabled/disabled, true/false, 1/0.")
 
 
+def _read_optional_int_env(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise RuntimeError(f"{name} must be an integer.") from e
+    if parsed < 0:
+        raise RuntimeError(f"{name} must be a non-negative integer.")
+    return parsed
+
+
 # ---------------------------------------------------------------------------
 # OpenAI-shape response helpers (shared by zai, deepseek, kimi, …)
 # ---------------------------------------------------------------------------
@@ -366,6 +379,117 @@ async def _send_kimi(
 
 
 # ---------------------------------------------------------------------------
+# DashScope response helpers (Qwen native SDK)
+# ---------------------------------------------------------------------------
+
+def _dashscope_response_content(response: Any) -> str:
+    output = _get_attr_or_item(response, "output", {}) or {}
+    choices = _get_attr_or_item(output, "choices", []) or []
+    if not choices:
+        return ""
+    msg = _get_attr_or_item(choices[0], "message", {}) or {}
+    return _get_attr_or_item(msg, "content", "") or ""
+
+
+def _dashscope_response_finish_reason(response: Any) -> str | None:
+    output = _get_attr_or_item(response, "output", {}) or {}
+    choices = _get_attr_or_item(output, "choices", []) or []
+    if not choices:
+        return None
+    return _get_attr_or_item(choices[0], "finish_reason", None)
+
+
+def _dashscope_response_id(response: Any) -> str | None:
+    value = _get_attr_or_item(response, "request_id", None)
+    return str(value) if value else None
+
+
+def _dashscope_response_usage(response: Any) -> tuple[int, int]:
+    usage = _get_attr_or_item(response, "usage", {}) or {}
+    return (
+        int(_get_attr_or_item(usage, "input_tokens", -1) or -1),
+        int(_get_attr_or_item(usage, "output_tokens", -1) or -1),
+    )
+
+
+async def _send_qwen(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Send a request to Alibaba DashScope via the native dashscope SDK."""
+    try:
+        from dashscope import Generation
+    except ImportError as e:
+        raise RuntimeError("dashscope is not installed. Run `uv add dashscope`.") from e
+
+    api_key = _read_required_env("DASHSCOPE_API_KEY", "Qwen/DashScope")
+    _, provider_model = _split_model_id(model)
+    full_messages = _full_messages(messages, system)
+
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "model": provider_model,
+        "messages": full_messages,
+        "result_format": "message",
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    base_url = os.getenv("DASHSCOPE_BASE_URL")
+    if base_url:
+        kwargs["base_http_api_url"] = base_url
+
+    qwen_thinking = _env_bool("QWEN_THINKING")
+    if qwen_thinking is not None:
+        kwargs["enable_thinking"] = qwen_thinking
+    qwen_budget = _read_optional_int_env("QWEN_THINKING_BUDGET")
+    if qwen_budget is not None:
+        kwargs["thinking_budget"] = qwen_budget
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            response = await asyncio.to_thread(Generation.call, **kwargs)
+            latency = round(time.monotonic() - t0, 3)
+            status = _get_attr_or_item(response, "status_code", 200)
+            if isinstance(status, int) and status >= 400:
+                # DashScope returns errors as response objects, not exceptions.
+                raise LLMProviderError(
+                    f"DashScope returned status {status}: "
+                    f"{_get_attr_or_item(response, 'message', '')}"
+                )
+            input_tokens, output_tokens = _dashscope_response_usage(response)
+            return LLMResponse(
+                content=_dashscope_response_content(response),
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_seconds=latency,
+                finish_reason=_dashscope_response_finish_reason(response),
+                response_id=_dashscope_response_id(response),
+            )
+        except Exception as e:  # noqa: BLE001
+            if not _is_retryable(e) and not isinstance(e, LLMProviderError):
+                raise
+            last_exc = e
+            if attempt < max_retries - 1:
+                backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+                logger.warning("Qwen call failed (attempt %d/%d): %s; retrying in %ds",
+                               attempt + 1, max_retries, e, backoff)
+                await asyncio.sleep(backoff)
+            else:
+                logger.error("Qwen call exhausted retries: %s", e)
+    raise LLMProviderError(f"qwen exhausted retries: {last_exc!r}") from last_exc
+
+
+# ---------------------------------------------------------------------------
 # Provider dispatch table
 #
 # Each entry: prefix -> async handler with signature
@@ -382,6 +506,7 @@ _PROVIDERS: dict[str, HandlerType] = {
     "deepseek": _send_deepseek,
     "kimi": _send_kimi,
     "moonshot": _send_kimi,
+    "qwen": _send_qwen,
 }
 
 
