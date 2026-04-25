@@ -24,5 +24,10 @@ Thumbs.db
 
 # Override global gitignore for project docs
 !docs/architecture/
+!docs/superpowers/
+!docs/superpowers/plans/
+!docs/superpowers/specs/
 .worktrees/
 .superpowers/
+.playwright-cli/
+.business_ideas/
