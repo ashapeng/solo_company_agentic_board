@@ -1,7 +1,6 @@
 """Unit tests for the OpenRouter escape-hatch handler."""
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

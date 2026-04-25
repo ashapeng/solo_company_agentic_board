@@ -692,7 +692,7 @@ async def _send_openrouter(
                 finish_reason=data["choices"][0].get("finish_reason"),
                 response_id=data.get("id"),
             )
-        except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+        except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
                 raise
             last_exc = e
