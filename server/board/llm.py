@@ -7,10 +7,12 @@ Handlers are added one per provider in subsequent tasks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,117 @@ def _read_required_env(name: str, provider_label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# OpenAI-shape response helpers (shared by zai, deepseek, kimi, …)
+# ---------------------------------------------------------------------------
+
+def _get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _openai_shape_content(response: Any) -> str:
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return ""
+    msg = _get_attr_or_item(choices[0], "message", {})
+    return _get_attr_or_item(msg, "content", "") or ""
+
+
+def _openai_shape_finish_reason(response: Any) -> str | None:
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return None
+    return _get_attr_or_item(choices[0], "finish_reason", None)
+
+
+def _openai_shape_response_id(response: Any) -> str | None:
+    value = _get_attr_or_item(response, "id", None)
+    return str(value) if value else None
+
+
+def _openai_shape_usage(response: Any) -> tuple[int, int]:
+    usage = _get_attr_or_item(response, "usage", {}) or {}
+    input_tokens = (
+        _get_attr_or_item(usage, "prompt_tokens", None)
+        or _get_attr_or_item(usage, "input_tokens", None)
+        or -1
+    )
+    output_tokens = (
+        _get_attr_or_item(usage, "completion_tokens", None)
+        or _get_attr_or_item(usage, "output_tokens", None)
+        or -1
+    )
+    return int(input_tokens), int(output_tokens)
+
+
+# ---------------------------------------------------------------------------
+# Provider handlers
+# ---------------------------------------------------------------------------
+
+async def _send_zai(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Send a request to Z.AI via zai-sdk."""
+    try:
+        from zai import ZaiClient
+    except ImportError as e:
+        raise RuntimeError("zai-sdk is not installed. Run `uv add zai-sdk`.") from e
+
+    api_key = _read_required_env("ZAI_API_KEY", "Z.AI/GLM")
+    _, provider_model = _split_model_id(model)
+    full_messages = _full_messages(messages, system)
+
+    kwargs: dict[str, Any] = {
+        "model": provider_model,
+        "messages": full_messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    thinking = os.getenv("ZAI_THINKING")
+    if thinking in {"enabled", "disabled"}:
+        kwargs["thinking"] = {"type": thinking}
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            client = ZaiClient(api_key=api_key, timeout=timeout)
+            response = await asyncio.to_thread(
+                client.chat.completions.create, **kwargs
+            )
+            latency = round(time.monotonic() - t0, 3)
+            input_tokens, output_tokens = _openai_shape_usage(response)
+            return LLMResponse(
+                content=_openai_shape_content(response),
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_seconds=latency,
+                finish_reason=_openai_shape_finish_reason(response),
+                response_id=_openai_shape_response_id(response),
+            )
+        except Exception as e:  # noqa: BLE001 — broad catch for retry policy
+            last_exc = e
+            if attempt < max_retries - 1:
+                backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+                logger.warning("Z.AI call failed (attempt %d/%d): %s; retrying in %ds",
+                               attempt + 1, max_retries, e, backoff)
+                await asyncio.sleep(backoff)
+            else:
+                logger.error("Z.AI call exhausted retries: %s", e)
+    raise LLMProviderError(f"zai exhausted retries: {last_exc!r}") from last_exc
+
+
+# ---------------------------------------------------------------------------
 # Provider dispatch table
 #
 # Each entry: prefix -> async handler with signature
@@ -84,7 +197,10 @@ def _read_required_env(name: str, provider_label: str) -> str:
 # ---------------------------------------------------------------------------
 
 HandlerType = Callable[..., Awaitable[LLMResponse]]
-_PROVIDERS: dict[str, HandlerType] = {}
+_PROVIDERS: dict[str, HandlerType] = {
+    "glm": _send_zai,
+    "zai": _send_zai,
+}
 
 
 # ---------------------------------------------------------------------------
