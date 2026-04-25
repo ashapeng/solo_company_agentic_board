@@ -730,6 +730,82 @@ _PROVIDERS: dict[str, HandlerType] = {
 
 
 # ---------------------------------------------------------------------------
+# Free-first fallback chain
+# ---------------------------------------------------------------------------
+
+FREE_FALLBACKS: list[str] = [
+    "gemini/gemini-2.5-flash",   # AI Studio free tier
+    "glm/glm-4.5-flash",         # Z.AI free
+    "qwen/qwen-flash",           # DashScope free quota (international region only)
+]
+PAID_LAST_RESORT = "deepseek/deepseek-chat"
+
+_FREE_QWEN_REGIONS = {"international", "singapore"}
+
+# Required env var per fallback model. None = handler reads env lazily and
+# missing key is its own error; we only pre-skip when we KNOW it would fail.
+_FALLBACK_KEY_ENVS: dict[str, list[str]] = {
+    "gemini/gemini-2.5-flash": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    "glm/glm-4.5-flash": ["ZAI_API_KEY"],
+    "qwen/qwen-flash": ["DASHSCOPE_API_KEY"],
+    "deepseek/deepseek-chat": ["DEEPSEEK_API_KEY"],
+}
+
+
+def _has_any_env(names: list[str]) -> bool:
+    return any(os.getenv(n) for n in names)
+
+
+def _qwen_region_is_free() -> bool:
+    region = (os.getenv("DASHSCOPE_REGION") or "cn").strip().lower()
+    return region in _FREE_QWEN_REGIONS
+
+
+def _fallback_eligible(fallback_model: str, primary_prefix: str) -> bool:
+    """Return True if this fallback model should be attempted."""
+    fb_prefix, _ = _split_model_id(fallback_model)
+    if fb_prefix == primary_prefix:
+        return False
+    keys = _FALLBACK_KEY_ENVS.get(fallback_model, [])
+    if keys and not _has_any_env(keys):
+        return False
+    if fallback_model == "qwen/qwen-flash" and not _qwen_region_is_free():
+        return False
+    return True
+
+
+async def _dispatch_to_handler(
+    prefix: str,
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Dispatch a single call to the registered handler. Raises if no handler."""
+    handler = _PROVIDERS.get(prefix)
+    if handler is None:
+        raise RuntimeError(
+            f"unknown provider prefix: {prefix!r} for model {model!r}. "
+            f"Known prefixes: {sorted(_PROVIDERS)}"
+        )
+    return await handler(
+        model,
+        messages,
+        system=system,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        max_retries=max_retries,
+        backoff_seconds=backoff_seconds,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public entry
 # ---------------------------------------------------------------------------
 
@@ -743,26 +819,68 @@ async def query_llm(
     timeout: float = 120.0,
     fallback: bool = True,
 ) -> LLMResponse:
-    """Route a chat-completion request to the configured provider.
+    """Route a chat-completion request and apply the free-first fallback chain.
 
-    Returns an LLMResponse. The free-first fallback chain (see Task 9) is
-    skipped when fallback=False or when no handler is registered for the
-    primary's prefix.
+    See spec at docs/superpowers/specs/2026-04-25-llm-providers-refactor-design.md
+    for the chain rules. The free-first chain walks
+    [gemini-2.5-flash, glm-4.5-flash, qwen-flash] (skipping entries whose key
+    isn't set, or that share the failed primary's provider, or — for qwen —
+    when DASHSCOPE_REGION isn't a free-quota region), then escalates to
+    `deepseek/deepseek-chat` as the paid last resort.
     """
-    prefix, _ = _split_model_id(model)
-    handler = _PROVIDERS.get(prefix)
-    if handler is None:
-        raise RuntimeError(
-            f"unknown provider prefix: {prefix!r} for model {model!r}. "
-            f"Known prefixes: {sorted(_PROVIDERS) or '(none registered yet)'}"
+    primary_prefix, _ = _split_model_id(model)
+
+    # Primary call — full retry budget
+    primary_exc: LLMProviderError | None = None
+    try:
+        return await _dispatch_to_handler(
+            primary_prefix, model, messages,
+            system=system, temperature=temperature, max_tokens=max_tokens,
+            timeout=timeout,
+            max_retries=PRIMARY_MAX_RETRIES,
+            backoff_seconds=PRIMARY_BACKOFF_SECONDS,
         )
-    return await handler(
-        model,
-        messages,
-        system=system,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        max_retries=PRIMARY_MAX_RETRIES,
-        backoff_seconds=PRIMARY_BACKOFF_SECONDS,
-    )
+    except LLMProviderError as e:
+        primary_exc = e
+
+    if not fallback:
+        raise primary_exc
+
+    # Free-first fallback chain
+    last_fallback_exc: Exception | None = primary_exc
+    for fb_model in FREE_FALLBACKS:
+        if not _fallback_eligible(fb_model, primary_prefix):
+            continue
+        fb_prefix, _ = _split_model_id(fb_model)
+        try:
+            logger.warning("Primary %s failed; trying free fallback %s",
+                           model, fb_model)
+            return await _dispatch_to_handler(
+                fb_prefix, fb_model, messages,
+                system=system, temperature=temperature, max_tokens=max_tokens,
+                timeout=timeout,
+                max_retries=FALLBACK_MAX_RETRIES,
+                backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+            )
+        except LLMProviderError as e:
+            last_fallback_exc = e
+            continue
+
+    # Paid last resort
+    if _fallback_eligible(PAID_LAST_RESORT, primary_prefix):
+        try:
+            logger.warning("Free fallbacks exhausted for %s; trying paid %s",
+                           model, PAID_LAST_RESORT)
+            paid_prefix, _ = _split_model_id(PAID_LAST_RESORT)
+            return await _dispatch_to_handler(
+                paid_prefix, PAID_LAST_RESORT, messages,
+                system=system, temperature=temperature, max_tokens=max_tokens,
+                timeout=timeout,
+                max_retries=FALLBACK_MAX_RETRIES,
+                backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+            )
+        except LLMProviderError as e:
+            last_fallback_exc = e
+
+    # Re-raise primary, chained from last fallback
+    raise primary_exc from last_fallback_exc

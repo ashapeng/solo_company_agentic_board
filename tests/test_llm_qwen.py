@@ -102,7 +102,11 @@ async def test_qwen_error_status_raises_provider_error(monkeypatch):
     fake_module = SimpleNamespace(Generation=_FailGeneration)
     with patch.dict("sys.modules", {"dashscope": fake_module}):
         with pytest.raises(llm.LLMProviderError):
-            await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+            await llm.query_llm(
+                "qwen/qwen-flash",
+                [{"role": "user", "content": "hi"}],
+                fallback=False,  # isolate handler behavior; don't invoke the fallback chain
+            )
 
 
 async def test_qwen_region_international_routes_to_intl_endpoint(monkeypatch):
