@@ -816,8 +816,8 @@ async def query_llm(
     *,
     system: str | None = None,
     temperature: float = 0.7,
-    max_tokens: int = 4096,
-    timeout: float = 120.0,
+    max_tokens: int = 8192,        # was 4096 — reasoning models need headroom
+    timeout: float = 240.0,        # was 120.0 — deep reasoning takes 60-90s
     fallback: bool = True,
 ) -> LLMResponse:
     """Route a chat-completion request and apply the free-first fallback chain.
