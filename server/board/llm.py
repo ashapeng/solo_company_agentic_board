@@ -588,10 +588,21 @@ async def _send_gemini(
             input_tokens = int(_get_attr_or_item(usage, "prompt_token_count", -1) or -1) if usage else -1
             output_tokens = int(_get_attr_or_item(usage, "candidates_token_count", -1) or -1) if usage else -1
             candidates = _get_attr_or_item(response, "candidates", []) or []
-            finish_reason = (
-                str(_get_attr_or_item(candidates[0], "finish_reason", None))
-                if candidates else None
-            )
+            # finish_reason: handle enum (.value preferred), str, or None
+            finish_reason = None
+            if candidates:
+                raw_reason = _get_attr_or_item(candidates[0], "finish_reason", None)
+                if raw_reason is None:
+                    finish_reason = None
+                else:
+                    # Enum members typically expose .value; fall back to .name, then str()
+                    value = getattr(raw_reason, "value", None)
+                    if isinstance(value, str):
+                        finish_reason = value
+                    else:
+                        name = getattr(raw_reason, "name", None)
+                        finish_reason = name if isinstance(name, str) else str(raw_reason)
+
             return LLMResponse(
                 content=_get_attr_or_item(response, "text", "") or "",
                 model=model,
@@ -599,7 +610,7 @@ async def _send_gemini(
                 output_tokens=output_tokens,
                 latency_seconds=latency,
                 finish_reason=finish_reason,
-                response_id=None,  # google-genai doesn't surface a request id
+                response_id=_get_attr_or_item(response, "response_id", None),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):

@@ -135,3 +135,43 @@ async def test_gemini_missing_both_keys_raises(monkeypatch):
     }):
         with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
             await llm.query_llm("gemini/gemini-2.5-flash", [{"role": "user", "content": "hi"}])
+
+
+async def test_gemini_finish_reason_extracts_enum_value(monkeypatch):
+    """Gemini's FinishReason enum must yield 'STOP', not 'FinishReason.STOP'."""
+    from enum import Enum
+
+    class _FakeFinishReason(Enum):
+        STOP = "STOP"
+        LENGTH = "LENGTH"
+
+    def _resp_with_enum_finish():
+        return SimpleNamespace(
+            text="ok",
+            candidates=[SimpleNamespace(finish_reason=_FakeFinishReason.STOP)],
+            usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1),
+            response_id="gem-resp-1",
+        )
+
+    class _Models:
+        def generate_content(self, **kwargs):
+            return _resp_with_enum_finish()
+
+    class _Cli:
+        def __init__(self, **kwargs):
+            self.models = _Models()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-test")
+    fake_genai = SimpleNamespace(Client=_Cli, types=_FAKE_TYPES)
+    fake_google = SimpleNamespace(genai=fake_genai)
+    with patch.dict("sys.modules", {
+        "google": fake_google,
+        "google.genai": fake_genai,
+    }):
+        resp = await llm.query_llm(
+            "gemini/gemini-2.5-flash",
+            [{"role": "user", "content": "hi"}],
+        )
+
+    assert resp.finish_reason == "STOP"
+    assert resp.response_id == "gem-resp-1"
