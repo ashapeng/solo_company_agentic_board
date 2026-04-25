@@ -379,6 +379,27 @@ async def _send_kimi(
 
 
 # ---------------------------------------------------------------------------
+# DashScope region → native API base URL mapping
+#
+# Source: https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-dashscope
+#
+# The native DashScope SDK uses /api/v1 (NOT /compatible-mode/v1, which is
+# the OpenAI-compat path). Values of None mean "use the SDK's built-in CN
+# default — do not override base_http_api_url".
+# ---------------------------------------------------------------------------
+
+QWEN_NATIVE_BASE_URLS: dict[str, str | None] = {
+    "international": "https://dashscope-intl.aliyuncs.com/api/v1",
+    "singapore": "https://dashscope-intl.aliyuncs.com/api/v1",
+    "us": "https://dashscope-us.aliyuncs.com/api/v1",
+    "global": "https://dashscope-us.aliyuncs.com/api/v1",
+    "cn": None,      # SDK default; no override needed
+    "china": None,
+    "beijing": None,
+}
+
+
+# ---------------------------------------------------------------------------
 # DashScope response helpers (Qwen native SDK)
 # ---------------------------------------------------------------------------
 
@@ -441,9 +462,23 @@ async def _send_qwen(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    base_url = os.getenv("DASHSCOPE_BASE_URL")
-    if base_url:
-        kwargs["base_http_api_url"] = base_url
+    explicit_base_url = os.getenv("DASHSCOPE_BASE_URL")
+    if explicit_base_url:
+        # Explicit URL override wins over region setting.
+        kwargs["base_http_api_url"] = explicit_base_url
+    else:
+        region = (os.getenv("DASHSCOPE_REGION") or "cn").strip().lower()
+        if region not in QWEN_NATIVE_BASE_URLS:
+            valid = sorted(QWEN_NATIVE_BASE_URLS)
+            raise RuntimeError(
+                f"DASHSCOPE_REGION={region!r} is not a recognised region. "
+                f"Valid options: {valid}. "
+                "Set DASHSCOPE_BASE_URL to override with an explicit URL."
+            )
+        resolved_url = QWEN_NATIVE_BASE_URLS[region]
+        if resolved_url is not None:
+            kwargs["base_http_api_url"] = resolved_url
+        # If resolved_url is None, omit the kwarg — let the SDK use its default.
 
     qwen_thinking = _env_bool("QWEN_THINKING")
     if qwen_thinking is not None:

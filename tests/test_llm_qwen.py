@@ -103,3 +103,49 @@ async def test_qwen_error_status_raises_provider_error(monkeypatch):
     with patch.dict("sys.modules", {"dashscope": fake_module}):
         with pytest.raises(llm.LLMProviderError):
             await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+
+
+async def test_qwen_region_international_routes_to_intl_endpoint(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("DASHSCOPE_REGION", "international")
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+    kw = _FakeGeneration.last_call_kwargs
+    assert kw["base_http_api_url"] == "https://dashscope-intl.aliyuncs.com/api/v1"
+
+
+async def test_qwen_region_cn_uses_sdk_default(monkeypatch):
+    """Region 'cn' (default) should NOT pass base_http_api_url — let the SDK
+    use its built-in CN endpoint."""
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("DASHSCOPE_REGION", "cn")
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+    kw = _FakeGeneration.last_call_kwargs
+    assert "base_http_api_url" not in kw
+
+
+async def test_qwen_explicit_base_url_overrides_region(monkeypatch):
+    """DASHSCOPE_BASE_URL should win over DASHSCOPE_REGION."""
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("DASHSCOPE_REGION", "international")
+    monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://custom.example.com/api")
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+    kw = _FakeGeneration.last_call_kwargs
+    assert kw["base_http_api_url"] == "https://custom.example.com/api"
+
+
+async def test_qwen_unknown_region_raises(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("DASHSCOPE_REGION", "atlantis")
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        with pytest.raises(RuntimeError, match="DASHSCOPE_REGION"):
+            await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
