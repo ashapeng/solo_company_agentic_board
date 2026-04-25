@@ -160,3 +160,50 @@ async def test_response_model_reflects_substitution(monkeypatch):
 
     resp = await llm.query_llm("kimi/kimi-k2.5", [{"role": "user", "content": "hi"}])
     assert resp.model == "gemini/gemini-2.5-flash"
+
+
+async def test_all_fallbacks_skipped_does_not_self_chain(monkeypatch):
+    """When all fallbacks are skipped (no eligible entries), the primary
+    error must propagate WITHOUT self-chaining. Verifies __cause__ is not
+    the same object as the exception itself."""
+    # Strip every fallback's API key so all entries are skipped
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ZAI_API_KEY",
+                "DASHSCOPE_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("MOONSHOT_API_KEY", "k")  # primary
+
+    async def fake_dispatch(prefix, model, messages, **kwargs):
+        raise llm.LLMProviderError(f"{model} failed")
+
+    monkeypatch.setattr(llm, "_dispatch_to_handler", fake_dispatch)
+
+    with pytest.raises(llm.LLMProviderError) as excinfo:
+        await llm.query_llm("kimi/kimi-k2.5", [{"role": "user", "content": "hi"}])
+
+    # The exception must not have its __cause__ point to itself.
+    assert excinfo.value.__cause__ is not excinfo.value
+    # Primary's message survived
+    assert "kimi/kimi-k2.5 failed" in str(excinfo.value)
+
+
+async def test_only_llm_provider_error_triggers_fallback(monkeypatch):
+    """A handler raising a non-LLMProviderError exception (e.g. RuntimeError)
+    must propagate immediately without entering the fallback chain."""
+    _all_free_keys(monkeypatch)
+
+    calls: list[str] = []
+
+    async def fake_dispatch(prefix, model, messages, **kwargs):
+        calls.append(model)
+        if model == "kimi/kimi-k2.5":
+            raise RuntimeError("buggy handler")
+        # Should never reach here
+        raise AssertionError(f"unexpected dispatch to {model}")
+
+    monkeypatch.setattr(llm, "_dispatch_to_handler", fake_dispatch)
+
+    with pytest.raises(RuntimeError, match="buggy handler"):
+        await llm.query_llm("kimi/kimi-k2.5", [{"role": "user", "content": "hi"}])
+
+    # Only the primary was attempted — no fallback chain entered
+    assert calls == ["kimi/kimi-k2.5"]

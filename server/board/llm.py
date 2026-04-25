@@ -827,6 +827,9 @@ async def query_llm(
     isn't set, or that share the failed primary's provider, or — for qwen —
     when DASHSCOPE_REGION isn't a free-quota region), then escalates to
     `deepseek/deepseek-chat` as the paid last resort.
+
+    Only `LLMProviderError` from a handler triggers the fallback chain; other
+    exceptions propagate immediately.
     """
     primary_prefix, _ = _split_model_id(model)
 
@@ -847,7 +850,7 @@ async def query_llm(
         raise primary_exc
 
     # Free-first fallback chain
-    last_fallback_exc: Exception | None = primary_exc
+    last_fallback_exc: Exception | None = None
     for fb_model in FREE_FALLBACKS:
         if not _fallback_eligible(fb_model, primary_prefix):
             continue
@@ -882,5 +885,7 @@ async def query_llm(
         except LLMProviderError as e:
             last_fallback_exc = e
 
-    # Re-raise primary, chained from last fallback
-    raise primary_exc from last_fallback_exc
+    # Re-raise primary, chained from last fallback (if any distinct fallback failed)
+    if last_fallback_exc is not None and last_fallback_exc is not primary_exc:
+        raise primary_exc from last_fallback_exc
+    raise primary_exc
