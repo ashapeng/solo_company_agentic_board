@@ -524,6 +524,97 @@ async def _send_qwen(
     raise LLMProviderError(f"qwen exhausted retries: {last_exc!r}") from last_exc
 
 
+_GEMINI_ROLE_MAP = {"assistant": "model", "system": "user", "user": "user"}
+
+
+async def _send_gemini(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Send a request to Google Gemini via the google-genai SDK."""
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+    except ImportError as e:
+        raise RuntimeError(
+            "google-genai is not installed. Run `uv add google-genai`."
+        ) from e
+
+    # Auth: GEMINI_API_KEY (or GOOGLE_API_KEY as fallback). The SDK itself
+    # respects either, but we read explicitly so we can fail with a clear msg.
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY (or GOOGLE_API_KEY) not set. Required for Gemini calls."
+        )
+
+    _, provider_model = _split_model_id(model)
+
+    # Convert messages → list[Content]; system goes into config.system_instruction
+    contents = []
+    for msg in messages:
+        role = _GEMINI_ROLE_MAP.get(msg.get("role", "user"), "user")
+        contents.append(genai_types.Content(
+            role=role,
+            parts=[genai_types.Part.from_text(msg.get("content", ""))],
+        ))
+
+    config = genai_types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+    )
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            client = genai.Client(api_key=api_key)
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=provider_model,
+                contents=contents,
+                config=config,
+            )
+            latency = round(time.monotonic() - t0, 3)
+            usage = _get_attr_or_item(response, "usage_metadata", None)
+            input_tokens = int(_get_attr_or_item(usage, "prompt_token_count", -1) or -1) if usage else -1
+            output_tokens = int(_get_attr_or_item(usage, "candidates_token_count", -1) or -1) if usage else -1
+            candidates = _get_attr_or_item(response, "candidates", []) or []
+            finish_reason = (
+                str(_get_attr_or_item(candidates[0], "finish_reason", None))
+                if candidates else None
+            )
+            return LLMResponse(
+                content=_get_attr_or_item(response, "text", "") or "",
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_seconds=latency,
+                finish_reason=finish_reason,
+                response_id=None,  # google-genai doesn't surface a request id
+            )
+        except Exception as e:  # noqa: BLE001
+            if not _is_retryable(e):
+                raise
+            last_exc = e
+            if attempt < max_retries - 1:
+                backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+                logger.warning("Gemini call failed (attempt %d/%d): %s; retrying in %ds",
+                               attempt + 1, max_retries, e, backoff)
+                await asyncio.sleep(backoff)
+            else:
+                logger.error("Gemini call exhausted retries: %s", e)
+    raise LLMProviderError(f"gemini exhausted retries: {last_exc!r}") from last_exc
+
+
 # ---------------------------------------------------------------------------
 # Provider dispatch table
 #
@@ -542,6 +633,7 @@ _PROVIDERS: dict[str, HandlerType] = {
     "kimi": _send_kimi,
     "moonshot": _send_kimi,
     "qwen": _send_qwen,
+    "gemini": _send_gemini,
 }
 
 
