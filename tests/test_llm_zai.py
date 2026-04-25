@@ -85,3 +85,63 @@ async def test_zai_missing_key_raises(monkeypatch):
     with patch.dict("sys.modules", {"zai": fake_module}):
         with pytest.raises(RuntimeError, match="ZAI_API_KEY"):
             await llm.query_llm("glm/glm-4.6", [{"role": "user", "content": "hi"}])
+
+
+async def test_zai_fails_fast_on_auth_error(monkeypatch):
+    """Auth errors (401/403) must NOT trigger the retry loop."""
+    monkeypatch.setenv("ZAI_API_KEY", "zai-test")
+
+    call_count = {"n": 0}
+
+    class _AuthError(Exception):
+        status_code = 401
+
+    class _Cli:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(
+                create=lambda **kw: (call_count.update(n=call_count["n"] + 1), _raise_auth())[1]
+            ))
+
+    def _raise_auth():
+        raise _AuthError("Unauthorized")
+
+    fake_module = SimpleNamespace(ZaiClient=_Cli)
+    with patch.dict("sys.modules", {"zai": fake_module}):
+        with pytest.raises(_AuthError):
+            await llm.query_llm("glm/glm-4.6", [{"role": "user", "content": "hi"}])
+
+    # Auth error must not trigger retries — exactly one call attempt
+    assert call_count["n"] == 1
+
+
+async def test_zai_retries_on_5xx(monkeypatch):
+    """5xx errors are retryable and trigger backoff retries."""
+    monkeypatch.setenv("ZAI_API_KEY", "zai-test")
+
+    call_count = {"n": 0}
+
+    class _ServerError(Exception):
+        status_code = 503
+
+    def _create_attempt(**kw):
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            raise _ServerError("Service Unavailable")
+        return _fake_zai_response()
+
+    class _Cli:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create_attempt))
+
+    # Patch sleep to avoid real backoff delays in tests
+    async def _instant_sleep(_):
+        return None
+
+    monkeypatch.setattr("server.board.llm.asyncio.sleep", _instant_sleep)
+
+    fake_module = SimpleNamespace(ZaiClient=_Cli)
+    with patch.dict("sys.modules", {"zai": fake_module}):
+        resp = await llm.query_llm("glm/glm-4.6", [{"role": "user", "content": "hi"}])
+
+    assert resp.content == "hello from zai"
+    assert call_count["n"] == 3  # 2 failures, then success on attempt 3

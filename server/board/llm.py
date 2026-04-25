@@ -120,6 +120,40 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
     return int(input_tokens), int(output_tokens)
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Return True if an exception represents a transient/retryable failure.
+
+    Retryable: timeouts, connection errors, HTTP 5xx, HTTP 429.
+    NON-retryable: HTTP 4xx (auth, bad request, not found, etc.) — fail fast.
+    Raised before reaching the retry loop so callers see the original error.
+    """
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    name = type(exc).__name__
+    # Common transient exception names across SDKs (httpx, openai, google-genai, zai)
+    if any(token in name for token in (
+        "Timeout", "ConnectError", "ConnectionError",
+        "RateLimit", "InternalServer", "ServiceUnavailable",
+        "BadGateway", "GatewayTimeout",
+    )):
+        return True
+    # Look for HTTP status (httpx.HTTPStatusError, openai.APIStatusError, etc.)
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        if status == 429 or status >= 500:
+            return True
+        # 4xx other than 429 are non-retryable
+        return False
+    # Unknown shape — be conservative: do NOT retry. Auth errors with
+    # idiosyncratic exception names will fail fast instead of waiting out
+    # the backoff schedule.
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Provider handlers
 # ---------------------------------------------------------------------------
@@ -175,6 +209,8 @@ async def _send_zai(
                 response_id=_openai_shape_response_id(response),
             )
         except Exception as e:  # noqa: BLE001 — broad catch for retry policy
+            if not _is_retryable(e):
+                raise
             last_exc = e
             if attempt < max_retries - 1:
                 backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
