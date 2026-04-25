@@ -39,7 +39,20 @@ COST_RATES: dict[str, tuple[float, float]] = {
     "deepseek/deepseek-chat":     (0.27, 1.10),
     "deepseek/deepseek-reasoner": (0.55, 2.19),
     "kimi/kimi-k2.5":             (0.60, 2.50),
-    "kimi/kimi-k2.6":             (0.60, 2.50),
+    "kimi/kimi-k2.6":             (0.95, 4.00),    # was (0.60, 2.50) — guidebook §3e
+    # Latest reasoning models (April 2026)
+    "deepseek/deepseek-v4-flash":  (0.14, 0.28),
+    "deepseek/deepseek-v4-pro":    (0.435, 0.87),  # 75% promo until 2026-05-05; full $1.74/$3.48 after
+    "glm/glm-5.1":                 (1.40, 4.40),
+    "glm/glm-5":                   (0.50, 2.08),
+    "glm/glm-4.7-flash":           (0.0, 0.0),     # free
+    "qwen/qwen3.6-max-preview":    (1.30, 7.80),
+    "qwen/qwen3.6-plus":           (0.325, 1.95),
+    "qwen/qwen3-max":              (0.78, 3.90),
+    "qwen/qwen3.5-plus":           (0.26, 1.56),
+    "gemini/gemini-3-pro-preview":        (3.00, 15.00),
+    "gemini/gemini-3-flash-preview":      (0.25, 0.80),
+    "gemini/gemini-3-flash-lite-preview": (0.25, 1.50),
 }
 
 # Fallback rate when model is not in the cost table

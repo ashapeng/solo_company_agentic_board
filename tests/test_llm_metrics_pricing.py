@@ -30,6 +30,27 @@ def test_paid_models_have_nonzero_rates(model):
     assert out_rate > 0.0
 
 
+@pytest.mark.parametrize("model,in_rate,out_rate", [
+    ("kimi/kimi-k2.6",                       0.95, 4.00),
+    ("deepseek/deepseek-v4-flash",           0.14, 0.28),
+    ("deepseek/deepseek-v4-pro",             0.435, 0.87),
+    ("glm/glm-5.1",                          1.40, 4.40),
+    ("glm/glm-5",                            0.50, 2.08),
+    ("glm/glm-4.7-flash",                    0.0, 0.0),
+    ("qwen/qwen3.6-max-preview",             1.30, 7.80),
+    ("qwen/qwen3.6-plus",                    0.325, 1.95),
+    ("qwen/qwen3-max",                       0.78, 3.90),
+    ("qwen/qwen3.5-plus",                    0.26, 1.56),
+    ("gemini/gemini-3-pro-preview",          3.00, 15.00),
+    ("gemini/gemini-3-flash-preview",        0.25, 0.80),
+    ("gemini/gemini-3-flash-lite-preview",   0.25, 1.50),
+])
+def test_reasoning_models_have_expected_rates(model, in_rate, out_rate):
+    actual_in, actual_out = metrics.COST_RATES[model]
+    assert actual_in == in_rate
+    assert actual_out == out_rate
+
+
 def test_estimate_cost_strips_openrouter_prefix():
     """openrouter:google/gemini-2.5-pro must resolve to the same row as
     'google/gemini-2.5-pro' (the OpenRouter id), not the default rate."""
