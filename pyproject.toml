@@ -34,3 +34,6 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "live: opt-in tests that hit real provider APIs (skipped by default)",
+]
