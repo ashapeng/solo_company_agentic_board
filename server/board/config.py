@@ -10,13 +10,14 @@ from dataclasses import dataclass, field
 # Model defaults (overridable via env vars)
 # ---------------------------------------------------------------------------
 
-DEFAULT_CHAIRMAN_MODEL = "kimi/kimi-k2.5"
+DEFAULT_CHAIRMAN_MODEL = "kimi/kimi-k2.6"
 DEFAULT_COUNCIL_MODELS = [
-    "deepseek/deepseek-chat",
-    "kimi/kimi-k2.5",
+    "deepseek/deepseek-v4-pro",
+    "glm/glm-5.1",
+    "qwen/qwen3.6-max-preview",
 ]
-DEFAULT_CLASSIFIER_MODEL = "deepseek/deepseek-chat"
-DEFAULT_VERIFICATION_MODEL = "deepseek/deepseek-chat"
+DEFAULT_CLASSIFIER_MODEL = "gemini/gemini-2.5-flash"
+DEFAULT_VERIFICATION_MODEL = "deepseek/deepseek-v4-pro"
 
 
 def get_chairman_model() -> str:

@@ -131,13 +131,13 @@ Owns security risk.
             os.environ.pop("CLASSIFIER_MODEL", None)
             os.environ.pop("VERIFICATION_MODEL", None)
 
-            self.assertEqual("kimi/kimi-k2.5", get_chairman_model())
+            self.assertEqual("kimi/kimi-k2.6", get_chairman_model())
             self.assertEqual(
-                ["deepseek/deepseek-chat", "kimi/kimi-k2.5"],
+                ["deepseek/deepseek-v4-pro", "glm/glm-5.1", "qwen/qwen3.6-max-preview"],
                 get_council_models(),
             )
-            self.assertEqual("deepseek/deepseek-chat", get_classifier_model())
-            self.assertEqual("deepseek/deepseek-chat", get_verification_model())
+            self.assertEqual("gemini/gemini-2.5-flash", get_classifier_model())
+            self.assertEqual("deepseek/deepseek-v4-pro", get_verification_model())
 
     def test_runtime_lockfile_pins_project_dependencies(self):
         pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))

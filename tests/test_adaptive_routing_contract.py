@@ -75,7 +75,7 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
             classification = await classify_query("What is the MVP?")
 
-        self.assertEqual("deepseek/deepseek-chat", mock_query.await_args.kwargs["model"])
+        self.assertEqual("gemini/gemini-2.5-flash", mock_query.await_args.kwargs["model"])
         self.assertEqual("product", classification.query_type)
         self.assertEqual("moderate", classification.complexity)
         self.assertEqual(

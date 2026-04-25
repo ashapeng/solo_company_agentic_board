@@ -37,7 +37,7 @@ class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
 
             result = await verify_synthesis("summary", "peer review", "query")
 
-        self.assertEqual("deepseek/deepseek-chat", mock_query.await_args.kwargs["model"])
+        self.assertEqual("deepseek/deepseek-v4-pro", mock_query.await_args.kwargs["model"])
         self.assertEqual(6, result.score)
         self.assertFalse(result.passed)
         self.assertEqual(["too vague"], result.deficiencies)
