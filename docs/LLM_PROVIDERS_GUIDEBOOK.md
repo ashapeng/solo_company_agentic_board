@@ -252,8 +252,10 @@ get further discounts.
 
 > ⚠ **Deprecation:** `deepseek-chat` and `deepseek-reasoner` will be
 > retired **2026-07-24**. Migrate to the explicit `deepseek-v4-flash` /
-> `deepseek-v4-pro` ids before then. Until then they continue to work,
-> and the project default is still `deepseek/deepseek-chat`.
+> `deepseek-v4-pro` ids before then. Until then they continue to work;
+> the project no longer uses them as defaults
+> (switched to `deepseek/deepseek-v4-pro` 2026-04-25), but `deepseek/deepseek-chat`
+> remains the paid last-resort in the fallback chain at `server/board/llm.py:PAID_LAST_RESORT`.
 
 **Quirks:**
 
@@ -289,14 +291,13 @@ get further discounts.
 > ⚠ **Deprecation:** Original Kimi K2 retires **2026-05-25**. K2.6
 > (released 2026-04-20) is the current flagship. K2.5 still supported
 > but plan to migrate. The board's default chairperson is
-> `kimi/kimi-k2.5` — consider switching to `kimi-k2.6` after a smoke
-> test.
+> `kimi/kimi-k2.6` (switched 2026-04-25).
 
 **Quirks (very important):**
 
-- `kimi-k2.5` rejects `temperature` entirely — must omit. The handler
-  enforces this (`startswith("kimi-k2.5") → omit temperature`).
-- `kimi-k2-thinking*` forces `temperature=1.0`. Handler hardcodes this.
+- `kimi-k2.5` and `kimi-k2.6` both reject `temperature` entirely — must omit.
+  The handler enforces this (`startswith(("kimi-k2.5", "kimi-k2.6")) → omit temperature`).
+  `kimi-k2-thinking` locks temperature at 1.0.
 - Other Kimi models accept caller's temperature (default 0.6, range
   `[0, 1]` — narrower than OpenAI's `[0, 2]`).
 - `top_p` is locked at `0.95` for K2.5/K2.6 — don't override.
@@ -413,6 +414,17 @@ default) has no free quota.
 
 `fallback=False` on a single `query_llm` call disables the chain and
 re-raises the primary error directly.
+
+**Latency envelope.** With the post-2026-04-25 defaults (`max_tokens=8192`,
+`timeout=240s`, `PRIMARY_MAX_RETRIES=3`, `FALLBACK_MAX_RETRIES=2`), a single
+`query_llm` call can block up to ~44 minutes worst-case before raising
+(primary 720s + 3 free fallbacks × 480s + paid last-resort 480s, plus
+~21s of retry backoffs). Operators behind reverse proxies with short
+gateway timeouts should either lower `PRIMARY_MAX_RETRIES`, pass
+`fallback=False` for latency-sensitive call sites, or set their own
+upstream timeouts. The verifier and classifier handlers in
+`server/board/deliberation/{verification.py,classifier.py}` already pin
+their own shorter timeouts to avoid this.
 
 ---
 

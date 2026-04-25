@@ -114,7 +114,7 @@ uv run uvicorn server.api:app --reload --port 8000
 - Native SDK routing is supported with explicit prefixes:
   `glm/<model>` or `zai/<model>` uses Z.AI, `qwen/<model>` uses DashScope,
   `deepseek/<model>` uses DeepSeek via the OpenAI SDK, and `kimi/<model>` uses Kimi via the OpenAI SDK.
-  Defaults use `deepseek/deepseek-chat` and `kimi/kimi-k2.5`. Use `openrouter:<model_id>` to force OpenRouter for a provider-shaped model ID.
+  Defaults use `kimi/kimi-k2.6` (chair), `[deepseek/deepseek-v4-pro, glm/glm-5.1, qwen/qwen3.6-max-preview]` (council, round-robin), `gemini/gemini-2.5-flash` (classifier, free tier), and `deepseek/deepseek-v4-pro` (verifier, ≠ chair). Use `openrouter:<model_id>` to force OpenRouter for a provider-shaped model ID.
 - Add/edit members in `server/members/*.md`
 - Verifier must use a different provider than the chairman. To run both on
   the same provider during local experimentation, set

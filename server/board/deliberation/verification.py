@@ -95,7 +95,7 @@ async def verify_synthesis(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,  # near-deterministic for evaluation
             max_tokens=500,
-            timeout=30.0,
+            timeout=120.0,  # was 30s; v4-pro / glm-5.1 reasoning can take 60-90s
             fallback=True,
         )
 
