@@ -20,13 +20,26 @@ class CallMetrics:
 
 # Cost rates per 1M tokens: {model_prefix: (input_rate, output_rate)}
 COST_RATES: dict[str, tuple[float, float]] = {
+    # OpenRouter-keyed (used when model id starts with 'openrouter:')
     "anthropic/claude-opus-4": (15.0, 75.0),
     "anthropic/claude-sonnet-4": (3.0, 15.0),
     "openai/gpt-4.1": (2.0, 8.0),
     "google/gemini-2.5-pro": (1.25, 10.0),
     "x-ai/grok-3": (3.0, 15.0),
-    "deepseek/deepseek-chat": (0.27, 1.10),
-    "kimi/kimi-k2.5": (0.60, 2.50),
+
+    # Native-prefix rows (USD per 1M tokens, input / output)
+    "gemini/gemini-2.5-flash":    (0.0, 0.0),    # AI Studio free tier
+    "gemini/gemini-2.5-pro":      (1.25, 10.0),  # paid AI Studio
+    "glm/glm-4.5-flash":          (0.0, 0.0),    # Z.AI free
+    "glm/glm-4.6":                (0.6, 2.2),    # Z.AI paid (approximate)
+    "qwen/qwen-flash":            (0.0, 0.0),    # DashScope free quota (Singapore)
+    "qwen/qwen-turbo":            (0.05, 0.20),
+    "qwen/qwen-plus":             (0.4, 1.2),
+    "qwen/qwen-max":              (1.6, 6.4),
+    "deepseek/deepseek-chat":     (0.27, 1.10),
+    "deepseek/deepseek-reasoner": (0.55, 2.19),
+    "kimi/kimi-k2.5":             (0.60, 2.50),
+    "kimi/kimi-k2.6":             (0.60, 2.50),
 }
 
 # Fallback rate when model is not in the cost table
@@ -36,9 +49,12 @@ _DEFAULT_RATE: tuple[float, float] = (3.0, 15.0)
 def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Estimate cost in USD for a single call.
 
-    Tokens set to -1 (unknown) are treated as 0 for cost estimation.
+    Tokens set to -1 (unknown) are treated as 0 for cost estimation. The
+    'openrouter:' prefix is stripped before lookup so 'openrouter:google/...'
+    resolves to the same row as the underlying OpenRouter model id.
     """
-    input_rate, output_rate = COST_RATES.get(model, _DEFAULT_RATE)
+    key = model.split(":", 1)[1] if model.startswith("openrouter:") else model
+    input_rate, output_rate = COST_RATES.get(key, _DEFAULT_RATE)
 
     in_tok = max(input_tokens, 0)
     out_tok = max(output_tokens, 0)
