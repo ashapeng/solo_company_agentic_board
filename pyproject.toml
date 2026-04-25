@@ -14,6 +14,7 @@ dependencies = [
     "openai>=1.0",
     "dashscope>=1.20",
     "zai-sdk>=0.2.2",
+    "google-genai>=1.0,<2.0",
 ]
 
 [project.scripts]
