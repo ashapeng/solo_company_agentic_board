@@ -513,6 +513,9 @@ async def _send_qwen(
                 response_id=_dashscope_response_id(response),
             )
         except Exception as e:  # noqa: BLE001
+            # Qwen carve-out: LLMProviderError is intentional here — we raise
+            # it ourselves above for DashScope's status_code>=400 error-as-
+            # response pattern, and want it to participate in retries.
             if not _is_retryable(e) and not isinstance(e, LLMProviderError):
                 raise
             last_exc = e
@@ -712,8 +715,6 @@ async def _send_openrouter(
 # Each entry: prefix -> async handler with signature
 #     async def handler(model, messages, *, system, temperature, max_tokens,
 #                       timeout, max_retries, backoff_seconds) -> LLMResponse
-#
-# Handlers are added one per provider in tasks 3-8.
 # ---------------------------------------------------------------------------
 
 HandlerType = Callable[..., Awaitable[LLMResponse]]
