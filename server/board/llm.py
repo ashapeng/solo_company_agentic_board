@@ -500,6 +500,11 @@ async def _send_qwen(
     qwen_budget = _read_optional_int_env("QWEN_THINKING_BUDGET")
     if qwen_budget is not None:
         kwargs["thinking_budget"] = qwen_budget
+    qwen_preserve = _env_bool("QWEN_PRESERVE_THINKING")
+    if qwen_preserve is not None:
+        # qwen3.6-* uses preserve_thinking for multi-turn agentic flows.
+        # Older models silently ignore it; safe to pass when explicitly set.
+        kwargs["preserve_thinking"] = qwen_preserve
 
     last_exc: Exception | None = None
     for attempt in range(max_retries):

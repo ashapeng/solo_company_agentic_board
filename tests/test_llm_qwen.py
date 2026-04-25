@@ -153,3 +153,48 @@ async def test_qwen_unknown_region_raises(monkeypatch):
     with patch.dict("sys.modules", {"dashscope": fake_module}):
         with pytest.raises(RuntimeError, match="DASHSCOPE_REGION"):
             await llm.query_llm("qwen/qwen-flash", [{"role": "user", "content": "hi"}])
+
+
+async def test_qwen_preserve_thinking_env(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("QWEN_PRESERVE_THINKING", "true")
+    monkeypatch.delenv("DASHSCOPE_REGION", raising=False)
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm(
+            "qwen/qwen3.6-max-preview",
+            [{"role": "user", "content": "hi"}],
+        )
+    kw = _FakeGeneration.last_call_kwargs
+    assert kw["preserve_thinking"] is True
+
+
+async def test_qwen_preserve_thinking_omitted_when_unset(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.delenv("QWEN_PRESERVE_THINKING", raising=False)
+    monkeypatch.delenv("DASHSCOPE_REGION", raising=False)
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm(
+            "qwen/qwen3.6-max-preview",
+            [{"role": "user", "content": "hi"}],
+        )
+    kw = _FakeGeneration.last_call_kwargs
+    assert "preserve_thinking" not in kw
+
+
+async def test_qwen_preserve_thinking_false(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test")
+    monkeypatch.setenv("QWEN_PRESERVE_THINKING", "false")
+    monkeypatch.delenv("DASHSCOPE_REGION", raising=False)
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+    fake_module = SimpleNamespace(Generation=_FakeGeneration)
+    with patch.dict("sys.modules", {"dashscope": fake_module}):
+        await llm.query_llm(
+            "qwen/qwen3.6-max-preview",
+            [{"role": "user", "content": "hi"}],
+        )
+    kw = _FakeGeneration.last_call_kwargs
+    assert kw["preserve_thinking"] is False
