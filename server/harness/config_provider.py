@@ -10,9 +10,10 @@ def provider_of(model_id: str) -> str:
     Examples:
         'kimi/kimi-k2.5'                                -> 'kimi'
         'deepseek/deepseek-chat'                        -> 'deepseek'
-        'glm/glm-4'                                     -> 'glm'
+        'glm/glm-4.6'                                   -> 'glm'
         'zai/...'                                       -> 'zai'
         'qwen/...'                                      -> 'qwen'
+        'gemini/gemini-2.5-flash'                       -> 'gemini'
         'openrouter:anthropic/claude-3.5-sonnet'        -> 'openrouter'
     """
     if not model_id:
