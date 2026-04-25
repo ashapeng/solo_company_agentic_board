@@ -23,12 +23,21 @@ class _FakePart:
 class _FakeGenerateContentConfig:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        # Expose thinking_config directly for convenience
+        self.thinking_config = kwargs.get("thinking_config")
+
+
+class _FakeThinkingConfig:
+    def __init__(self, **kwargs):
+        self.thinking_budget = kwargs.get("thinking_budget")
+        self.thinking_level = kwargs.get("thinking_level")
 
 
 _FAKE_TYPES = SimpleNamespace(
     Content=lambda role, parts: _FakeContent(role=role, parts=parts),
     Part=SimpleNamespace(from_text=lambda text: _FakePart(text=text)),
     GenerateContentConfig=_FakeGenerateContentConfig,
+    ThinkingConfig=_FakeThinkingConfig,
 )
 
 
@@ -175,3 +184,85 @@ async def test_gemini_finish_reason_extracts_enum_value(monkeypatch):
 
     assert resp.finish_reason == "STOP"
     assert resp.response_id == "gem-resp-1"
+
+
+# ---------------------------------------------------------------------------
+# Thinking config tests
+# ---------------------------------------------------------------------------
+
+def _make_fake_genai():
+    """Return a fresh fake_genai / fake_google pair using the shared _FAKE_TYPES."""
+    fake_genai = SimpleNamespace(Client=_FakeClient, types=_FAKE_TYPES)
+    fake_google = SimpleNamespace(genai=fake_genai)
+    return fake_genai, fake_google
+
+
+async def test_gemini_25_thinking_budget_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("GEMINI_THINKING_BUDGET", "1024")
+    monkeypatch.delenv("GEMINI_THINKING_LEVEL", raising=False)
+    fake_genai, fake_google = _make_fake_genai()
+    with patch.dict("sys.modules", {"google": fake_google, "google.genai": fake_genai}):
+        await llm.query_llm(
+            "gemini/gemini-2.5-pro",
+            [{"role": "user", "content": "hi"}],
+        )
+    cfg = _FakeModels.last_kwargs["config"]
+    assert cfg.thinking_config is not None
+    assert cfg.thinking_config.thinking_budget == 1024
+
+
+async def test_gemini_25_thinking_budget_negative_one_dynamic(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("GEMINI_THINKING_BUDGET", "-1")
+    monkeypatch.delenv("GEMINI_THINKING_LEVEL", raising=False)
+    fake_genai, fake_google = _make_fake_genai()
+    with patch.dict("sys.modules", {"google": fake_google, "google.genai": fake_genai}):
+        await llm.query_llm(
+            "gemini/gemini-2.5-flash",
+            [{"role": "user", "content": "hi"}],
+        )
+    cfg = _FakeModels.last_kwargs["config"]
+    assert cfg.thinking_config.thinking_budget == -1
+
+
+async def test_gemini_3_thinking_level_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("GEMINI_THINKING_LEVEL", "high")
+    monkeypatch.delenv("GEMINI_THINKING_BUDGET", raising=False)
+    fake_genai, fake_google = _make_fake_genai()
+    with patch.dict("sys.modules", {"google": fake_google, "google.genai": fake_genai}):
+        await llm.query_llm(
+            "gemini/gemini-3-pro-preview",
+            [{"role": "user", "content": "hi"}],
+        )
+    cfg = _FakeModels.last_kwargs["config"]
+    assert cfg.thinking_config is not None
+    assert cfg.thinking_config.thinking_level == "high"
+
+
+async def test_gemini_3_thinking_level_invalid_raises(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setenv("GEMINI_THINKING_LEVEL", "extreme")
+    monkeypatch.delenv("GEMINI_THINKING_BUDGET", raising=False)
+    fake_genai, fake_google = _make_fake_genai()
+    with patch.dict("sys.modules", {"google": fake_google, "google.genai": fake_genai}):
+        with pytest.raises(RuntimeError, match="GEMINI_THINKING_LEVEL"):
+            await llm.query_llm(
+                "gemini/gemini-3-pro-preview",
+                [{"role": "user", "content": "hi"}],
+            )
+
+
+async def test_gemini_25_no_thinking_when_env_unset(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.delenv("GEMINI_THINKING_BUDGET", raising=False)
+    monkeypatch.delenv("GEMINI_THINKING_LEVEL", raising=False)
+    fake_genai, fake_google = _make_fake_genai()
+    with patch.dict("sys.modules", {"google": fake_google, "google.genai": fake_genai}):
+        await llm.query_llm(
+            "gemini/gemini-2.5-flash",
+            [{"role": "user", "content": "hi"}],
+        )
+    cfg = _FakeModels.last_kwargs["config"]
+    assert cfg.thinking_config is None

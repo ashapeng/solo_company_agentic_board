@@ -89,7 +89,7 @@ def _env_bool(name: str) -> bool | None:
     raise RuntimeError(f"{name} must be one of enabled/disabled, true/false, 1/0.")
 
 
-def _read_optional_int_env(name: str) -> int | None:
+def _read_optional_int_env(name: str, *, allow_negative: bool = False) -> int | None:
     value = os.getenv(name)
     if value is None or value.strip() == "":
         return None
@@ -97,7 +97,7 @@ def _read_optional_int_env(name: str) -> int | None:
         parsed = int(value)
     except ValueError as e:
         raise RuntimeError(f"{name} must be an integer.") from e
-    if parsed < 0:
+    if not allow_negative and parsed < 0:
         raise RuntimeError(f"{name} must be a non-negative integer.")
     return parsed
 
@@ -588,11 +588,31 @@ async def _send_gemini(
             parts=[genai_types.Part.from_text(msg.get("content", ""))],
         ))
 
-    config = genai_types.GenerateContentConfig(
-        system_instruction=system,
-        temperature=temperature,
-        max_output_tokens=max_tokens,
-    )
+    config_kwargs: dict[str, Any] = {
+        "system_instruction": system,
+        "temperature": temperature,
+        "max_output_tokens": max_tokens,
+    }
+
+    if provider_model.startswith("gemini-2.5"):
+        budget = _read_optional_int_env("GEMINI_THINKING_BUDGET", allow_negative=True)
+        if budget is not None:
+            # 0 disables; -1 = dynamic; 0..32k = explicit cap.
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=budget
+            )
+    elif provider_model.startswith("gemini-3"):
+        level = os.getenv("GEMINI_THINKING_LEVEL")
+        if level:
+            if level not in {"minimal", "low", "medium", "high"}:
+                raise RuntimeError(
+                    "GEMINI_THINKING_LEVEL must be one of minimal|low|medium|high."
+                )
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_level=level
+            )
+
+    config = genai_types.GenerateContentConfig(**config_kwargs)
 
     last_exc: Exception | None = None
     for attempt in range(max_retries):
