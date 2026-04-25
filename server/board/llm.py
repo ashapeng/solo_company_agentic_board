@@ -276,8 +276,20 @@ async def _send_deepseek(
         "messages": full_messages,
         "max_tokens": max_tokens,
     }
-    if provider_model != "deepseek-reasoner":
+    # v4-pro defaults to high reasoning effort and silently ignores temperature.
+    # deepseek-reasoner is the v3-era thinking alias — same behavior.
+    if provider_model not in {"deepseek-reasoner", "deepseek-v4-pro"}:
         kwargs["temperature"] = temperature
+
+    # reasoning_effort is a v4-only knob; older models 400 if it's sent.
+    if provider_model.startswith("deepseek-v4-"):
+        effort = os.getenv("DEEPSEEK_REASONING_EFFORT")
+        if effort:
+            if effort not in {"low", "medium", "high", "max"}:
+                raise RuntimeError(
+                    "DEEPSEEK_REASONING_EFFORT must be one of low|medium|high|max."
+                )
+            kwargs["reasoning_effort"] = effort
 
     last_exc: Exception | None = None
     for attempt in range(max_retries):

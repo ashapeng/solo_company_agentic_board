@@ -103,3 +103,66 @@ async def test_deepseek_fails_fast_on_auth_error(monkeypatch):
         with pytest.raises(_AuthError):
             await llm.query_llm("deepseek/deepseek-chat", [{"role": "user", "content": "hi"}])
     assert call_count["n"] == 1
+
+
+async def test_deepseek_v4_pro_omits_temperature(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        await llm.query_llm(
+            "deepseek/deepseek-v4-pro",
+            [{"role": "user", "content": "hi"}],
+            temperature=0.7,
+        )
+    assert "temperature" not in _FakeOpenAI.last_create
+
+
+async def test_deepseek_v4_flash_passes_temperature(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        await llm.query_llm(
+            "deepseek/deepseek-v4-flash",
+            [{"role": "user", "content": "hi"}],
+            temperature=0.4,
+        )
+    assert _FakeOpenAI.last_create["temperature"] == 0.4
+    assert "reasoning_effort" not in _FakeOpenAI.last_create
+
+
+async def test_deepseek_v4_reasoning_effort_env(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "high")
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        await llm.query_llm(
+            "deepseek/deepseek-v4-flash",
+            [{"role": "user", "content": "hi"}],
+        )
+    assert _FakeOpenAI.last_create["reasoning_effort"] == "high"
+
+
+async def test_deepseek_reasoning_effort_invalid_raises(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "extreme")
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        with pytest.raises(RuntimeError, match="DEEPSEEK_REASONING_EFFORT"):
+            await llm.query_llm(
+                "deepseek/deepseek-v4-flash",
+                [{"role": "user", "content": "hi"}],
+            )
+
+
+async def test_deepseek_reasoning_effort_ignored_for_chat(monkeypatch):
+    """Effort env must NOT be sent for non-v4 models — guards against silent
+    400s on the legacy deepseek-chat endpoint."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "high")
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        await llm.query_llm(
+            "deepseek/deepseek-chat",
+            [{"role": "user", "content": "hi"}],
+        )
+    assert "reasoning_effort" not in _FakeOpenAI.last_create
