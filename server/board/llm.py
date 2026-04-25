@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 # Per-handler retry defaults
@@ -626,6 +628,84 @@ async def _send_gemini(
     raise LLMProviderError(f"gemini exhausted retries: {last_exc!r}") from last_exc
 
 
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+async def _send_openrouter(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    max_retries: int,
+    backoff_seconds: list[int],
+) -> LLMResponse:
+    """Send a request to OpenRouter via httpx (escape hatch).
+
+    The model id must have the 'openrouter:' prefix; the suffix is sent
+    verbatim as the OpenRouter model id (e.g. 'anthropic/claude-opus-4').
+    """
+    api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY not set. Required for openrouter:<model> calls. "
+            "Get a key from https://openrouter.ai/keys"
+        )
+    if "..." in api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY still contains the placeholder. "
+            "Replace with a real key from https://openrouter.ai/keys"
+        )
+
+    _, provider_model = _split_model_id(model)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/ashapeng/agentic-board",
+        "X-Title": "Agentic Board",
+    }
+    payload = {
+        "model": provider_model,
+        "messages": _full_messages(messages, system),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        t0 = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(OPENROUTER_URL, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            latency = round(time.monotonic() - t0, 3)
+            usage = data.get("usage", {}) or {}
+            return LLMResponse(
+                content=data["choices"][0]["message"]["content"],
+                model=model,
+                input_tokens=usage.get("prompt_tokens", -1),
+                output_tokens=usage.get("completion_tokens", -1),
+                latency_seconds=latency,
+                finish_reason=data["choices"][0].get("finish_reason"),
+                response_id=data.get("id"),
+            )
+        except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            if not _is_retryable(e):
+                raise
+            last_exc = e
+            if attempt < max_retries - 1:
+                backoff = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
+                logger.warning("OpenRouter call failed (attempt %d/%d): %s; retrying in %ds",
+                               attempt + 1, max_retries, e, backoff)
+                await asyncio.sleep(backoff)
+            else:
+                logger.error("OpenRouter call exhausted retries: %s", e)
+    raise LLMProviderError(f"openrouter exhausted retries: {last_exc!r}") from last_exc
+
+
 # ---------------------------------------------------------------------------
 # Provider dispatch table
 #
@@ -645,6 +725,7 @@ _PROVIDERS: dict[str, HandlerType] = {
     "moonshot": _send_kimi,
     "qwen": _send_qwen,
     "gemini": _send_gemini,
+    "openrouter": _send_openrouter,
 }
 
 
