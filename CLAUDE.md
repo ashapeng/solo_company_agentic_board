@@ -109,7 +109,7 @@ uv run uvicorn server.api:app --reload --port 8000
 
 ## Config
 
-- Copy `.env.example` to `.env` and set `DEEPSEEK_API_KEY` and `MOONSHOT_API_KEY`
+- Copy `.env.example` to `.env` and set all five provider keys: `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, `GEMINI_API_KEY`, `ZAI_API_KEY`, `DASHSCOPE_API_KEY` (plus `DASHSCOPE_REGION=international` for Qwen free quota)
 - Edit `server/board/config.py` to customize models
 - Native SDK routing is supported with explicit prefixes:
   `glm/<model>` or `zai/<model>` uses Z.AI, `qwen/<model>` uses DashScope,
