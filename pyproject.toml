@@ -15,6 +15,7 @@ dependencies = [
     "dashscope>=1.20",
     "zai-sdk>=0.2.2",
     "google-genai>=1.0,<2.0",
+    "pdfplumber>=0.11.9",
 ]
 
 [project.scripts]
