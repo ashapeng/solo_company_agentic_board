@@ -193,20 +193,32 @@ the free quota — the default `cn` has no free tier.
 > mirrored below is what most 2026 docs and the DashScope SDK accept;
 > always verify before deploying.
 
-| Model ID            | Tier              | Strength                         | Context | Thinking            | $ in / $ out / 1M tok |
-| ------------------- | ----------------- | -------------------------------- | ------- | ------------------- | --------------------- |
-| `qwen3.6-max-preview`     | Paid              | 2026 flagship; #1 SWE-bench Pro/Terminal-Bench 2.0/SkillsBench | 260k | yes + `preserve_thinking` | $1.30 / $7.80 |
-| `qwen3.6-plus`            | Paid              | Production agentic coding; 78.8% SWE-Bench | 1M | yes + `preserve_thinking` | $0.325 / $1.95 |
-| `qwen3.6-27b`             | Open-weights (Apache 2.0) | Dense; multimodal; 262k → 1M extensible | 262k | yes (Thinking Preservation) | self-host |
-| `qwen3.6-35b-a3b`         | Open-weights (Apache 2.0) | MoE variant | (vary) | yes | self-host |
-| `qwen3-max`         | Paid              | Most capable; complex reasoning  | 262k    | yes                 | $0.78 / $3.90         |
-| `qwen3.5-plus`      | Paid              | Balanced cost/capability         | 1M      | yes                 | $0.26 / $1.56         |
-| `qwen3.5-flash`     | **Paid + free quota** | Cheapest 1M-context responder | 1M      | yes                 | $0.065 / $0.26 / free quota in Singapore |
-| `qwen3-coder`       | Paid              | Coding agent (69.6% SWE-Bench)   | (vary)  | hybrid              | (varies)              |
-| `qwen3-vl`          | Paid              | Vision-language reasoning        | 256k–1M | yes                 | $0.117 / $1.365       |
-| `qwen-long`         | Paid              | 10M-token long context           | 10M     | no                  | premium               |
-| `qwen-flash`        | Paid + free quota | Latency-optimized chat           | 1M      | optional            | (low) / free quota    |
-| `qwen-turbo`        | Paid + free quota | Cost-optimized                   | 1M      | optional            | $0.05 / $0.20 / free quota |
+| Model ID                      | Tier                          | Strength                                         | Context | Thinking                  | $ in / $ out / 1M tok |
+| ----------------------------- | ----------------------------- | ------------------------------------------------ | ------- | ------------------------- | --------------------- |
+| **Qwen 3.6 series (2026-04)**  |                               |                                                  |         |                           |                       |
+| `qwen3.6-max-preview`          | Paid                          | 2026 flagship; #1 SWE-bench Pro/Terminal-Bench 2.0/SkillsBench | 260k    | yes + `preserve_thinking` | $1.30 / $7.80         |
+| `qwen3.6-plus`                 | Paid                          | Production agentic coding; 78.8% SWE-Bench       | 1M      | yes + `preserve_thinking` | $0.325 / $1.95        |
+| `qwen3.6-plus-2026-04-02`      | Paid                          | Dated snapshot of plus                             | 1M      | yes + `preserve_thinking` | $0.325 / $1.95        |
+| `qwen3.6-flash`                | Paid + free quota             | Fast, cheap responder                              | 1M      | yes                        | $0.065 / $0.26 / free  |
+| `qwen3.6-flash-2026-04-16`     | Paid + free quota             | Dated snapshot of flash                            | 1M      | yes                        | $0.065 / $0.26 / free  |
+| `qwen3.6-27b`                  | Open-weight (Apache 2.0)      | Dense; multimodal; 262k → 1M extensible           | 262k    | yes (Thinking Preservation)| self-host            |
+| `qwen3.6-35b-a3b`              | Open-weight (Apache 2.0)      | MoE variant; efficient inference                  | (vary)  | yes                        | self-host            |
+| **Qwen 3.5 series**            |                               |                                                  |         |                           |                       |
+| `qwen3-max`                    | Paid                          | Most capable; complex reasoning                   | 262k    | yes                        | $0.78 / $3.90         |
+| `qwen3.5-plus`                 | Paid                          | Balanced cost/capability                          | 1M      | yes                        | $0.26 / $1.56         |
+| `qwen3.5-plus-2026-02-15`      | Paid                          | Dated snapshot of plus                             | 1M      | yes                        | $0.26 / $1.56         |
+| `qwen3.5-plus-2026-04-20`      | Paid                          | Dated snapshot of plus                             | 1M      | yes                        | $0.26 / $1.56         |
+| `qwen3.5-flash-2026-02-23`     | Paid + free quota             | Dated flash snapshot                               | 1M      | yes                        | $0.065 / $0.26 / free  |
+| `qwen3.5-27b`                  | Open-weight (Apache 2.0)      | Dense open-weight                                  | (vary)  | yes                        | self-host            |
+| `qwen3.5-35b-a3b`              | Open-weight (Apache 2.0)      | MoE open-weight                                   | (vary)  | yes                        | self-host            |
+| `qwen3.5-122b-a10b`            | Open-weight (Apache 2.0)      | Large MoE; high capacity                          | (vary)  | yes                        | self-host            |
+| `qwen3.5-397b-a17b`            | Open-weight (Apache 2.0)      | Ultra-large MoE; frontier research                | (vary)  | yes                        | self-host            |
+| **Legacy models**              |                               |                                                  |         |                           |                       |
+| `qwen3-coder`                  | Paid                          | Coding agent (69.6% SWE-Bench)                    | (vary)  | hybrid                     | (varies)             |
+| `qwen3-vl`                     | Paid                          | Vision-language reasoning                         | 256k–1M | yes                        | $0.117 / $1.365       |
+| `qwen-long`                    | Paid                          | 10M-token long context                            | 10M     | no                         | premium               |
+| `qwen-flash`                   | Paid + free quota             | Latency-optimized chat                             | 1M      | optional                   | (low) / free quota    |
+| `qwen-turbo`                   | Paid + free quota             | Cost-optimized                                    | 1M      | optional                   | $0.05 / $0.20 / free  |
 
 **Free quota:** New international/Singapore accounts get 1M input + 1M
 output tokens free for **90 days** after Model Studio activation.
@@ -231,7 +243,7 @@ US-Virginia (`global`) has **no** free quota.
   native DashScope path, not compatible-mode.
 
 **Sources:**
-[Models overview](https://www.alibabacloud.com/help/en/model-studio/models) ·
+[Models overview (Bailian Console)](https://bailian.console.aliyun.com/cn-beijing/?tab=model#/model-market) ·
 [DashScope SDK](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-dashscope) ·
 [Pricing](https://www.alibabacloud.com/help/en/model-studio/billing-of-model-studio)
 
@@ -239,35 +251,52 @@ US-Virginia (`global`) has **no** free quota.
 
 **Routing:** `deepseek/<id>` → `openai` SDK + `https://api.deepseek.com/v1`.
 **Auth:** `DEEPSEEK_API_KEY`.
+**Docs:** [Pricing](https://api-docs.deepseek.com/quick_start/pricing) |
+[Chat API](https://api-docs.deepseek.com/api/create-chat-completion) |
+[Thinking mode](https://api-docs.deepseek.com/guides/thinking_mode)
 
-| Model ID                | Strength                          | Context | Max out | Thinking                                         | $ in / $ out / 1M tok* |
-| ----------------------- | --------------------------------- | ------- | ------- | ------------------------------------------------ | ---------------------- |
-| `deepseek-v4-flash`     | General chat, coding, fast        | 1M      | 384k    | optional (`reasoning_effort`)                    | $0.14 / $0.28         |
-| `deepseek-v4-pro`       | Hardest reasoning, math, logic    | 1M      | 384k    | default high; max effort available               | $0.435 / $0.87 (75% promo, ends 2026-05-05) |
-| `deepseek-chat` ⚠       | **Alias** for v4-flash non-thinking | 1M    | 384k    | disabled                                         | same as flash          |
-| `deepseek-reasoner` ⚠   | **Alias** for v4-flash thinking   | 1M      | 384k    | enabled                                          | same as flash          |
+| Model ID                    | Tier    | Strength                                              | Context | Max out | Thinking / Reasoning                     | $ in* / $ out* per 1M tok (cache-miss) |
+| --------------------------- | ------- | ----------------------------------------------------- | ------- | ------- | ---------------------------------------- | -------------------------------------- |
+| **V4 series (current)**     |         |                                                       |         |         |                                          |                                        |
+| `deepseek-v4-flash`         | Paid    | General chat, coding, fast responder                  | 1M      | 384k    | optional (`reasoning_effort`)            | ~$0.14 / ~$0.28  (¥1/¥2 CNY)         |
+| `deepseek-v4-pro`           | Paid    | Hardest reasoning, math, logic, agentic tasks          | 1M      | 384k    | default high; supports `"max"` effort    | **Promo** $0.435 / $0.87 (¥3/¥6); **Full** $1.74 / $3.48 (¥12/¥24) |
+| **Legacy aliases ⚠️**       |         | *(retire **2026-07-24**; now route to v4-flash under hood)* |       |         |                                          |                                        |
+| `deepsearch-chat`           | Legacy  | Alias → v4-flash **non-thinking** mode                | 1M      | 384k    | disabled                                 | same as v4-flash                        |
+| `deepseek-reasoner`         | Legacy  | Alias → v4-flash **thinking** mode                   | 1M      | 384k    | enabled                                  | same as v4-flash                        |
 
-*Cache hits cost ~80% less than cache miss. Off-peak windows (UTC 16:30–00:30)
-get further discounts.
+*\*Cache-hit input costs ~98% less (v4-flash: ¥0.02/M; v4-pro: ¥0.025/M). Off-peak windows (UTC 16:30–00:30) may have further discounts.*
 
-> ⚠ **Deprecation:** `deepseek-chat` and `deepseek-reasoner` will be
-> retired **2026-07-24**. Migrate to the explicit `deepseek-v4-flash` /
-> `deepseek-v4-pro` ids before then. Until then they continue to work;
-> the project no longer uses them as defaults
-> (switched to `deepseek/deepseek-v4-pro` 2026-04-25), but `deepseek/deepseek-chat`
-> remains the paid last-resort in the fallback chain at `server/board/llm.py:PAID_LAST_RESORT`.
+> **Pricing note — V4-Pro promo.** The 75% discount (**$0.435/$0.87** instead of full **$1.74/$3.48**) expires **2026-05-05 23:59 Beijing time**. After that the full rate applies. Plan accordingly if you pin `deepseek-v4-pro` as a council or verifier model.
+>
+> **Currency.** DeepSeek bills in **CNY (RMB)**. USD equivalents above use ~7.2 CNY/USD and are approximate.
+
+**Features (V4 models):**
+- JSON Output mode (`response_format={"type": "json_object"}`)
+- Tool Calls / function calling
+- Conversation prefix continuation (Beta)
+- FIM (Fill-In-the-Middle) completion (Beta, non-thinking only)
+- Anthropic-compatible endpoint at `https://api.deepseek.com/anthropic`
+
+**Deprecation timeline:**
+
+| Model / Event          | Date        | Action                              |
+| ---------------------- | ----------- | ----------------------------------- |
+| v4-pro 75% promo ends  | 2026-05-05  | Price jumps to $1.74/$3.48          |
+| Kimi K2 (original) retires | 2026-05-25 | Migrate to k2.6                   |
+| Gemini 2.0 Flash retires   | 2026-06-01 | Migrate to 2.5/3 family           |
+| `deepseek-chat` alias retires  | 2026-07-24 | Use `deepseek-v4-flash` instead  |
+| `deepseek-reasoner` alias retires | 2026-07-24 | Use `deepseek-v4-pro` (thinking) or v4-flash instead |
 
 **Quirks:**
 
-- `deepseek-reasoner` (and v4-pro thinking mode) **silently ignores**
-  `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`. The
-  handler already drops `temperature` for `deepseek-reasoner`.
+- Thinking/reasoner modes **silently ignore** `temperature`, `top_p`,
+  `frequency_penalty`, `presence_penalty`. The handler already drops
+  `temperature` for reasoner-style calls.
 - Reasoning chain-of-thought returned in
   `response.choices[0].message.reasoning_content` (separate from
-  `content`). The board does not currently capture this.
-- Thinking control: `reasoning_effort="high"` or `"max"` for v4 models.
-- DeepSeek also exposes an Anthropic-compatible endpoint at
-  `https://api.deepseek.com/anthropic` — not used by the board.
+  `content`). The board does not currently capture this as a separate
+  metric.
+- Thinking control for V4: `reasoning_effort="low"|"medium"|"high"|"max"`.
 
 **Sources:**
 [Pricing](https://api-docs.deepseek.com/quick_start/pricing) ·
