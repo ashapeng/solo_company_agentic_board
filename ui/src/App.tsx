@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Landmark, LogIn, Settings, ShieldCheck, Users } from 'lucide-react';
+import { ChevronLeft, Landmark, LogIn, Settings, ShieldCheck, Users } from 'lucide-react';
 import {
   GovernancePage,
   PortfolioPage,
@@ -10,6 +10,7 @@ import {
   type BoardMember,
   type BoardSession,
   type Classification,
+  type ConversationMessage,
   type LiveFeedItem,
   type SeatState,
   type StageEvent,
@@ -47,6 +48,17 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'performance', label: 'Compliance', icon: ShieldCheck },
 ];
 
+function upsertConversationMessage(
+  messages: ConversationMessage[],
+  patch: ConversationMessage,
+): ConversationMessage[] {
+  const index = messages.findIndex((message) => message.id === patch.id);
+  if (index === -1) return [...messages, patch];
+  return messages.map((message, currentIndex) => (
+    currentIndex === index ? { ...message, ...patch } : message
+  ));
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
   const [members, setMembers] = useState<BoardMember[]>([]);
@@ -60,6 +72,8 @@ export default function App() {
   const [stageEvents, setStageEvents] = useState<StageEvent[]>([]);
   const [seatStates, setSeatStates] = useState<Record<string, SeatState>>({});
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [activeStreamMessageId, setActiveStreamMessageId] = useState<string | null>(null);
   const [activePhase, setActivePhase] = useState<string | null>(null);
   const liveFeedCounter = useRef(0);
   const pendingManualAdds = useRef<string[]>([]);
@@ -82,6 +96,14 @@ export default function App() {
     }
   });
 
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('boardroom.railCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
   useEffect(() => {
     try {
       localStorage.setItem('boardroom.railExpanded', railExpanded ? '1' : '0');
@@ -89,6 +111,14 @@ export default function App() {
       /* ignore quota */
     }
   }, [railExpanded]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('boardroom.railCollapsed', railCollapsed ? '1' : '0');
+    } catch {
+      /* ignore quota */
+    }
+  }, [railCollapsed]);
 
   useEffect(() => {
     loadMembers()
@@ -180,6 +210,17 @@ export default function App() {
     setSession(null);
     setStageEvents([]);
     setLiveFeed([]);
+    setConversationMessages((current) => [...current, {
+      id: `user-${Date.now()}`,
+      turn_index: 0,
+      member_id: 'chairperson',
+      member_title: 'CEO / Chairperson',
+      role: 'CEO',
+      speaker: 'user',
+      content: cleanQuery,
+      created_at: new Date().toISOString(),
+    }]);
+    setActiveStreamMessageId(null);
     setActivePhase(null);
     liveFeedCounter.current = 0;
     setSessionLabel('Session in progress');
@@ -197,6 +238,7 @@ export default function App() {
         query: cleanQuery,
         full_board: fullBoard,
         verify,
+        discussion_mode: 'live',
         // Chairperson is permanent; only switch to manual-council mode when the
         // user has picked additional members beyond the chairperson.
         member_ids: fullBoard || manualMemberIds.length <= 1 ? undefined : manualMemberIds,
@@ -242,6 +284,236 @@ export default function App() {
         }
         return next;
       });
+      return;
+    }
+
+    if (data.event === 'conversation_started') {
+      setActivePhase('live_discussion');
+      setTableStatus({
+        label: 'Live',
+        title: 'Board discussion underway',
+        detail: 'Members are responding to one another in sequence.',
+      });
+      pushLiveFeed({ kind: 'phase', text: 'Live board discussion started' });
+      return;
+    }
+
+    if (data.event === 'turn_routed' && data.member_id) {
+      const text = data.routing_reason || `${data.member_title || data.member_id} was routed into the discussion.`;
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: `route-${data.session_id || 'live'}-${data.turn_index || current.length}-${data.member_id}`,
+          turn_index: data.turn_index,
+          member_id: data.member_id,
+          member_title: data.member_title,
+          speaker: 'system',
+          content: text,
+          trigger: data.trigger,
+          routing_reason: data.routing_reason,
+          reply_to_message_id: data.reply_to_message_id,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      pushLiveFeed({ kind: 'phase', memberId: data.member_id, memberTitle: data.member_title, text });
+      return;
+    }
+
+    if (data.event === 'chair_decision_required') {
+      const text = data.routing_reason || 'Board input is ready. The CEO / Chairperson should make the final call.';
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: `chair-required-${data.session_id || Date.now()}`,
+          turn_index: data.turn_index,
+          member_id: 'chairperson',
+          member_title: 'CEO / Chairperson',
+          speaker: 'system',
+          content: text,
+          trigger: data.trigger,
+          routing_reason: data.routing_reason,
+          reply_to_message_id: data.reply_to_message_id,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setTableStatus({
+        label: 'CEO decision',
+        title: 'Board input ready',
+        detail: text,
+      });
+      pushLiveFeed({ kind: 'phase', text });
+      return;
+    }
+
+    if (data.event === 'message_start' && data.message_id && data.member_id) {
+      setActiveStreamMessageId(data.message_id);
+      setConversationMessages((current) => upsertConversationMessage(current, {
+        id: data.message_id!,
+        turn_index: data.turn_index,
+        member_id: data.member_id,
+        member_title: data.member_title,
+        speaker: 'agent',
+        content: '',
+        reply_to_message_id: data.reply_to_message_id,
+        trigger: data.trigger,
+        routing_reason: data.routing_reason,
+        created_at: new Date().toISOString(),
+      }));
+      setSeatStates((states) => ({
+        ...states,
+        [data.member_id!]: {
+          ...(states[data.member_id!] || {}),
+          status: 'active',
+          label: 'speaking live',
+        },
+      }));
+      return;
+    }
+
+    if (data.event === 'message_delta' && data.message_id) {
+      setConversationMessages((current) => upsertConversationMessage(current, {
+        id: data.message_id!,
+        turn_index: data.turn_index,
+        member_id: data.member_id,
+        member_title: data.member_title,
+        speaker: 'agent',
+        content: data.content || '',
+        simulated_stream: data.simulated_stream,
+      }));
+      return;
+    }
+
+    if (data.event === 'message_done' && data.message_id) {
+      setConversationMessages((current) => upsertConversationMessage(current, {
+        id: data.message_id!,
+        turn_index: data.turn_index,
+        member_id: data.member_id,
+        member_title: data.member_title,
+        speaker: 'agent',
+        content: data.content || '',
+        model: data.model,
+        elapsed_seconds: data.elapsed,
+        input_tokens: data.input_tokens,
+        output_tokens: data.output_tokens,
+        finish_reason: data.finish_reason,
+        simulated_stream: data.simulated_stream,
+      }));
+      setActiveStreamMessageId((current) => current === data.message_id ? null : current);
+      if (data.member_id) {
+        setSeatStates((states) => ({
+          ...states,
+          [data.member_id!]: {
+            ...(states[data.member_id!] || {}),
+            status: 'done',
+            label: 'live done',
+            model: data.model,
+          },
+        }));
+      }
+      pushLiveFeed({
+        kind: 'done',
+        memberId: data.member_id,
+        memberTitle: data.member_title,
+        text: `${data.member_title || data.member_id || 'Board member'} responded`,
+      });
+      return;
+    }
+
+    // ── Secretary Executive Brief (live discussion post-summary) ──────
+    if (data.event === 'secretary_starting' && data.member_id) {
+      const briefId = data.message_id || `secretary-brief-${data.session_id || Date.now()}`;
+      const isFinal = !!data.is_final;
+      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      setActiveStreamMessageId(briefId);
+      setConversationMessages((current) => [
+        ...current,
+        {
+          id: briefId,
+          turn_index: -1,
+          member_id: data.member_id,
+          member_title: data.member_title || 'Board Secretary',
+          speaker: 'agent',
+          content: '',
+          role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+          created_at: new Date().toISOString(),
+        },
+      ]);
+      setSeatStates((states) => ({
+        ...states,
+        [data.member_id!]: { status: 'active', label: isFinal ? 'finalizing brief…' : 'summarizing…' },
+      }));
+      pushLiveFeed({ kind: 'speaking', memberId: data.member_id, text: `Secretary preparing ${briefMode.toLowerCase()} executive brief\u2026` });
+      return;
+    }
+
+    if (data.event === 'secretary_delta' && data.message_id) {
+      const isFinal = !!data.is_final;
+      setConversationMessages((current) => upsertConversationMessage(current, {
+        id: data.message_id!,
+        turn_index: -1,
+        member_id: data.member_id,
+        member_title: data.member_title,
+        speaker: 'agent',
+        content: data.content || '',
+        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        simulated_stream: data.simulated_stream,
+      }));
+      return;
+    }
+
+    if (data.event === 'secretary_done' && data.message_id) {
+      const isFinal = !!data.is_final;
+      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      setConversationMessages((current) => upsertConversationMessage(current, {
+        id: data.message_id!,
+        turn_index: -1,
+        member_id: data.member_id,
+        member_title: data.member_title,
+        speaker: 'agent',
+        content: data.content || '',
+        model: data.model,
+        elapsed_seconds: data.elapsed,
+        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        simulated_stream: false,
+      }));
+      setActiveStreamMessageId((current) =>
+        current === data.message_id ? null : current
+      );
+      if (data.member_id) {
+        setSeatStates((states) => ({
+          ...states,
+          [data.member_id!]: { status: 'done', label: `${briefMode} brief ready`, model: data.model },
+        }));
+      }
+      pushLiveFeed({
+        kind: 'done',
+        memberId: data.member_id,
+        text: `${data.member_title || 'Secretary'} completed executive brief`,
+      });
+      return;
+    }
+
+    if (data.event === 'secretary_failed') {
+      setActiveStreamMessageId(null);
+      pushLiveFeed({ kind: 'failed', text: `Secretary brief failed: ${data.error || 'unknown error'}` });
+      return;
+    }
+
+    if (data.event === 'conversation_done') {
+      setActiveStreamMessageId(null);
+      if (data.status === 'awaiting_chair_decision') {
+        setTableStatus({
+          label: 'CEO decision',
+          title: 'Board input ready',
+          detail: 'Review the discussion and make the final call as CEO / Chairperson.',
+        });
+      } else {
+        setTableStatus({
+          label: 'Complete',
+          title: 'Discussion complete',
+          detail: `${data.message_count || conversationMessages.length} conversation messages captured.`,
+        });
+      }
       return;
     }
 
@@ -309,6 +581,7 @@ export default function App() {
         title: data.member_title,
         model: data.model,
         elapsed: data.elapsed,
+        content: data.content,
         failed: false,
       }));
       setSeatStates((states) => ({
@@ -379,12 +652,21 @@ export default function App() {
       setSessionLabel(nextSession?.session_id || 'Session complete');
       markSelectedMembers(nextSession?.classification);
       setActivePhase(null);
-      pushLiveFeed({ kind: 'phase', text: 'Board decision ready' });
-      setTableStatus({
-        label: 'Complete',
-        title: 'Board decision ready',
-        detail: 'Review the direction, risks, dissent, verification, and memory proposal.',
-      });
+      if (nextSession?.status === 'awaiting_chair_decision' && !nextSession?.decision) {
+        pushLiveFeed({ kind: 'phase', text: 'Board input ready for CEO decision' });
+        setTableStatus({
+          label: 'CEO decision',
+          title: 'Board input ready',
+          detail: 'No automatic chair decision was generated. Review the conversation and make the call.',
+        });
+      } else {
+        pushLiveFeed({ kind: 'phase', text: 'Board decision ready' });
+        setTableStatus({
+          label: 'Complete',
+          title: 'Board decision ready',
+          detail: 'Review the direction, risks, dissent, verification, and memory proposal.',
+        });
+      }
       return;
     }
 
@@ -455,13 +737,38 @@ export default function App() {
         active={activeTab}
         onSelect={setActiveTab}
         expanded={railExpanded}
+        collapsed={railCollapsed}
         onToggleExpand={() => setRailExpanded((v) => !v)}
+        onToggleCollapse={() => setRailCollapsed((v) => !v)}
         sessionLabel={sessionLabel}
       />
 
+      {/* Collapsed rail tab — shown only when fully collapsed */}
+      {railCollapsed && (
+        <div
+          className="fixed left-0 top-0 bottom-0 z-40 flex w-10 flex-col items-center bg-surface-container-low shadow-[4px_0_16px_-10px_rgba(26,22,20,0.24)]"
+          aria-label="Collapsed navigation"
+        >
+          <button
+            type="button"
+            onClick={() => setRailCollapsed(false)}
+            className="mt-4 grid h-9 w-9 place-items-center rounded-full bg-surface-container-high hover:bg-surface-container-highest transition-colors"
+            aria-label="Open navigation"
+            title="Open navigation"
+          >
+            <Landmark className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+          </button>
+          <div className="flex flex-1 items-center justify-center py-4">
+            <span className="rotate-180 text-[10px] font-body font-semibold uppercase tracking-wider text-on-surface-variant [writing-mode:vertical-rl]">
+              Menu
+            </span>
+          </div>
+        </div>
+      )}
+
       <main
         className="flex-1 min-h-screen min-w-0"
-        style={{ marginLeft: railExpanded ? 240 : 72 }}
+        style={{ marginLeft: railCollapsed ? 40 : railExpanded ? 240 : 72 }}
       >
         <AnimatePresence mode="wait">
           <motion.div
@@ -498,6 +805,8 @@ export default function App() {
                 resultRef={resultRef}
                 liveFeed={liveFeed}
                 activePhase={activePhase}
+                conversationMessages={conversationMessages}
+                activeStreamMessageId={activeStreamMessageId}
               />
             )}
             {activeTab === 'performance' && (
@@ -521,15 +830,21 @@ function IconRail({
   active,
   onSelect,
   expanded,
+  collapsed,
   onToggleExpand,
+  onToggleCollapse,
   sessionLabel,
 }: {
   active: Tab;
   onSelect: (tab: Tab) => void;
   expanded: boolean;
+  collapsed: boolean;
   onToggleExpand: () => void;
+  onToggleCollapse: () => void;
   sessionLabel: string;
 }) {
+  if (collapsed) return null;
+
   return (
     <nav
       className={`fixed left-0 top-0 h-screen z-40 flex flex-col py-4 transition-[width] duration-200 bg-surface-container-low ${
@@ -537,21 +852,34 @@ function IconRail({
       }`}
       aria-label="Primary"
     >
-      <button
-        type="button"
-        onClick={onToggleExpand}
-        className="flex items-center gap-3 px-4 py-3 hover:bg-surface-container-high transition-colors"
-        aria-label="Toggle navigation width"
-      >
-        <div className="w-10 h-10 flex items-center justify-center font-headline text-lg font-bold text-primary-container italic">
-          EA
-        </div>
-        {expanded && (
-          <span className="font-headline italic text-lg text-on-surface">
-            The Executive Atelier
-          </span>
-        )}
-      </button>
+      {/* Logo / Brand row — toggles expand/collapse width */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex items-center gap-3 hover:bg-surface-container-high transition-colors rounded-lg -ml-2 px-2 py-1"
+          aria-label="Toggle navigation width"
+        >
+          <div className="w-10 h-10 flex items-center justify-center font-headline text-lg font-bold text-primary-container italic">
+            EA
+          </div>
+          {expanded && (
+            <span className="font-headline italic text-lg text-on-surface">
+              The Executive Atelier
+            </span>
+          )}
+        </button>
+        {/* Full collapse button (chevron) */}
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-full hover:bg-surface-container-high transition-colors ml-auto"
+          aria-label="Collapse navigation"
+          title="Collapse to arrow tab"
+        >
+          <ChevronLeft className="h-3.5 w-3.5 text-on-surface-variant" />
+        </button>
+      </div>
 
       <ul className="flex flex-col gap-1 mt-6 px-2">
         {NAV_ITEMS.map(({ id, label, icon: Icon }) => {

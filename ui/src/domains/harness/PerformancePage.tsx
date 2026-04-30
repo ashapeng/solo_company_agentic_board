@@ -51,6 +51,11 @@ export function PerformancePage({ metrics, session }: { metrics: SessionMetrics;
   const totalCost = Number(metrics.total_cost_estimate_usd || 0);
   const pieData = stageData.map((stage) => ({ name: stage.name, value: stage.tokens || 1 }));
   const avgTokensPerCall = totalCalls ? Math.round(totalTokens / totalCalls) : 0;
+  const diagnosticWarnings = [
+    ...(session?.delegation_plan?.warnings || []),
+    ...(session?.structured_output_warnings || []),
+  ];
+  const callDiagnostics = session?.metrics?.calls || [];
 
   return (
     <div className="flex min-h-screen flex-col gap-10 bg-background p-10">
@@ -94,6 +99,68 @@ export function PerformancePage({ metrics, session }: { metrics: SessionMetrics;
       </section>
 
       <section className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        {(diagnosticWarnings.length > 0 || callDiagnostics.length > 0 || session?.verification) && (
+          <article className="flex flex-col gap-4 rounded-xl bg-surface-container-lowest p-6 lg:col-span-2">
+            <div>
+              <h2 className="font-headline text-xl text-on-surface">Session Diagnostics</h2>
+              <p className="mt-1 font-body text-sm text-on-surface-variant">
+                Audit details hidden from Governance.
+              </p>
+            </div>
+
+            {diagnosticWarnings.length > 0 && (
+              <div>
+                <p className="font-body text-xs font-semibold uppercase tracking-wider text-error">Warnings</p>
+                <ul className="mt-2 grid gap-2">
+                  {diagnosticWarnings.map((warning, index) => (
+                    <li key={`${warning}-${index}`} className="rounded-lg bg-error-container/20 px-3 py-2 font-body text-sm text-error">
+                      {warning}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {session?.verification && (
+              <div className="rounded-lg bg-surface-container-low p-4">
+                <p className="font-body text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Verification</p>
+                <p className="mt-2 font-body text-sm text-on-surface">
+                  Score {session.verification.score ?? 'not scored'} / 10 &middot; {session.verification.passed ? 'passed' : 'not passed'}
+                </p>
+              </div>
+            )}
+
+            {callDiagnostics.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[680px] border-separate border-spacing-y-2 text-left font-body text-sm">
+                  <thead className="text-xs uppercase tracking-wider text-on-surface-variant">
+                    <tr>
+                      <th className="px-3 py-1">Stage</th>
+                      <th className="px-3 py-1">Member</th>
+                      <th className="px-3 py-1">Model</th>
+                      <th className="px-3 py-1">Tokens</th>
+                      <th className="px-3 py-1">Latency</th>
+                      <th className="px-3 py-1">Finish</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {callDiagnostics.map((call, index) => (
+                      <tr key={`${call.member_id}-${call.stage}-${index}`} className="bg-surface-container-low">
+                        <td className="rounded-l-lg px-3 py-2">{call.stage ?? '-'}</td>
+                        <td className="px-3 py-2">{call.member_id || '-'}</td>
+                        <td className="px-3 py-2">{call.model || '-'}</td>
+                        <td className="px-3 py-2">{Number((call.input_tokens || 0) + (call.output_tokens || 0)).toLocaleString()}</td>
+                        <td className="px-3 py-2">{call.latency_seconds !== undefined ? `${Number(call.latency_seconds).toFixed(1)}s` : '-'}</td>
+                        <td className="rounded-r-lg px-3 py-2">{call.finish_reason || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        )}
+
         <article className="flex flex-col gap-4 rounded-xl bg-surface-container-lowest p-6">
           <div>
             <h2 className="font-headline text-xl text-on-surface">Stage Tokens</h2>

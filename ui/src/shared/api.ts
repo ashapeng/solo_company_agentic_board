@@ -64,7 +64,13 @@ export async function submitFeedback(
 }
 
 export async function streamDeliberation(
-  params: { query: string; full_board: boolean; verify: boolean; member_ids?: string[] },
+  params: {
+    query: string;
+    full_board: boolean;
+    verify: boolean;
+    member_ids?: string[];
+    discussion_mode?: 'staged' | 'live';
+  },
   { onEvent }: { onEvent: (event: StreamEvent) => void },
 ) {
   const response = await fetch(`${API}/deliberate/stream`, {

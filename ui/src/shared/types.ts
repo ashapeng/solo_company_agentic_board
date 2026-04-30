@@ -22,9 +22,13 @@ export type SeatState = {
 
 export type StageMember = {
   id?: string;
+  member_id?: string;
   title?: string;
+  member_title?: string;
   model?: string;
   elapsed?: number;
+  elapsed_seconds?: number;
+  content?: string;
   failed?: boolean;
   error?: string;
 };
@@ -35,6 +39,28 @@ export type StageEvent = {
   done?: boolean;
   count?: number;
   members: StageMember[];
+};
+
+export type DiscussionMode = 'staged' | 'live';
+
+export type ConversationMessage = {
+  id: string;
+  turn_index?: number;
+  member_id?: string;
+  member_title?: string;
+  role?: string;
+  content: string;
+  speaker?: 'user' | 'agent' | 'system';
+  reply_to_message_id?: string | null;
+  model?: string | null;
+  elapsed_seconds?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  finish_reason?: string | null;
+  simulated_stream?: boolean;
+  created_at?: string;
+  trigger?: string;
+  routing_reason?: string;
 };
 
 export type Classification = {
@@ -151,6 +177,24 @@ export type SessionMetrics = {
   total_tokens?: number;
   total_cost_estimate_usd?: number;
   by_stage?: Record<string, { calls?: number; tokens?: number }>;
+  calls?: Array<{
+    member_id?: string;
+    stage?: number;
+    model?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    latency_seconds?: number;
+    finish_reason?: string;
+  }>;
+};
+
+export type SecretaryBrief = {
+  member_id?: string;
+  member_title?: string;
+  stage?: number;
+  content?: string;
+  model?: string | null;
+  elapsed_seconds?: number | null;
 };
 
 export type BoardSession = {
@@ -175,22 +219,44 @@ export type BoardSession = {
   };
   structured_output_warnings?: string[];
   metrics?: SessionMetrics;
+  conversation?: {
+    messages?: ConversationMessage[];
+    routing_trace?: Array<Record<string, unknown>>;
+  };
+  stage1?: StageMember[];
+  stage2?: StageMember[];
   stage3?: { content?: string };
   stage3_synthesis?: { content?: string };
   participation?: ParticipationDecision[];
+  secretary_brief?: SecretaryBrief | null;
 };
 
 export type StreamEvent = {
   event: string;
+  session_id?: string;
   stage?: number;
   name?: string;
   member_id?: string;
   member_title?: string;
   member_ids?: string[];
+  chairman_id?: string;
   model?: string;
   elapsed?: number;
   count?: number;
   phase?: string;
+  message_id?: string;
+  turn_index?: number;
+  reply_to_message_id?: string | null;
+  delta?: string;
+  content?: string;
+  trigger?: string;
+  routing_reason?: string;
+  finish_reason?: string | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  simulated_stream?: boolean;
+  message_count?: number;
+  status?: string;
   session?: BoardSession;
   error?: string;
   message?: string;

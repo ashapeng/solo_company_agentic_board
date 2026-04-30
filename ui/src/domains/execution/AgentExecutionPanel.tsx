@@ -53,11 +53,6 @@ export function AgentExecutionPanel({
         <p className="font-body text-sm italic leading-relaxed text-on-surface-variant">
           No delegation planned yet. {routingLabel} will create approval-gated tasks after synthesis.
         </p>
-        {delegationPlan?.warnings?.map((warning) => (
-          <p key={warning} className="font-body text-xs font-medium text-error">
-            {warning}
-          </p>
-        ))}
       </div>
     );
   }

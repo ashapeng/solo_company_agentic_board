@@ -2,6 +2,7 @@ export type {
   BoardMember,
   BoardSession,
   Classification,
+  ConversationMessage,
   Decision,
   LiveFeedItem,
   SeatStatus,

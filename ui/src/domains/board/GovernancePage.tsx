@@ -41,11 +41,13 @@ import {
 import type {
   BoardMember,
   BoardSession,
+  ConversationMessage,
   DelegatedTask,
   ExecutionAgent,
   LiveFeedItem,
   SeatState,
   StageEvent,
+  StageMember,
   TableStatus,
 } from '../../shared/types';
 import { recordRoutingSignal } from '../../shared/api';
@@ -57,7 +59,7 @@ const STAGE_PIPS: Array<{ stage: number; label: string }> = [
   { stage: 4, label: 'Verify' },
 ];
 
-type StagePhase = 'pending' | 'active' | 'complete' | 'verified' | 'failed';
+type StagePhase = 'pending' | 'active' | 'complete' | 'verified' | 'failed' | 'skipped';
 
 /**
  * Choose up to `max` visible seats. Chairperson is always included.
@@ -102,12 +104,17 @@ function computeStagePhase(
   verifyEnabled: boolean,
 ): StagePhase {
   if (stage === 4) {
-    if (!verifyEnabled) return 'pending';
+    if (!verifyEnabled) return 'skipped';
     const verification = session?.verification;
     if (verification?.passed) return 'verified';
     if (verification?.passed === false) return 'failed';
     if (session) return 'complete';
     return 'pending';
+  }
+  if (session) {
+    if (stage === 1 && session.stage1?.length) return 'complete';
+    if (stage === 2 && session.stage2) return 'complete';
+    if (stage === 3 && getSynthesis(session)?.content) return 'complete';
   }
   const event = stageEvents.find((item) => item.stage === stage);
   if (!event) return 'pending';
@@ -142,6 +149,8 @@ export function GovernancePage({
   resultRef,
   liveFeed = [],
   activePhase = null,
+  conversationMessages = [],
+  activeStreamMessageId = null,
 }: {
   members: BoardMember[];
   activeCouncilMembers: BoardMember[];
@@ -168,10 +177,17 @@ export function GovernancePage({
   resultRef: RefObject<HTMLDivElement | null>;
   liveFeed?: LiveFeedItem[];
   activePhase?: string | null;
+  conversationMessages?: ConversationMessage[];
+  activeStreamMessageId?: string | null;
 }) {
   const displayCouncil = activeCouncilMembers.length ? activeCouncilMembers : members;
-  const stagePhases = STAGE_PIPS.map((pip) => computeStagePhase(pip.stage, stageEvents, session, verify));
+  const stagePhases = STAGE_PIPS.map((pip) => (
+    pip.stage === 4 && activePhase === 'verifying'
+      ? 'active'
+      : computeStagePhase(pip.stage, stageEvents, session, verify)
+  ));
   const hasActiveSession = Boolean(session || stageEvents.length || activePhase);
+  const hasLeftDrawerActivity = stageEvents.length > 0 || Boolean(activePhase);
   const verified = Boolean(session?.verification?.passed);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [promotedIds, setPromotedIds] = useState<Set<string>>(new Set());
@@ -224,12 +240,20 @@ export function GovernancePage({
     try { localStorage.setItem('boardroom.pinLeft', leftPinned ? '1' : '0'); } catch { /* ignore */ }
   }, [leftPinned]);
 
-  // Auto-open when first question submitted (stage events fire OR active phase arrives)
+  const stage3DrawerPhase = computeStagePhase(3, stageEvents, session, verify);
+  const rightDrawerHasPriority = stage3DrawerPhase === 'active' || stage3DrawerPhase === 'complete' || Boolean(session?.decision);
+
+  // Auto-open on the EDGE: when activity first appears, not while it persists.
+  // State-based predicate fights the mutual-exclusion effect below and causes
+  // the left drawer to flash open/close once Stage 3 becomes active.
+  const prevHadActivityRef = useRef(false);
   useEffect(() => {
-    if ((stageEvents.length > 0 || activePhase) && !leftOpen) {
+    const hasActivity = hasLeftDrawerActivity;
+    if (hasActivity && !prevHadActivityRef.current && !rightDrawerHasPriority) {
       setLeftOpen(true);
     }
-  }, [stageEvents.length, activePhase, leftOpen]);
+    prevHadActivityRef.current = hasActivity;
+  }, [hasLeftDrawerActivity, rightDrawerHasPriority]);
 
   // OutlookDrawer (right) open/pin state
   const [rightOpen, setRightOpen] = useState(false);
@@ -241,40 +265,16 @@ export function GovernancePage({
     try { localStorage.setItem('boardroom.pinRight', rightPinned ? '1' : '0'); } catch { /* ignore */ }
   }, [rightPinned]);
 
-  // Auto-open when Stage 3 (synthesis) is active OR a decision exists
+  // Auto-open on the EDGE: when Stage 3 first becomes active or a decision
+  // first arrives — not while either condition persists. Mirrors the left
+  // drawer fix above so a user-dismissed drawer stays dismissed.
+  const prevRightTriggerRef = useRef(false);
   useEffect(() => {
-    const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
-    const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
-    const hasDecision = Boolean(session?.decision);
-    if ((stage3Active || hasDecision) && !rightOpen) {
+    if (rightDrawerHasPriority && !prevRightTriggerRef.current) {
       setRightOpen(true);
     }
-  }, [stageEvents, session, verify, rightOpen]);
-
-  // Density Rule 1 — Mutual exclusion: only one drawer open unless pinned.
-  // Pin acts as "respect override". Placed AFTER the auto-open effects so it
-  // runs last and reconciles whatever state the auto-openers set.
-  useEffect(() => {
-    if (leftOpen && rightOpen) {
-      if (!leftPinned && !rightPinned) {
-        // Neither pinned. Heuristic: if Stage 3 is active/complete the
-        // synthesis (right drawer) is primary — collapse left. Otherwise
-        // the briefing (left drawer) is primary — collapse right.
-        const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
-        const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
-        if (stage3Active) {
-          setLeftOpen(false);
-        } else {
-          setRightOpen(false);
-        }
-      } else if (!leftPinned && rightPinned) {
-        setLeftOpen(false);
-      } else if (leftPinned && !rightPinned) {
-        setRightOpen(false);
-      }
-      // both pinned → both stay
-    }
-  }, [leftOpen, rightOpen, leftPinned, rightPinned, stageEvents, session, verify]);
+    prevRightTriggerRef.current = rightDrawerHasPriority;
+  }, [rightDrawerHasPriority]);
 
   // Unread indicators — set when the auto-open trigger fires for a drawer
   // that is currently closed (user or mutual-exclusion kept it shut).
@@ -295,25 +295,18 @@ export function GovernancePage({
   }, [stageEvents.length, leftOpen]);
 
   useEffect(() => {
-    const stage3Phase = computeStagePhase(3, stageEvents, session, verify);
-    const stage3Active = stage3Phase === 'active' || stage3Phase === 'complete';
-    const hasDecision = Boolean(session?.decision);
-    if ((stage3Active || hasDecision) && !rightOpen) {
+    if (rightDrawerHasPriority && !rightOpen) {
       setRightUnread(true);
     }
     if (rightOpen) setRightUnread(false);
-  }, [stageEvents, session, verify, rightOpen]);
+  }, [rightDrawerHasPriority, rightOpen]);
 
-  // Edge-tab helpers: open this drawer, and close the other one unless pinned.
-  // Keeps the mutual-exclusion reconciler honest with snappy UX.
   const openLeftDrawer = () => {
     setLeftOpen(true);
-    if (!rightPinned) setRightOpen(false);
   };
 
   const openRightDrawer = () => {
     setRightOpen(true);
-    if (!leftPinned) setLeftOpen(false);
   };
 
   // Esc dismisses drawer (respect pin — do nothing if pinned).
@@ -328,98 +321,87 @@ export function GovernancePage({
     return () => window.removeEventListener('keydown', onKey);
   }, [leftOpen, leftPinned, rightOpen, rightPinned]);
 
+  const workspaceInsetClass = [
+    leftOpen ? 'md:pl-[320px]' : hasLeftDrawerActivity ? 'md:pl-12' : '',
+    rightOpen ? 'md:pr-[384px]' : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className="min-h-[calc(100vh-5rem)] bg-background text-on-surface">
-      <div className="flex flex-col gap-0">
-        <section className="relative flex flex-1 flex-col items-center justify-start gap-6 p-6 md:p-8">
-          <CenterArena
-            members={members}
-            displayCouncil={displayCouncil}
-            manualMemberIds={manualMemberIds}
-            seatStates={seatStates}
-            session={session}
-            query={query}
-            stagePhases={stagePhases}
-            verified={verified}
-            running={running}
-            justAddedIds={justAddedIds}
-            promotedIds={promotedIds}
-            promoteSeat={promoteSeat}
-          />
+    <div className="h-[calc(100vh-3rem)] overflow-hidden bg-background text-on-surface">
+      <div className={`flex h-full flex-col gap-0 transition-[padding] duration-200 ${workspaceInsetClass}`}>
+        <section className="relative grid h-full min-h-0 w-full grid-cols-1 gap-4 overflow-hidden p-4 md:p-6 xl:grid-cols-[minmax(360px,520px)_minmax(420px,1fr)]">
+          <div className="flex min-h-0 flex-col items-center justify-start gap-4 overflow-y-auto overflow-x-hidden">
+            <CenterArena
+              members={members}
+              displayCouncil={displayCouncil}
+              manualMemberIds={manualMemberIds}
+              seatStates={seatStates}
+              session={session}
+              query={query}
+              stagePhases={stagePhases}
+              verified={verified}
+              running={running}
+              justAddedIds={justAddedIds}
+              promotedIds={promotedIds}
+              promoteSeat={promoteSeat}
+            />
 
-          <CeoComposer
-            query={query}
-            setQuery={setQuery}
-            fullBoard={fullBoard}
-            setFullBoard={setFullBoard}
-            verify={verify}
-            setVerify={setVerify}
-            running={running}
-            onSubmit={onSubmit}
-            stagePhases={stagePhases}
-            routingLabel={routingLabel}
-            session={session}
-            verified={verified}
-          />
+            <CeoComposer
+              query={query}
+              setQuery={setQuery}
+              fullBoard={fullBoard}
+              setFullBoard={setFullBoard}
+              verify={verify}
+              setVerify={setVerify}
+              running={running}
+              onSubmit={onSubmit}
+              stagePhases={stagePhases}
+              routingLabel={routingLabel}
+              session={session}
+              verified={verified}
+            />
 
-          <div className="flex flex-col items-center gap-3 mt-4">
-            {!rosterOpen && (
-              <button
-                type="button"
-                onClick={() => setRosterOpen(true)}
-                className="flex items-center gap-1.5 font-body text-sm text-on-surface-variant hover:text-primary-container transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Add members
-              </button>
-            )}
-            {rosterOpen && (
-              <>
-                <MemberRosterPicker
-                  members={members}
-                  manualMemberIds={manualMemberIds}
-                  fullBoard={fullBoard}
-                  toggleManualMember={toggleManualMember}
-                />
+            <div className="flex shrink-0 flex-col items-center gap-3">
+              {!rosterOpen && (
                 <button
                   type="button"
-                  onClick={() => setRosterOpen(false)}
-                  className="text-xs font-body text-on-surface-variant/70 hover:text-on-surface-variant"
+                  onClick={() => setRosterOpen(true)}
+                  className="flex items-center gap-1.5 font-body text-sm text-on-surface-variant hover:text-primary-container transition-colors"
                 >
-                  Hide roster
+                  <Plus className="w-4 h-4" />
+                  Add members
                 </button>
-              </>
-            )}
+              )}
+              {rosterOpen && (
+                <>
+                  <MemberRosterPicker
+                    members={members}
+                    manualMemberIds={manualMemberIds}
+                    fullBoard={fullBoard}
+                    toggleManualMember={toggleManualMember}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setRosterOpen(false)}
+                    className="text-xs font-body text-on-surface-variant/70 hover:text-on-surface-variant"
+                  >
+                    Hide roster
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
-          <StageResponseDeck stageEvents={stageEvents} />
-
-          <div ref={resultRef} className="w-full max-w-3xl">
-            {(stageEvents.length > 0 || session || error) && (
-              <div className="grid gap-5">
-                {stageEvents.length > 0 && (
-                  <section className="rounded-xl bg-surface-container-low p-6">
-                    <div className="mb-4 flex items-center gap-2">
-                      <Activity className="h-4 w-4 text-primary" />
-                      <p className="text-xs font-medium tracking-wider text-on-surface-variant">Timeline</p>
-                    </div>
-                    <h2 className="font-headline text-xl text-on-surface">Deliberation</h2>
-                    <StageTimeline stages={stageEvents} />
-                  </section>
-                )}
-
-                {(session || error) && (
-                  <section className="rounded-xl bg-surface-container-low p-6">
-                    <div className="mb-4 flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-primary" />
-                      <p className="text-xs font-medium tracking-wider text-on-surface-variant">Board Decision</p>
-                    </div>
-                    <h2 className="font-headline text-xl text-on-surface">Decision Record</h2>
-                    {error ? <ErrorMessage message={error} /> : <DecisionRecord session={session} />}
-                  </section>
-                )}
-              </div>
-            )}
+          <div ref={resultRef} className="min-h-0">
+            <LiveBoardTranscript
+              messages={conversationMessages}
+              members={members}
+              activeStreamMessageId={activeStreamMessageId}
+              running={running}
+              error={error}
+              session={session}
+              stageEvents={stageEvents}
+            />
           </div>
         </section>
 
@@ -440,21 +422,11 @@ export function GovernancePage({
         />
       </BriefingDrawer>
 
-      {!leftOpen && (stageEvents.length > 0 || activePhase) && (
-        <button
-          type="button"
-          onClick={openLeftDrawer}
-          className="fixed left-[72px] top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-r-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[4px_0_12px_-4px_rgba(26,22,20,0.10)]"
-          aria-label="Open Briefing Room"
-        >
-          <ChevronRight className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
-          {leftUnread && (
-            <span
-              aria-hidden="true"
-              className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary"
-            />
-          )}
-        </button>
+      {!leftOpen && hasLeftDrawerActivity && (
+        <CollapsedBriefingRail
+          unread={leftUnread}
+          onOpen={openLeftDrawer}
+        />
       )}
 
       <OutlookDrawer
@@ -481,20 +453,10 @@ export function GovernancePage({
       </OutlookDrawer>
 
       {!rightOpen && (stageEvents.length > 0 || activePhase) && (
-        <button
-          type="button"
-          onClick={openRightDrawer}
-          className="fixed right-0 top-1/2 z-20 grid h-16 w-10 -translate-y-1/2 place-items-center rounded-l-lg bg-surface-container-high hover:bg-surface-container-highest transition-colors shadow-[-4px_0_12px_-4px_rgba(26,22,20,0.10)]"
-          aria-label="Open Strategic Outlook"
-        >
-          <ChevronLeft className="h-5 w-5 text-on-surface-variant" aria-hidden="true" />
-          {rightUnread && (
-            <span
-              aria-hidden="true"
-              className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary"
-            />
-          )}
-        </button>
+        <CollapsedOutlookRail
+          unread={rightUnread}
+          onOpen={openRightDrawer}
+        />
       )}
     </div>
   );
@@ -514,46 +476,82 @@ function BriefingDrawer({
   children: ReactNode;
 }) {
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.aside
-          key="briefing-drawer"
-          initial={{ x: -320, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          exit={{ x: -320, opacity: 0 }}
-          transition={{ ease: 'easeOut', duration: 0.28 }}
-          className="fixed left-[72px] top-0 bottom-0 z-30 w-[320px] overflow-y-auto bg-surface-container-low p-6 shadow-[8px_0_32px_-8px_rgba(26,22,20,0.10)]"
-          aria-label="Briefing Room"
-        >
-          <header className="mb-4 flex items-start justify-between gap-2">
-            <div>
-              <p className="text-[10px] tracking-wider uppercase text-primary">Strategic Materials</p>
-              <h2 className="font-headline text-xl text-on-surface">Briefing Room</h2>
-            </div>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={onTogglePin}
-                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
-                aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
-                title={pinned ? 'Unpin' : 'Pin open'}
-              >
-                {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
-                aria-label="Close drawer"
-              >
-                <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-          {children}
-        </motion.aside>
-      )}
-    </AnimatePresence>
+    <motion.aside
+      key="briefing-drawer"
+      initial={false}
+      animate={{ x: open ? 0 : -320, opacity: open ? 1 : 0 }}
+      transition={{ ease: 'easeOut', duration: 0.2 }}
+      className="fixed left-[72px] top-0 bottom-0 z-40 w-[320px] overflow-x-hidden overflow-y-auto bg-surface-container-low p-6 shadow-[8px_0_32px_-8px_rgba(26,22,20,0.10)]"
+      style={{ pointerEvents: open ? 'auto' : 'none' }}
+      aria-label="Briefing Room"
+      aria-hidden={!open}
+    >
+      <header className="mb-4 flex items-start justify-between gap-2">
+        <div>
+          <p className="text-[10px] tracking-wider uppercase text-primary">Strategic Materials</p>
+          <h2 className="font-headline text-xl text-on-surface">Briefing Room</h2>
+        </div>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={onTogglePin}
+            className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+            aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
+            title={pinned ? 'Unpin' : 'Pin open'}
+          >
+            {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+            aria-label="Collapse drawer"
+          >
+            <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+      {children}
+    </motion.aside>
+  );
+}
+
+function CollapsedBriefingRail({
+  unread,
+  onOpen,
+}: {
+  unread: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <aside
+      className="fixed left-[72px] top-0 bottom-0 z-40 flex w-12 flex-col items-center border-r border-outline-variant/50 bg-surface-container-low shadow-[4px_0_16px_-10px_rgba(26,22,20,0.24)]"
+      aria-label="Collapsed Briefing Room"
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        className="relative mt-4 grid h-9 w-9 place-items-center rounded-full bg-surface-container-high hover:bg-surface-container-highest transition-colors"
+        aria-label="Open Briefing Room"
+        title="Open Briefing Room"
+      >
+        <ChevronRight className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+        {unread && (
+          <span
+            aria-hidden="true"
+            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary"
+          />
+        )}
+      </button>
+      <div className="mt-5 grid h-9 w-9 place-items-center rounded-full bg-surface-container-high text-primary">
+        <FileText className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <div className="flex flex-1 items-center justify-center py-4">
+        <span className="rotate-180 text-[10px] font-body font-semibold uppercase tracking-wider text-on-surface-variant [writing-mode:vertical-rl]">
+          Briefing Room
+        </span>
+      </div>
+    </aside>
   );
 }
 
@@ -571,43 +569,79 @@ function OutlookDrawer({
   children: ReactNode;
 }) {
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.aside
-          key="outlook-drawer"
-          initial={{ x: 384, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          exit={{ x: 384, opacity: 0 }}
-          transition={{ ease: 'easeOut', duration: 0.28 }}
-          className="fixed right-0 top-0 bottom-0 z-30 w-[384px] overflow-y-auto bg-surface-container-low p-6 shadow-[-8px_0_32px_-8px_rgba(26,22,20,0.10)]"
-          aria-label="Strategic Outlook"
-        >
-          <header className="mb-4 flex items-start justify-between gap-2">
-            <h2 className="font-headline text-xl text-on-surface">Strategic Outlook</h2>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={onTogglePin}
-                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
-                aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
-                title={pinned ? 'Unpin' : 'Pin open'}
-              >
-                {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
-                aria-label="Close drawer"
-              >
-                <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-          {children}
-        </motion.aside>
-      )}
-    </AnimatePresence>
+    <motion.aside
+      key="outlook-drawer"
+      initial={false}
+      animate={{ x: open ? 0 : 384, opacity: open ? 1 : 0 }}
+      transition={{ ease: 'easeOut', duration: 0.2 }}
+      className="fixed right-0 top-0 bottom-0 z-40 w-[384px] overflow-x-hidden overflow-y-auto bg-surface-container-low p-6 shadow-[-8px_0_32px_-8px_rgba(26,22,20,0.10)]"
+      style={{ pointerEvents: open ? 'auto' : 'none' }}
+      aria-label="Strategic Outlook"
+      aria-hidden={!open}
+    >
+      <header className="mb-4 flex items-start justify-between gap-2">
+        <h2 className="font-headline text-xl text-on-surface">Strategic Outlook</h2>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={onTogglePin}
+            className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+            aria-label={pinned ? 'Unpin drawer' : 'Pin drawer'}
+            title={pinned ? 'Unpin' : 'Pin open'}
+          >
+            {pinned ? <PinOff className="h-4 w-4 text-primary-container" aria-hidden="true" /> : <Pin className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-full hover:bg-surface-container-high transition-colors"
+            aria-label="Collapse drawer"
+          >
+            <X className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+      {children}
+    </motion.aside>
+  );
+}
+
+function CollapsedOutlookRail({
+  unread,
+  onOpen,
+}: {
+  unread: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <aside
+      className="fixed right-0 top-0 bottom-0 z-40 flex w-12 flex-col items-center border-l border-outline-variant/50 bg-surface-container-low shadow-[-4px_0_16px_-10px_rgba(26,22,20,0.24)]"
+      aria-label="Collapsed Strategic Outlook"
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        className="relative mt-4 grid h-9 w-9 place-items-center rounded-full bg-surface-container-high hover:bg-surface-container-highest transition-colors"
+        aria-label="Open Strategic Outlook"
+        title="Open Strategic Outlook"
+      >
+        <ChevronLeft className="h-4 w-4 text-on-surface-variant" aria-hidden="true" />
+        {unread && (
+          <span
+            aria-hidden="true"
+            className="absolute left-1.5 top-1.5 h-2 w-2 rounded-full bg-primary"
+          />
+        )}
+      </button>
+      <div className="mt-5 grid h-9 w-9 place-items-center rounded-full bg-surface-container-high text-primary">
+        <FileText className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <div className="flex flex-1 items-center justify-center py-4">
+        <span className="rotate-180 text-[10px] font-body font-semibold uppercase tracking-wider text-on-surface-variant [writing-mode:vertical-rl]">
+          Outlook
+        </span>
+      </div>
+    </aside>
   );
 }
 
@@ -822,7 +856,7 @@ function RoundTable({
   const slotCount = visible.length + (pillAngle !== null ? 1 : 0);
 
   return (
-    <div className="board-orbit relative mx-auto hidden w-full max-w-[440px] aspect-square items-center justify-center md:flex">
+    <div className="board-orbit relative mx-auto hidden w-full max-w-[440px] shrink-0 max-h-[45%] aspect-square items-center justify-center md:flex">
       <div className="absolute inset-0">
         <AnimatePresence>
           {visible.map((member, index) => {
@@ -1166,6 +1200,16 @@ function CeoComposer({
   const isDisabled = running || !query.trim();
   const activeQuery = session?.user_query || query || '';
   const hasQuery = Boolean(activeQuery.trim());
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 224)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 224 ? 'auto' : 'hidden';
+  }, [query]);
+
   return (
     <form
       onSubmit={onSubmit}
@@ -1179,10 +1223,11 @@ function CeoComposer({
         session={session}
       />
 
-      <StagePipRow stagePhases={stagePhases} />
+      <StageProgressRow stagePhases={stagePhases} />
 
       <div className="relative">
         <textarea
+          ref={textareaRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -1192,13 +1237,13 @@ function CeoComposer({
             }
           }}
           placeholder="What should the board decide? (Enter to send, Shift+Enter for a new line)"
-          className="min-h-14 max-h-40 w-full resize-none rounded-lg bg-surface-container-highest py-4 pl-4 pr-14 font-body text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-0 focus:border-b-2 focus:border-b-secondary-container"
-          rows={2}
+          className="min-h-14 max-h-56 w-full resize-none rounded-lg bg-surface-container-highest py-4 pl-4 pr-14 font-body leading-relaxed text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-0 focus:border-b-2 focus:border-b-secondary-container"
+          rows={1}
         />
         <button
           type="submit"
           disabled={isDisabled}
-          className={`absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full text-on-primary transition ${
+          className={`absolute bottom-2 right-2 grid h-10 w-10 place-items-center rounded-full text-on-primary transition ${
             isDisabled ? 'bg-surface-container-high opacity-40 cursor-not-allowed' : 'metallic-gradient'
           }`}
           aria-label="Send question"
@@ -1221,7 +1266,7 @@ function CeoComposer({
           ) : (
             <>
               <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
-              <span>{routingLabel} &middot; ~$0.02 est</span>
+              <span>{routingLabel}</span>
             </>
           )}
         </div>
@@ -1230,9 +1275,9 @@ function CeoComposer({
   );
 }
 
-function StagePipRow({ stagePhases }: { stagePhases: StagePhase[] }) {
+function StageProgressRow({ stagePhases }: { stagePhases: StagePhase[] }) {
   return (
-    <div className="grid grid-cols-4 items-start gap-2">
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
       {STAGE_PIPS.map((pip, index) => {
         const phase = stagePhases[index];
         const dotClass =
@@ -1242,14 +1287,31 @@ function StagePipRow({ stagePhases }: { stagePhases: StagePhase[] }) {
             ? 'bg-secondary-container'
             : phase === 'failed'
             ? 'bg-error'
+            : phase === 'skipped'
+            ? 'bg-surface-container-high'
             : 'bg-surface-container-highest';
+        const statusLabel =
+          phase === 'verified'
+            ? 'Verified'
+            : phase === 'complete'
+            ? 'Complete'
+            : phase === 'active'
+            ? 'Active'
+            : phase === 'failed'
+            ? 'Failed'
+            : phase === 'skipped'
+            ? 'Skipped'
+            : 'Pending';
         return (
-          <div key={pip.stage} className="flex flex-col items-center gap-1.5">
-            <span
-              className={`h-2 w-2 rounded-full ${dotClass} ${phase === 'active' ? 'animate-pulse' : ''}`}
-              aria-hidden="true"
-            />
-            <span className="text-[10px] font-body text-on-surface-variant/70">{pip.label}</span>
+          <div key={pip.stage} className="rounded-lg bg-surface-container-low px-3 py-2">
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${dotClass} ${phase === 'active' ? 'animate-pulse' : ''}`}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 truncate text-xs font-body font-semibold text-on-surface">{pip.label}</span>
+            </div>
+            <p className="mt-1 text-[10px] font-body tracking-wider text-on-surface-variant">{statusLabel}</p>
           </div>
         );
       })}
@@ -1353,46 +1415,461 @@ function MemberRosterPicker({
   );
 }
 
-function StageResponseDeck({ stageEvents }: { stageEvents: StageEvent[] }) {
-  const stageOne = stageEvents.find((event) => event.stage === 1);
-  if (!stageOne?.members?.length) return null;
+function LiveBoardTranscript({
+  messages,
+  members,
+  activeStreamMessageId,
+  running,
+  error,
+  session,
+  stageEvents,
+}: {
+  messages: ConversationMessage[];
+  members: BoardMember[];
+  activeStreamMessageId: string | null;
+  running: boolean;
+  error: string;
+  session: BoardSession | null;
+  stageEvents: StageEvent[];
+}) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const memberMap = new Map(members.map((member) => [member.id, member]));
+  const hasConversation = messages.length > 0;
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollTop = scroller.scrollHeight;
+  }, [messages, activeStreamMessageId]);
 
   return (
-    <div className="w-full max-w-3xl rounded-xl bg-surface-container-low p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <Activity className="h-4 w-4 text-primary" />
-        <h3 className="font-headline text-xl text-on-surface">Stage 1 Responses</h3>
-      </div>
-      <div className="grid gap-3">
-        {stageOne.members.map((member, index) => (
-          <div
-            key={`stage1-${member.id || member.title || index}`}
-            className={`rounded-lg bg-surface-container-lowest p-4 ${member.failed ? 'accent-bar-left' : ''}`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-body text-sm font-semibold text-on-surface">
-                  {member.title || humanize(member.id)}
-                </p>
-                {member.model && (
-                  <p className="truncate text-[10px] font-body tracking-wider text-on-surface-variant/70">
-                    {member.model}
-                  </p>
-                )}
-              </div>
-              <span
-                className={`text-[10px] font-body tracking-wider ${
-                  member.failed ? 'text-error' : 'text-on-surface-variant'
-                }`}
-              >
-                {member.failed ? 'Failed' : `${member.elapsed ? member.elapsed.toFixed(1) : '0.0'}s`}
-              </span>
-            </div>
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl bg-surface-container-low p-4 md:p-5">
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-outline-variant/60 pb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" aria-hidden="true" />
+            <p className="text-xs font-medium tracking-wider text-on-surface-variant">Live Boardroom</p>
           </div>
-        ))}
+          <h2 className="mt-1 font-headline text-xl text-on-surface">Discussion Transcript</h2>
+        </div>
+        <span className="rounded-lg bg-surface-container-high px-2 py-1 text-[10px] font-body tracking-wider text-on-surface-variant">
+          {running ? 'Streaming' : session ? 'Complete' : 'Standby'}
+        </span>
+      </header>
+
+      <div
+        ref={scrollerRef}
+        className="mt-4 flex-1 overflow-y-auto pr-1 no-scrollbar"
+        aria-live="polite"
+      >
+        {error ? (
+          <ErrorMessage message={error} />
+        ) : hasConversation ? (
+          <ol className="flex min-h-full flex-col gap-3">
+            {messages.map((message) => (
+              <TranscriptMessage
+                key={message.id}
+                message={message}
+                member={message.member_id ? memberMap.get(message.member_id) : undefined}
+                active={message.id === activeStreamMessageId}
+              />
+            ))}
+          </ol>
+        ) : stageEvents.length || session ? (
+          <BoardDiscussion session={session} stageEvents={stageEvents} members={members} />
+        ) : (
+          <div className="flex h-full min-h-[360px] items-center justify-center rounded-lg bg-surface-container-lowest p-6 text-center">
+            <p className="max-w-sm text-sm font-body leading-relaxed text-on-surface-variant">
+              Ask the board a question. The CEO prompt and each member response will stream here without leaving the boardroom view.
+            </p>
+          </div>
+        )}
       </div>
+    </section>
+  );
+}
+
+function TranscriptMessage({
+  message,
+  member,
+  active,
+}: {
+  message: ConversationMessage;
+  member?: BoardMember;
+  active: boolean;
+}) {
+  if (message.speaker === 'system') {
+    return (
+      <li className="flex justify-center">
+        <div className="max-w-xl rounded-full bg-surface-container-high px-3 py-1.5 text-center text-[11px] font-body leading-relaxed text-on-surface-variant">
+          {message.content}
+        </div>
+      </li>
+    );
+  }
+
+  const isUser = message.speaker === 'user';
+  const isSecretaryFinal = message.role === 'Secretary-Final';
+  const isSecretaryInterim = message.role === 'Secretary-Interim';
+  const isSecretary = isSecretaryFinal || isSecretaryInterim;
+  const memberId = message.member_id || member?.id || 'chairperson';
+  const imageUrl = MEMBER_IMAGES[memberId];
+  const Icon = isSecretary ? FileText : (MEMBER_ICONS[memberId] || Users);
+  const tone = isSecretaryFinal ? '#155e3c' : isSecretaryInterim ? '#1E3A5F' : memberTone(memberId);
+  const title = message.member_title || member?.title || (isUser ? 'CEO / Chairperson' : humanize(memberId));
+  const role = message.role || (member ? roleLabelFor(member) : '');
+  let roleLabel: string | null = role;
+  if (isSecretaryFinal) roleLabel = '✅ Final Executive Brief';
+  else if (isSecretaryInterim) roleLabel = '📋 Interim Brief';
+
+  return (
+    <li className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && (
+        <div className="mt-1 h-10 w-10 shrink-0">
+          {isSecretary ? (
+            <span
+              className="grid h-10 w-10 place-items-center rounded-full bg-primary/10 text-primary ring-2 ring-background"
+              style={{ boxShadow: `0 0 0 2px ${tone}` }}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+            </span>
+          ) : imageUrl ? (
+            <img
+              src={imageUrl}
+              alt=""
+              aria-hidden="true"
+              className="h-10 w-10 rounded-full object-cover ring-2 ring-background"
+              style={{ boxShadow: `0 0 0 2px ${tone}` }}
+            />
+          ) : (
+            <span
+              className="grid h-10 w-10 place-items-center rounded-full bg-surface-container-highest text-primary ring-2 ring-background"
+              style={{ boxShadow: `0 0 0 2px ${tone}` }}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+            </span>
+          )}
+        </div>
+      )}
+
+      <article
+        className={`max-w-[min(100%,720px)] rounded-lg px-4 py-3 shadow-[0_8px_24px_-20px_rgba(26,22,20,0.25)] ${
+          isUser
+            ? 'bg-secondary-container text-on-secondary-container'
+            : isSecretaryFinal
+              ? 'border-l-[3px] border-l-green-600 bg-green-50/[0.5] text-on-surface'
+              : isSecretaryInterim
+                ? 'border-l-[3px] border-l-primary/60 bg-primary/[0.04] text-on-surface'
+                : 'bg-surface-container-lowest text-on-surface'
+        }`}
+      >
+        <header className="mb-2 flex flex-wrap items-center gap-2">
+          <h3 className={`font-body text-sm font-semibold ${isUser ? 'text-on-secondary-container' : isSecretaryFinal ? 'text-green-800' : isSecretaryInterim ? 'text-primary' : 'text-on-surface'}`}>
+            {title}
+          </h3>
+          {roleLabel && !isUser ? (
+            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-body tracking-wider ${isSecretaryFinal ? 'bg-green-100 text-green-700 font-semibold' : isSecretaryInterim ? 'bg-primary/10 text-primary font-semibold' : 'text-on-surface-variant'}`}>
+              {roleLabel}
+            </span>
+          ) : null}
+          {message.created_at ? (
+            <span className={`ml-auto text-[10px] font-body ${isUser ? 'text-on-secondary-container/70' : 'text-on-surface-variant'}`}>
+              {formatMessageTime(message.created_at)}
+            </span>
+          ) : null}
+        </header>
+
+        {message.content ? (
+          isUser ? (
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-on-secondary-container">
+              {message.content}
+            </p>
+          ) : (
+            <div
+              className="prose-lite text-sm"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
+            />
+          )
+        ) : (
+          <div className="flex items-center gap-1.5 py-1 text-xs text-on-surface-variant">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:120ms]" />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary [animation-delay:240ms]" />
+          </div>
+        )}
+
+        {active && (
+          <p className="mt-2 inline-flex items-center gap-1 text-[10px] font-body tracking-wider text-primary">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+            streaming
+          </p>
+        )}
+      </article>
+    </li>
+  );
+}
+
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+type DiscussionCardData = {
+  key: string;
+  stage: number;
+  memberId?: string;
+  memberTitle: string;
+  status?: string;
+  headline: string;
+  body: string;
+  bullets: string[];
+  failed?: boolean;
+};
+
+function BoardDiscussion({
+  session,
+  stageEvents,
+  members,
+}: {
+  session: BoardSession | null;
+  stageEvents: StageEvent[];
+  members: BoardMember[];
+}) {
+  const cards = buildDiscussionCards(session, stageEvents, members);
+
+  if (!cards.length) {
+    return (
+      <p className="mt-4 rounded-lg bg-surface-container-lowest p-4 text-sm font-body text-on-surface-variant">
+        Member positions will appear as the board responds.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-5 grid gap-3">
+      {cards.map((card) => (
+        <article
+          key={card.key}
+          className={`rounded-lg bg-surface-container-lowest p-4 ${card.failed ? 'border border-error/30' : ''}`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-body tracking-wider text-primary">
+                {discussionStageLabel(card.stage)}
+              </p>
+              <h3 className="mt-1 font-body text-sm font-semibold text-on-surface">
+                {card.memberTitle}
+              </h3>
+            </div>
+            <span
+              className={`rounded-lg px-2 py-1 text-[10px] font-body tracking-wider ${
+                card.failed ? 'bg-error-container text-error' : 'bg-surface-container-high text-on-surface-variant'
+              }`}
+            >
+              {card.status || (card.failed ? 'Failed' : 'Position')}
+            </span>
+          </div>
+          <h4 className="mt-3 font-headline text-base leading-snug text-on-surface">
+            {card.headline}
+          </h4>
+          {card.body && (
+            <div
+              className="prose-lite mt-2 text-sm"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(card.body) }}
+            />
+          )}
+          {card.bullets.length ? (
+            <ul className="mt-3 grid gap-2">
+              {card.bullets.slice(0, 3).map((item, index) => (
+                <li key={`${card.key}-bullet-${index}`} className="flex gap-2 text-sm font-body leading-relaxed text-on-surface-variant">
+                  <span aria-hidden="true" className="mt-[0.55em] h-1 w-1 shrink-0 rounded-full bg-primary" />
+                  <div
+                    className="min-w-0 flex-1"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(item) }}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </article>
+      ))}
     </div>
   );
+}
+
+function buildDiscussionCards(
+  session: BoardSession | null,
+  stageEvents: StageEvent[],
+  members: BoardMember[],
+): DiscussionCardData[] {
+  const titles = new Map(members.map((member) => [member.id, member.title]));
+  const byKey = new Map<string, StageMember & { stage: number }>();
+
+  const add = (stage: number, response?: StageMember | null) => {
+    if (!response) return;
+    const memberId = response.id || response.member_id || (stage === 3 ? 'chairperson' : undefined);
+    const key = `${stage}:${memberId || response.title || response.member_title || byKey.size}`;
+    const existing = byKey.get(key);
+    if (existing?.content && !response.content) return;
+    byKey.set(key, { ...existing, ...response, id: memberId, stage });
+  };
+
+  stageEvents.forEach((stage) => stage.members?.forEach((member) => add(stage.stage, member)));
+  session?.stage1?.forEach((member) => add(1, member));
+  session?.stage2?.forEach((member) => add(2, member));
+  if (session?.stage3?.content || session?.stage3_synthesis?.content) {
+    add(3, {
+      id: 'chairperson',
+      title: titles.get('chairperson') || 'Chairperson',
+      content: session.stage3?.content || session.stage3_synthesis?.content,
+    });
+  }
+
+  return [...byKey.values()]
+    .filter((item) => item.failed || item.content)
+    .sort((a, b) => a.stage - b.stage)
+    .map((item, index) => {
+      const memberId = item.id || item.member_id;
+      const memberTitle = item.title || item.member_title || (memberId ? titles.get(memberId) : '') || humanize(memberId || 'Board member');
+      return discussionCardFromResponse(item, memberTitle, index);
+    });
+}
+
+function discussionCardFromResponse(
+  response: StageMember & { stage: number },
+  memberTitle: string,
+  index: number,
+): DiscussionCardData {
+  const content = response.content || '';
+  if (response.failed) {
+    return {
+      key: `${response.stage}-${response.id || response.member_id || index}`,
+      stage: response.stage,
+      memberId: response.id || response.member_id,
+      memberTitle,
+      status: 'Failed',
+      headline: response.error || 'This member could not respond.',
+      body: '',
+      bullets: [],
+      failed: true,
+    };
+  }
+
+  const parsed = parseDiscussionJson(content);
+  const section = (name: string) => extractMarkdownSection(content, name);
+
+  if (response.stage === 1) {
+    const risks = Array.isArray(parsed?.risks)
+      ? parsed.risks.map((risk: unknown) => typeof risk === 'string' ? risk : String((risk as { description?: unknown })?.description || '')).filter(Boolean)
+      : [];
+    return {
+      key: `${response.stage}-${response.id || response.member_id || index}`,
+      stage: response.stage,
+      memberId: response.id || response.member_id,
+      memberTitle,
+      status: parsed?.confidence ? `${parsed.confidence} confidence` : 'Independent',
+      headline: conciseText(String(parsed?.tldr || section('TL;DR') || section('Recommendation') || 'Independent position')),
+      body: conciseMarkdown(String(parsed?.recommendation || section('Recommendation') || parsed?.analysis || section('Analysis') || fallbackExcerpt(content))),
+      bullets: risks.length ? risks : splitListish(section('Risks')),
+    };
+  }
+
+  if (response.stage === 2) {
+    const challenges = Array.isArray(parsed?.peer_challenges) ? parsed.peer_challenges.map(String) : splitListish(section('Peer Challenges'));
+    return {
+      key: `${response.stage}-${response.id || response.member_id || index}`,
+      stage: response.stage,
+      memberId: response.id || response.member_id,
+      memberTitle,
+      status: parsed?.confidence ? `${parsed.confidence} confidence` : 'Peer review',
+      headline: conciseText(String(parsed?.updated_position || section('Updated Position') || 'Peer challenge')),
+      body: conciseMarkdown(String(parsed?.updated_position || section('Updated Position') || fallbackExcerpt(content))),
+      bullets: challenges,
+    };
+  }
+
+  return {
+    key: `${response.stage}-${response.id || response.member_id || index}`,
+    stage: response.stage,
+    memberId: response.id || response.member_id,
+    memberTitle,
+    status: 'Synthesis',
+    headline: 'Chair synthesis',
+    body: conciseMarkdown(section('Executive Summary') || fallbackExcerpt(content), 900),
+    bullets: splitListish(section('Next Steps')).slice(0, 3),
+  };
+}
+
+function discussionStageLabel(stage: number) {
+  if (stage === 1) return 'Independent Analysis';
+  if (stage === 2) return 'Peer Review';
+  if (stage === 3) return 'Synthesis';
+  return `Stage ${stage}`;
+}
+
+function parseDiscussionJson(content: string): Record<string, unknown> | null {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidates = [fenced, content].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start === -1 || end <= start) continue;
+    try {
+      const parsed = JSON.parse(candidate.slice(start, end + 1));
+      if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function extractMarkdownSection(markdown: string, heading: string) {
+  const lines = markdown.split(/\r?\n/);
+  const target = normalizeHeading(heading);
+  const collected: string[] = [];
+  let active = false;
+  for (const line of lines) {
+    const match = line.match(/^\s{0,3}#{2,3}\s+(.+?)\s*$/);
+    if (match) {
+      const normalized = normalizeHeading(match[1]);
+      if (active && normalized !== target) break;
+      active = normalized === target;
+      continue;
+    }
+    if (active) collected.push(line);
+  }
+  return collected.join('\n').trim();
+}
+
+function normalizeHeading(value: string) {
+  return value.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function splitListish(markdown: string) {
+  if (!markdown.trim()) return [];
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s+/, '').trim())
+    .filter(Boolean)
+    .filter((line) => !/^[-|:\s]+$/.test(line));
+}
+
+function fallbackExcerpt(markdown: string) {
+  return stripMarkdown(markdown).slice(0, 420);
+}
+
+function conciseText(text: string, max = 180) {
+  const clean = stripMarkdown(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return 'Board position';
+  return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
+}
+
+function conciseMarkdown(markdown: string, max = 700) {
+  const clean = markdown.trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max - 1).trimEnd()}…`;
 }
 
 function StatusCard({ status, activePhase }: { status: TableStatus; activePhase?: string | null }) {
@@ -1574,7 +2051,6 @@ function DecisionPreview({
   const decision = session?.decision || {};
   const summary = decision.executive_summary || getSynthesis(session)?.content || '';
   const verified = Boolean(session?.verification?.passed);
-  const cost = session?.metrics?.total_cost_estimate_usd;
 
   return (
     <article className="rounded-lg bg-surface-container-lowest p-4">
@@ -1602,11 +2078,6 @@ function DecisionPreview({
             <span className="rounded-lg bg-surface-container-high px-2 py-1 text-[10px] font-body text-on-surface-variant">
               Routing: {routingLabel}
             </span>
-            {cost !== undefined && (
-              <span className="rounded-lg bg-surface-container-high px-2 py-1 text-[10px] font-body text-on-surface-variant">
-                Budget: ~${Number(cost).toFixed(2)}
-              </span>
-            )}
           </div>
         </>
       ) : (
@@ -1676,10 +2147,6 @@ function StageTimeline({ stages }: { stages: StageEvent[] }) {
               >
                 <span>{member.failed ? 'Failed' : 'Done'}</span>
                 <span>{member.title || member.id}</span>
-                {member.model && <span className="text-on-surface-variant">{member.model}</span>}
-                {member.elapsed !== undefined && (
-                  <span className="text-on-surface-variant">{Number(member.elapsed).toFixed(1)}s</span>
-                )}
               </div>
             ))}
           </div>
@@ -1797,13 +2264,6 @@ function DecisionRecord({ session }: { session: BoardSession | null }) {
         </article>
       ) : null}
 
-      {delegationPlan?.warnings?.length || session.structured_output_warnings?.length ? (
-        <article className="rounded-lg bg-error-container/15 p-4 lg:col-span-2">
-          <h3 className="font-headline text-lg text-on-surface">Delegation Status</h3>
-          <PlainList items={[...(delegationPlan?.warnings || []), ...(session.structured_output_warnings || [])]} />
-        </article>
-      ) : null}
-
       <article className="rounded-lg bg-surface-container-lowest p-4 lg:col-span-2">
         <h3 className="font-headline text-lg text-on-surface">Verification</h3>
         <p className="mt-2 text-sm font-body leading-relaxed text-on-surface-variant">
@@ -1865,17 +2325,38 @@ function DecisionBlock({ title, content }: { title: string; content?: string }) 
   return (
     <section className="mb-4 last:mb-0">
       <h3 className="font-headline text-lg text-on-surface">{title}</h3>
-      <p className="mt-2 whitespace-pre-wrap text-sm font-body leading-relaxed text-on-surface-variant">{content}</p>
+      <div
+        className="prose-lite mt-2 text-sm"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+      />
     </section>
   );
 }
 
 function DecisionList({ title, items }: { title: string; items?: string[] }) {
   if (!items?.length) return null;
+  const tableLike = items.length === 1 && /\|.+\|/.test(items[0]);
   return (
     <article className="rounded-lg bg-surface-container-lowest p-4">
       <h3 className="font-headline text-lg text-on-surface">{title}</h3>
-      <PlainList items={items} />
+      {tableLike ? (
+        <div
+          className="prose-lite mt-3 overflow-x-auto text-sm"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(items[0]) }}
+        />
+      ) : (
+        <ul className="mt-3 space-y-2 pl-1 text-sm leading-relaxed text-on-surface">
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`} className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.55em] h-1 w-1 shrink-0 rounded-full bg-primary" />
+              <div
+                className="prose-lite min-w-0 flex-1 text-sm"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(item) }}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
     </article>
   );
 }
