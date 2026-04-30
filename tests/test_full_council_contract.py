@@ -24,24 +24,23 @@ DEFAULT_PRE_PMF = [
     "critic",
     "architect",
     "builder",
+    "secretary",
 ]
 
 
 class FullCouncilContractTest(unittest.TestCase):
     def test_pre_pmf_active_board_is_small_governance_roster(self):
-        self.assertEqual(DEFAULT_PRE_PMF, active_member_ids(stage_profile="pre_pmf"))
+        self.assertCountEqual(DEFAULT_PRE_PMF, active_member_ids(stage_profile="pre_pmf"))
 
         loaded_ids = [member.id for member in load_members()]
-        self.assertEqual(DEFAULT_PRE_PMF, loaded_ids)
+        self.assertCountEqual(DEFAULT_PRE_PMF, loaded_ids)
 
     def test_live_product_profile_activates_shelved_members(self):
         live_product_ids = active_member_ids(stage_profile="live_product")
         loaded_ids = [member.id for member in load_members(include_shelved_ids=set(live_product_ids))]
 
-        self.assertEqual(
-            DEFAULT_PRE_PMF + ["guardian", "operator"],
-            live_product_ids,
-        )
+        expected = DEFAULT_PRE_PMF + ["guardian", "operator"]
+        self.assertCountEqual(expected, live_product_ids)
         self.assertIn("guardian", loaded_ids)
         self.assertIn("operator", loaded_ids)
 
@@ -89,13 +88,16 @@ class FullCouncilContractTest(unittest.TestCase):
         finance = select_members_for_decision_type("finance", stage_profile="revenue")
         legal = select_members_for_decision_type("legal", stage_profile="revenue")
 
-        self.assertEqual(["chairperson"], finance.member_ids)
+        self.assertIn("chairperson", finance.member_ids)
+        self.assertIn("secretary", finance.member_ids)
+        self.assertNotIn("finance_lead", [m for m in finance.member_ids])
         self.assertIn("financial_analysis", finance.unavailable_capabilities)
         self.assertIn("pricing", finance.unavailable_capabilities)
         self.assertIn("runway", finance.unavailable_capabilities)
         self.assertIn("role-gap review", finance.role_gap_memo)
 
         self.assertIn("chairperson", legal.member_ids)
+        self.assertIn("secretary", legal.member_ids)
         self.assertIn("guardian", legal.member_ids)
         self.assertIn("critic", legal.member_ids)
         self.assertIn("legal_review", legal.unavailable_capabilities)

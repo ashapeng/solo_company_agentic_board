@@ -24,6 +24,7 @@ class AdaptiveRoutingContractTest(unittest.TestCase):
                 "evidence_assessment",
                 "risk_challenge",
                 "synthesis",
+                "information_synthesis",
             ],
             decision_capabilities("strategic", roster=roster),
         )
@@ -86,6 +87,7 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                 "technical_feasibility",
                 "risk_challenge",
                 "synthesis",
+                "information_synthesis",
             ],
             classification.required_capabilities,
         )

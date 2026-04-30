@@ -39,7 +39,8 @@ from ..config import BoardMember, get_board_members, get_members_by_id, get_chai
 from ..llm import query_llm, LLMResponse
 from ..metrics import CallMetrics, SessionMetrics
 from ..projection import project_board_decision, verification_to_dict
-from .prompts import format_stage1, format_stage2, format_stage3
+from .prompts import format_stage1, format_stage2, format_stage3, format_stage4, format_standalone_secretary_brief
+from .shortcut import ShortcutType, detect_shortcut
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class BoardSession:
     stage1_responses: list[MemberResponse] = field(default_factory=list)
     stage2_responses: list[MemberResponse] = field(default_factory=list)
     stage3_synthesis: MemberResponse | None = None
+    secretary_brief: MemberResponse | None = None
     total_elapsed: float = 0.0
     metrics: SessionMetrics = field(default_factory=SessionMetrics)
     classification: dict | None = None  # query classification info
@@ -81,6 +83,10 @@ class BoardSession:
     clarification: dict = field(default_factory=dict)
     structured_output_warnings: list[str] = field(default_factory=list)
     evidence_packets: dict = field(default_factory=dict)
+    conversation: dict = field(default_factory=lambda: {
+        "messages": [],
+        "routing_trace": [],
+    })
 
     def to_dict(self) -> dict:
         def _resp(r: MemberResponse) -> dict:
@@ -97,6 +103,7 @@ class BoardSession:
             "stage1": [_resp(r) for r in self.stage1_responses],
             "stage2": [_resp(r) for r in self.stage2_responses],
             "stage3": _resp(self.stage3_synthesis) if self.stage3_synthesis else None,
+            "secretary_brief": _resp(self.secretary_brief) if self.secretary_brief else None,
             "decision": self.decision,
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,
@@ -106,6 +113,7 @@ class BoardSession:
             "clarification": self.clarification,
             "structured_output_warnings": self.structured_output_warnings,
             "evidence_packets": self.evidence_packets,
+            "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
             "participation": self.participation,
@@ -225,6 +233,10 @@ def _build_participation_decisions(
         if member.id == chairman_id:
             mode = "participate"
             reason = "Chair synthesizes the final decision."
+            confidence = "high"
+        elif member.id == "secretary":
+            mode = "participate"
+            reason = "Secretary produces executive brief after synthesis."
             confidence = "high"
         elif member.id in council_ids:
             mode = "participate"
@@ -406,7 +418,10 @@ class BoardOrchestrator:
         all_members = members or get_board_members()
         members_by_id = get_members_by_id()
         self.chairman = members_by_id[chairman_id]
-        self.council = [m for m in all_members if m.id != chairman_id]
+        # Council excludes both chairperson (synthesizes at Stage 3) and
+        # secretary (produces executive brief at Stage 4/5)
+        _non_deliberating = {chairman_id, "secretary"}
+        self.council = [m for m in all_members if m.id not in _non_deliberating]
         self.model_assignments = _assign_models(all_members)
         self.chairman_model = get_chairman_model()
         self.metrics = SessionMetrics()
@@ -434,34 +449,66 @@ class BoardOrchestrator:
     def _session_id_for_search(self) -> str:
         return getattr(self, "_current_session_id", None) or "anon"
 
-    async def _collect_member_evidence(self, query: str):
-        """For members with evidence_required=True, fetch web search results
-        and build a markdown addendum. Returns (addenda, packet_ids) where
-        addenda is {member_id: prompt_addendum} and packet_ids is
-        {member_id: real_evidence_packet_id}.
+    async def _collect_member_evidence(
+        self,
+        query: str,
+        *,
+        query_type: str | None = None,
+    ):
+        """Fetch web search results and build markdown addenda.
+
+        Layer 1 (expanded coverage):
+          - Members with evidence_required=True always get search.
+          - When query_type is search-worthy (strategic/product/customer/technical/
+            finance/legal), ALL council members receive evidence.
+
+        Layer 2 (intelligent triggering):
+          - Search is auto-enabled for query types needing real-time data.
+          - Each member gets a role-specific query augmentation for targeted results.
+
+        Returns (addenda, packet_ids).
         """
-        from server.execution.web_search import web_search
+        from server.execution.web_search import (
+            web_search,
+            is_query_type_search_worthy,
+            _build_role_specific_query,
+        )
+
+        auto_all = is_query_type_search_worthy(query_type)
+        if not any(getattr(m, "evidence_required", False) for m in self.council) and not auto_all:
+            return {}, {}
 
         addenda: dict[str, str] = {}
         packet_ids: dict[str, str] = {}
         for member in self.council:
-            if not getattr(member, "evidence_required", False):
+            should_search = getattr(member, "evidence_required", False) or auto_all
+            if not should_search:
                 continue
+
+            # Role-specific query for better results (Layer 2)
+            search_query = (
+                _build_role_specific_query(
+                    base_query=query,
+                    member_id=member.id,
+                    member_role=member.role,
+                )
+                if auto_all
+                else query
+            )
+
             try:
                 result = await web_search(
-                    query,
+                    search_query,
                     session_id=self._session_id_for_search(),
                 )
             except Exception as exc:
-                logger.warning(
-                    "Evidence retrieval failed for %s: %s",
-                    member.id,
-                    exc,
-                )
+                logger.warning("Evidence retrieval failed for %s: %s", member.id, exc)
                 continue
+
             results = result.get("results") or []
             if not results:
                 continue
+
             lines = ["## Retrieved Evidence"]
             for item in results[:3]:
                 title = (item.get("title") or "Untitled").strip()
@@ -476,6 +523,7 @@ class BoardOrchestrator:
             pid = packet.get("id") or packet.get("packet_id")
             if pid:
                 packet_ids[member.id] = str(pid)
+
         return addenda, packet_ids
 
     def stage0_intake(
@@ -742,6 +790,221 @@ class BoardOrchestrator:
         self._fire(self._on_stage_done, 3, synthesis)
         return synthesis
 
+    # ── STAGE 4: Secretary Executive Brief ──────────────────────────────
+
+    def _get_secretary(self) -> BoardMember | None:
+        """Return the secretary board member if loaded, else None."""
+        return get_members_by_id().get("secretary")
+
+    async def stage4_secretary_brief(
+        self,
+        user_query: str,
+        stage1_responses: list[MemberResponse],
+        stage2_responses: list[MemberResponse],
+        stage3_synthesis: MemberResponse,
+        *,
+        query_type: str | None = None,
+        complexity: str | None = None,
+    ) -> MemberResponse | None:
+        """Produce a concise executive brief from all deliberation stages.
+
+        The secretary consolidates opinions, flags conflicts, attributes claims
+        to their sources, and produces a CEO-friendly structured brief.
+        Returns None if secretary member is not available.
+        """
+        secretary = self._get_secretary()
+        if secretary is None:
+            logger.info("Stage 4 skipped: secretary member not found.")
+            return None
+
+        self._fire(self._on_stage_start, 4, "Secretary Executive Brief")
+
+        compacted_s1 = compact_stage1_responses(stage1_responses, query_type=query_type)
+        compacted_s2 = compact_stage2_responses(stage2_responses)
+
+        prompt = format_stage4(
+            user_query=user_query,
+            stage1_responses=_format_identified_responses(compacted_s1),
+            stage2_responses=_format_identified_responses(compacted_s2),
+            stage3_synthesis=stage3_synthesis.content,
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+        cfg = get_config()
+
+        # Use council model assignment for secretary (or chairman model as fallback)
+        secretary_model = self.model_assignments.get("secretary", self.chairman_model)
+
+        self._fire(self._on_member_started, 4, secretary)
+        llm_resp = await query_llm(
+            secretary_model, messages,
+            system=secretary.system_prompt,
+            max_tokens=resolve_stage_max_tokens(
+                4,
+                query_type=query_type,
+                complexity=complexity,
+                config=cfg,
+            ),
+        )
+
+        self._record_metrics(secretary.id, 4, llm_resp)
+
+        brief = MemberResponse(
+            member_id=secretary.id,
+            stage=4,
+            content=llm_resp.content,
+            model=secretary_model,
+            elapsed_seconds=round(llm_resp.latency_seconds, 2),
+        )
+        self._fire(self._on_member_done, 4, secretary, brief)
+        self._fire(self._on_stage_done, 4, brief)
+        return brief
+
+    async def run_secretary_shortcut(
+        self,
+        user_query: str,
+        *,
+        session_id: str | None = None,
+    ) -> BoardSession:
+        """Produce a secretary executive brief **without** running Stages 1–3.
+
+        This is the short-circuit path triggered when the CEO's query matches a
+        shortcut such as ``secretary summarize`` or ``/brief``.  If a prior
+        session is referenced (``source_session_id``) we load its deliberation
+        data and feed it into the normal Stage 4 prompt; otherwise we use the
+        standalone brief template that asks the secretary to analyse from
+        first principles.
+        """
+        sid = session_id or f"board_{int(time.time())}"
+        session = BoardSession(session_id=sid, user_query=user_query)
+        session.metrics = self.metrics
+        session.status = "completed"
+
+        secretary = self._get_secretary()
+        if secretary is None:
+            logger.warning("Secretary shortcut requested but secretary member not available.")
+            session.status = "failed"
+            return session
+
+        # Try to load a previous session's data if referenced
+        from .shortcut import detect_shortcut
+        detection = detect_shortcut(user_query)
+        source_data = None
+
+        if detection and detection.source_session_id:
+            source_data = self._load_session_for_brief(detection.source_session_id)
+        else:
+            # Auto-discover most recent completed session
+            source_data = self._load_most_recent_session()
+
+        self._fire(self._on_phase, "secretary", "Secretary producing executive brief (shortcut mode).")
+
+        if source_data:
+            # Normal Stage 4 path with loaded context
+            s1_responses = [
+                MemberResponse(**r) for r in source_data.get("stage1", [])
+                if isinstance(r, dict)
+            ]
+            s2_responses = [
+                MemberResponse(**r) for r in source_data.get("stage2", [])
+                if isinstance(r, dict)
+            ]
+            s3_raw = source_data.get("stage3")
+            s3_synthesis = (
+                MemberResponse(**s3_raw) if isinstance(s3_raw, dict) else None
+            )
+
+            if s3_synthesis:
+                brief = await self.stage4_secretary_brief(
+                    user_query,
+                    s1_responses,
+                    s2_responses,
+                    s3_synthesis,
+                )
+                session.secretary_brief = brief
+            else:
+                # Has stage 1/2 but no synthesis — fall back to standalone
+                brief = await self._standalone_secretary_call(user_query, secretary)
+                session.secretary_brief = brief
+        else:
+            # No prior session — standalone analysis
+            brief = await self._standalone_secretary_call(user_query, secretary)
+            session.secretary_brief = brief
+
+        session.total_elapsed = 0.0  # not meaningful for shortcut
+        session.save()
+        return session
+
+    def _load_session_for_brief(self, target_sid: str) -> dict | None:
+        """Load a persisted session JSON by ID."""
+        from pathlib import Path
+        for dirname in ("data/sessions", "data/conversations"):
+            p = Path(dirname) / f"{target_sid}.json"
+            if p.exists():
+                import json
+                try:
+                    return json.loads(p.read_text())
+                except Exception:
+                    logger.warning("Failed to read session file %s", p)
+                    return None
+        return None
+
+    def _load_most_recent_session(self) -> dict | None:
+        """Find and load the most recent completed session with stage data."""
+        from pathlib import Path
+        import json
+
+        best: tuple[float, dict | None] = (-1.0, None)
+        for dirname in ("data/sessions", "data/conversations"):
+            d = Path(dirname)
+            if not d.is_dir():
+                continue
+            for f in sorted(d.glob("board_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.stat().st_mtime <= best[0]:
+                    break
+                try:
+                    data = json.loads(f.read_text())
+                    # Must have at least some stage data or a decision
+                    if data.get("stage1") or data.get("stage3") or data.get("decision"):
+                        best = (f.stat().st_mtime, data)
+                        break  # first (newest) hit is enough
+                except Exception:
+                    continue
+        return best[1]
+
+    async def _standalone_secretary_call(
+        self,
+        user_query: str,
+        secretary: BoardMember,
+    ) -> MemberResponse:
+        """Call the secretary with the standalone (no-prior-context) prompt."""
+        self._fire(self._on_stage_start, 4, "Secretary Executive Brief")
+        prompt = format_standalone_secretary_brief(user_query=user_query)
+        messages = [{"role": "user", "content": prompt}]
+
+        cfg = get_config()
+        secretary_model = self.model_assignments.get("secretary", self.chairman_model)
+
+        self._fire(self._on_member_started, 4, secretary)
+        llm_resp = await query_llm(
+            secretary_model,
+            messages,
+            system=secretary.system_prompt,
+            max_tokens=resolve_stage_max_tokens(4, config=cfg),
+        )
+        self._record_metrics(secretary.id, 4, llm_resp)
+
+        brief = MemberResponse(
+            member_id=secretary.id,
+            stage=4,
+            content=llm_resp.content,
+            model=secretary_model,
+            elapsed_seconds=round(llm_resp.latency_seconds, 2),
+        )
+        self._fire(self._on_member_done, 4, secretary, brief)
+        self._fire(self._on_stage_done, 4, [brief])
+        return brief
+
     async def build_delegation_plan(
         self,
         *,
@@ -843,6 +1106,27 @@ class BoardOrchestrator:
         session = BoardSession(session_id=session_id, user_query=user_query)
         session.metrics = self.metrics
 
+        # ── Shortcut detection  (intent-based routing BEFORE full pipeline) ──
+        shortcut = detect_shortcut(user_query)
+        if shortcut is not None:
+            logger.info(
+                "Shortcut detected: %s (target=%s, confidence=%.2f)",
+                shortcut.type.value, shortcut.target_member_id, shortcut.confidence,
+            )
+            self._fire(self._on_phase, shortcut.type.value, f"{shortcut.display_label} — short-circuiting to {shortcut.target_member_id}.")
+            self._fire(
+                self._on_council_selected,
+                [shortcut.target_member_id],
+                self.chairman.id,
+            )
+
+            if shortcut.type == ShortcutType.SECRETARY_BRIEF:
+                return await self.run_secretary_shortcut(
+                    user_query,
+                    session_id=session_id,
+                )
+            # Future shortcut types can be added here.
+
         # ── Classification / member selection ─────────────────────────────
         all_members = get_board_members()
         if member_ids:
@@ -934,7 +1218,15 @@ class BoardOrchestrator:
         # can key the web-search rate limiter per-session.
         self._current_session_id = session_id
 
-        evidence_addenda, evidence_packet_ids = await self._collect_member_evidence(effective_query)
+        # Extract query_type early for evidence auto-trigger (Layer 2)
+        _evidence_query_type: str | None = None
+        if session.classification:
+            _evidence_query_type = session.classification.get("query_type")
+
+        evidence_addenda, evidence_packet_ids = await self._collect_member_evidence(
+            effective_query,
+            query_type=_evidence_query_type,
+        )
         self._evidence_addenda = evidence_addenda
         session.evidence_packets = evidence_packet_ids
 
@@ -1041,6 +1333,18 @@ class BoardOrchestrator:
                 )
                 logger.info("Revision score: %d/10 (passed: %s)", result.score, result.passed)
                 session.verification = verification_to_dict(result)
+
+        # Stage 5: Secretary Executive Brief
+        if session.stage3_synthesis:
+            self._fire(self._on_phase, "secretary", "Secretary producing executive brief for CEO.")
+            session.secretary_brief = await self.stage4_secretary_brief(
+                effective_query,
+                session.stage1_responses,
+                session.stage2_responses,
+                session.stage3_synthesis,
+                query_type=query_type,
+                complexity=complexity,
+            )
 
         if session.stage3_synthesis:
             session.decision = _metadata_for_decision(

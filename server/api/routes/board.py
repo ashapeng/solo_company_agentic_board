@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 
 from server.board.config import BOARD_MEMBERS
+from server.board.deliberation.live import LiveBoardConversation
 from server.board.deliberation.orchestrator import BoardDeliberationError, BoardOrchestrator
 from server.board.projection import BoardErrorCode, adapt_session_record
 from server.board.role_gap import review_role_gap
@@ -90,6 +91,23 @@ def _enforce_deliberate_rate_limit(request: Request) -> None:
 SESSION_ID_PATTERN = re.compile(r"^board_\d+$")
 
 
+def _public_error_payload(exc: Exception, *, default_code: str = BoardErrorCode.DELIBERATION_FAILED) -> dict[str, str]:
+    raw = str(exc)
+    normalized = raw.lower()
+    if "content_filter" in normalized or "considered high risk" in normalized:
+        return {
+            "code": "content_filter",
+            "message": (
+                "A model provider content filter rejected part of the board prompt. "
+                "The request was not completed; rephrase ambiguous wording and try again."
+            ),
+        }
+    return {
+        "code": default_code,
+        "message": raw or "Deliberation failed.",
+    }
+
+
 def _validate_session_id(session_id: str) -> None:
     """Reject any session_id that escapes the sessions directory."""
     if not SESSION_ID_PATTERN.match(session_id):
@@ -123,6 +141,22 @@ async def list_members() -> list[MemberInfo]:
 @router.post("/deliberate")
 async def deliberate(req: QueryRequest, request: Request):
     _enforce_deliberate_rate_limit(request)
+    if req.discussion_mode == "live":
+        conversation = LiveBoardConversation()
+        try:
+            session = await conversation.discuss(
+                req.query,
+                member_ids=req.member_ids,
+                skip_classify=req.full_board,
+                verify=req.verify,
+                session_id=req.session_id,
+                clarification_answers=req.clarification_answers,
+            )
+        except BoardDeliberationError as e:
+            payload = _public_error_payload(e)
+            raise HTTPException(503, detail=payload) from e
+        return session.to_dict()
+
     orchestrator = BoardOrchestrator()
     try:
         session = await orchestrator.deliberate(
@@ -134,13 +168,11 @@ async def deliberate(req: QueryRequest, request: Request):
             clarification_answers=req.clarification_answers,
         )
     except BoardDeliberationError as e:
+        payload = _public_error_payload(e)
         raise HTTPException(
             503,
-            detail={
-                "code": BoardErrorCode.DELIBERATION_FAILED,
-                "message": str(e),
-            },
-        )
+            detail=payload,
+        ) from e
     return session.to_dict()
 
 
@@ -176,12 +208,14 @@ async def deliberate_stream(req: QueryRequest, request: Request):
 
     def on_member_done(stage, member, resp, error=None):
         if error:
+            payload = _public_error_payload(RuntimeError(str(error)))
             queue.put_nowait({
                 "event": "member_failed",
                 "stage": stage,
                 "member_id": member.id,
                 "member_title": member.title,
-                "error": error,
+                "error": payload["message"],
+                "code": payload["code"],
             })
         else:
             queue.put_nowait({
@@ -191,6 +225,7 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                 "member_title": member.title,
                 "model": resp.model,
                 "elapsed": resp.elapsed_seconds,
+                "content": resp.content,
             })
 
     def on_stage_done(stage, responses):
@@ -209,51 +244,80 @@ async def deliberate_stream(req: QueryRequest, request: Request):
     def on_structured_output_warning(warning):
         queue.put_nowait({"event": "structured_output_warning", "warning": warning})
 
+    def on_live_event(event):
+        queue.put_nowait(event)
+
     async def event_generator():
-        orchestrator = BoardOrchestrator(
-            on_stage_start=on_stage_start,
-            on_member_started=on_member_started,
-            on_member_done=on_member_done,
-            on_stage_done=on_stage_done,
-            on_intake_card=on_intake_card,
-            on_clarification_required=on_clarification_required,
-            on_clarification_answered=on_clarification_answered,
-            on_structured_output_warning=on_structured_output_warning,
-            on_council_selected=on_council_selected,
-            on_phase=on_phase,
-        )
-
-        task = asyncio.create_task(
-            orchestrator.deliberate(
-                req.query,
-                member_ids=req.member_ids,
-                skip_classify=req.full_board,
-                verify=req.verify,
-                session_id=req.session_id,
-                clarification_answers=req.clarification_answers,
+        if req.discussion_mode == "live":
+            conversation = LiveBoardConversation(on_event=on_live_event)
+            task = asyncio.create_task(
+                conversation.discuss(
+                    req.query,
+                    member_ids=req.member_ids,
+                    skip_classify=req.full_board,
+                    verify=req.verify,
+                    session_id=req.session_id,
+                    clarification_answers=req.clarification_answers,
+                )
             )
-        )
+        else:
+            orchestrator = BoardOrchestrator(
+                on_stage_start=on_stage_start,
+                on_member_started=on_member_started,
+                on_member_done=on_member_done,
+                on_stage_done=on_stage_done,
+                on_intake_card=on_intake_card,
+                on_clarification_required=on_clarification_required,
+                on_clarification_answered=on_clarification_answered,
+                on_structured_output_warning=on_structured_output_warning,
+                on_council_selected=on_council_selected,
+                on_phase=on_phase,
+            )
 
-        while True:
-            if task.done():
-                while not queue.empty():
-                    event = queue.get_nowait()
-                    yield f"data: {json.dumps(event)}\n\n"
-                break
-
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=1.0)
-                yield f"data: {json.dumps(event)}\n\n"
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
+            task = asyncio.create_task(
+                orchestrator.deliberate(
+                    req.query,
+                    member_ids=req.member_ids,
+                    skip_classify=req.full_board,
+                    verify=req.verify,
+                    session_id=req.session_id,
+                    clarification_answers=req.clarification_answers,
+                )
+            )
 
         try:
-            session = task.result()
-            yield f"data: {json.dumps({'event': 'complete', 'session': session.to_dict()})}\n\n"
-        except BoardDeliberationError as e:
-            yield f"data: {json.dumps({'event': 'error', 'code': BoardErrorCode.DELIBERATION_FAILED, 'message': str(e)})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+            while True:
+                if task.done():
+                    while not queue.empty():
+                        event = queue.get_nowait()
+                        yield f"data: {json.dumps(event)}\n\n"
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+
+            try:
+                session = task.result()
+                yield f"data: {json.dumps({'event': 'complete', 'session': session.to_dict()})}\n\n"
+            except BoardDeliberationError as e:
+                payload = _public_error_payload(e)
+                yield f"data: {json.dumps({'event': 'error', **payload})}\n\n"
+            except (asyncio.CancelledError, Exception) as e:
+                if isinstance(e, asyncio.CancelledError):
+                    # Graceful shutdown — client disconnected or server stopping
+                    yield f"data: {json.dumps({'event': 'cancelled', 'message': 'Stream cancelled.'})}\n\n"
+                    return
+                payload = _public_error_payload(e, default_code="unexpected_error")
+                yield f"data: {json.dumps({'event': 'error', **payload})}\n\n"
+        except (asyncio.CancelledError, Exception) as e:
+            if isinstance(e, asyncio.CancelledError):
+                # Top-level cancellation during streaming (e.g. SIGINT / Ctrl-C)
+                # Silently exit — this is expected shutdown behaviour.
+                return
+            raise
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

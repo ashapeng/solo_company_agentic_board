@@ -155,6 +155,25 @@ def format_stage3(
     )
 
 
+def format_stage4(
+    *,
+    user_query: str,
+    stage1_responses: str,
+    stage2_responses: str,
+    stage3_synthesis: str,
+) -> str:
+    """Build the Stage 4 (Secretary Brief) user prompt for the secretary."""
+    template = _load_or_fallback("stage4_secretary_brief", _FALLBACK_STAGE4)
+    return (
+        template
+        .replace("{{secretary_system_prompt}}", "")
+        .replace("{{user_query}}", user_query)
+        .replace("{{stage1_responses}}", stage1_responses)
+        .replace("{{stage2_responses}}", stage2_responses)
+        .replace("{{stage3_synthesis}}", stage3_synthesis)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Legacy aliases — kept for backward compatibility with existing orchestrator
 # ---------------------------------------------------------------------------
@@ -325,3 +344,247 @@ Rank up to 3 peer responses by value to the final decision.
 _FALLBACK_STAGE1 = STAGE1_WRAPPER.replace("{system_prompt}", "{{system_prompt}}").replace("{role}", "{{role}}").replace("{output_format}", "{{output_format}}").replace("{user_query}", "{{user_query}}")
 _FALLBACK_STAGE2 = STAGE2_WRAPPER.replace("{system_prompt}", "{{system_prompt}}").replace("{role}", "{{role}}").replace("{output_format}", "{{output_format}}").replace("{user_query}", "{{user_query}}").replace("{anonymized_responses}", "{{anonymized_responses}}").replace("{stage2_addendum}", "{{stage2_behavior}}")
 _FALLBACK_STAGE3 = STAGE3_SYNTHESIS.replace("{chairman_system_prompt}", "{{chairman_system_prompt}}").replace("{user_query}", "{{user_query}}").replace("{stage1_responses}", "{{stage1_responses}}").replace("{stage2_responses}", "{{stage2_responses}}")
+
+
+STAGE4_SECRETARY_BRIEF = """\
+{secretary_system_prompt}
+
+───────────────────────────────────────
+BOARD SESSION — STAGE 4: SECRETARY EXECUTIVE BRIEF
+───────────────────────────────────────
+
+You are the Board Secretary. Produce a precise, attributed executive brief.
+
+## Required Format
+
+# Secretary Executive Brief
+
+## One-Liner
+(Single sentence, max 30 words.)
+
+## Key Findings
+(3-7 bullets. Each MUST attribute: " — [Role]".)
+
+### Conflicts Flagged (if any)
+**CONFLICT [HARD/SOFT]: [Topic]**
+- Side A - [Role]: position
+- Side B - [Role]: position
+
+## Decision Summary
+Table: Aspect | Decision | Source
+
+## Risk Snapshot
+Table: Risk | Prob*Impact | Mitigation | Raised By
+
+## Action Items
+Table: # | Action | Owner | Deadline | Criteria
+
+## Detail Index
+Table: Topic | Member | Stage | Reference
+
+ORIGINAL REQUEST:
+{user_query}
+
+STAGE 1 RESPONSES:
+{stage1_responses}
+
+STAGE 2 RESPONSES:
+{stage2_responses}
+
+STAGE 3 SYNTHESIS:
+{stage3_synthesis}
+
+YOUR SECRETARY BRIEF:
+"""
+
+_FALLBACK_STAGE4 = STAGE4_SECRETARY_BRIEF.replace("{secretary_system_prompt}", "{{secretary_system_prompt}}").replace("{user_query}", "{{user_query}}").replace("{stage1_responses}}", "{{stage1_responses}}").replace("{stage2_responses}}", "{{stage2_responses}}").replace("{stage3_synthesis}}", "{{stage3_synthesis}}")
+
+
+# ---------------------------------------------------------------------------
+# Standalone Secretary Brief  (used when there is NO prior deliberation data)
+# ---------------------------------------------------------------------------
+
+STANDALONE_SECRETARY_BRIEF = """\
+{secretary_system_prompt}
+
+───────────────────────────────────────
+STANDALONE SECRETARY EXECUTIVE BRIEF
+───────────────────────────────────────
+
+You are the Board Secretary. The CEO has asked you to provide a direct
+executive brief **without** a prior board deliberation cycle.
+
+Analyze the request below and produce a structured brief based on your
+own expertise. If you lack specific data, clearly mark findings as
+``[REQUIRES INPUT]``.
+
+## Required Format
+
+# Secretary Executive Brief
+
+## One-Liner
+(Single sentence, max 30 words.)
+
+## Key Findings
+(3-7 bullets. Attribute each with your role: " — [Board Secretary]".)
+
+### Conflicts Flagged (if any)
+**CONFLICT [HARD/SOFT]: [Topic]**
+- Position A: …
+- Position B: …
+
+## Decision Summary Table
+| # | Decision | Rationale | Risk |
+|---|----------|-----------|------|
+
+## Risk Snapshot
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|-----------|------------|
+
+## Action Items
+| # | Action | Owner | Deadline |
+|----|--------|-------|----------|
+
+## Detail Index
+| Topic | Source | Reference |
+|-------|--------|-----------|
+
+---
+CEO REQUEST:
+{user_query}
+
+YOUR SECRETARY BRIEF:
+"""
+
+_FALLBACK_STANDALONE_SECRETARY = STANDALONE_SECRETARY_BRIEF.replace(
+    "{secretary_system_prompt}", "{{secretary_system_prompt}}"
+).replace("{user_query}", "{{user_query}}")
+
+
+def format_standalone_secretary_brief(*, user_query: str) -> str:
+    """Build a standalone secretary prompt (no stage 1–3 context)."""
+    template = _load_or_fallback("standalone_secretary_brief", _FALLBACK_STANDALONE_SECRETARY)
+    return (
+        template
+        .replace("{{secretary_system_prompt}}", "")
+        .replace("{{user_query}}", user_query)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Live Discussion Secretary Brief  (summarises a live conversation transcript)
+# ---------------------------------------------------------------------------
+
+LIVE_SECRETARY_BRIEF = """\
+{secretary_system_prompt}
+
+───────────────────────────────────────
+LIVE BOARD DISCUSSION — SECRETARY {brief_mode} EXECUTIVE BRIEF
+───────────────────────────────────────
+
+You are the Board Secretary. A live boardroom discussion is in progress.
+{final_context}
+
+## Your Job
+Produce a **precise, attributed executive brief** from the raw conversation
+transcript below so the CEO grasps the strategic picture in under 60 seconds
+while retaining drill-down ability.
+{interim_instruction}
+
+## Required Format
+
+# 📋 Secretary Executive Brief ({brief_mode})
+
+## One-Liner
+*(Single sentence: what was discussed and the board's collective direction. Max 30 words.)*
+
+## Key Findings
+*(3-7 bullets. Each bullet MUST attribute source(s). Use format: " — [Role]".)*
+
+### Conflicts Flagged (if any)
+**CONFLICT [HARD/SOFT]: [Topic]**
+- Side A — [Role]: their exact position
+- Side B — [Role]: their exact position
+
+## Decision Summary
+| Aspect | Board Position | Source |
+|--------|----------------|--------|
+
+## Risk Snapshot
+| Risk | Prob×Impact | Mitigation | Raised By |
+|------|-------------|------------|-----------|
+
+## Action Items
+| # | Action | Owner | Deadline |
+|---|--------|-------|----------|
+
+## Detail Index
+| Topic | Member | Key Quote / Reference |
+|-------|--------|----------------------|
+
+## Operating Rules
+1. Attribute EVERY claim: always say who said what.
+2. Flag conflicts fairly: present both sides equally.
+3. Be precise: use numbers ("3 of 5 members") not vague words ("most").
+4. Stay neutral: you are organising information, not advocating.
+5. Do NOT introduce new analysis not present in the transcript.
+6. Preserve dissent: overruled objections MUST appear.
+
+───────────────────────────────────────
+CEO'S ORIGINAL TOPIC:
+───────────────────────────────────────
+
+{user_query}
+
+───────────────────────────────────────
+CONVERSATION TRANSCRIPT SO FAR:
+───────────────────────────────────────
+
+{transcript}
+
+───────────────────────────────────────
+YOUR SECRETARY BRIEF:
+"""
+
+_FALLBACK_LIVE_SECRETARY = (
+    LIVE_SECRETARY_BRIEF
+    .replace("{secretary_system_prompt}", "{{secretary_system_prompt}}")
+    .replace("{user_query}", "{{user_query}}")
+    .replace("{transcript}", "{{transcript}}")
+    .replace("{brief_mode}", "{{brief_mode}}")
+    .replace("{final_context}", "{{final_context}}")
+    .replace("{interim_instruction}", "{{interim_instruction}}")
+)
+
+
+def format_live_secretary_brief(*, user_query: str, transcript: str, brief_mode: str = "FINAL", is_final: bool = True) -> str:
+    """Build a secretary prompt for a live discussion transcript."""
+    template = _load_or_fallback("live_secretary_brief", _FALLBACK_LIVE_SECRETARY)
+
+    if is_final:
+        final_context = (
+            "Every council member has spoken. The CEO (chairperson) now needs your "
+            "comprehensive executive brief to make an informed decision."
+        )
+        interim_instruction = ""
+    else:
+        final_context = (
+            f"The discussion is still ongoing — this is an **{brief_mode.lower()}** update. "
+            "More members may still speak after this brief."
+        )
+        interim_instruction = (
+            "\n## Interim Brief Rules\n"
+            "- Focus on what has been said so far; note that discussion continues.\n"
+            "- Highlight the latest speaker's key contributions.\n"
+            "- Keep it concise — this is a progress snapshot, not the final word."
+        )
+
+    return (
+        template
+        .replace("{{secretary_system_prompt}}", "")
+        .replace("{{user_query}}", user_query)
+        .replace("{{transcript}}", transcript)
+        .replace("{{brief_mode}}", brief_mode)
+        .replace("{{final_context}}", final_context)
+        .replace("{{interim_instruction}}", interim_instruction)
+    )

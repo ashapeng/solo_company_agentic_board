@@ -1,12 +1,12 @@
 stage_profiles:
   pre_pmf:
-    active: [chairperson, strategist, product, researcher, critic, architect, builder]
+    active: [chairperson, strategist, product, researcher, critic, architect, builder, secretary]
     optional: [guardian, operator]
   live_product:
-    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator]
+    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator, secretary]
     optional: []
   revenue:
-    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator]
+    active: [chairperson, strategist, product, researcher, critic, architect, builder, guardian, operator, secretary]
     optional: [finance, legal]
 
 members:
@@ -64,17 +64,23 @@ members:
     activation:
       default_stage: live_product
       can_be_optional: true
+  secretary:
+    governance_seat: Board Secretary
+    capabilities: [information_synthesis, conflict_detection, executive_briefing, precision_summarization]
+    activation:
+      default_stage: pre_pmf
+      can_be_optional: false
 
 decision_types:
-  strategic: [market_strategy, customer_research, product_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis]
-  product: [product_strategy, customer_research, market_strategy, technical_feasibility, risk_challenge, synthesis]
-  customer: [customer_research, product_strategy, market_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis]
-  technical: [technical_feasibility, execution_feasibility, product_strategy, synthesis]
-  security: [threat_modeling, data_privacy, technical_feasibility, risk_challenge, synthesis]
-  operational: [operations, release_readiness, execution_feasibility, synthesis]
-  finance: [financial_analysis, pricing, runway, synthesis]
-  legal: [legal_review, compliance, risk_challenge, synthesis]
-  full-board: [company_direction, market_strategy, product_strategy, customer_research, technical_feasibility, execution_feasibility, risk_challenge, synthesis]
+  strategic: [market_strategy, customer_research, product_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis, information_synthesis]
+  product: [product_strategy, customer_research, market_strategy, technical_feasibility, risk_challenge, synthesis, information_synthesis]
+  customer: [customer_research, product_strategy, market_strategy, technical_feasibility, evidence_assessment, risk_challenge, synthesis, information_synthesis]
+  technical: [technical_feasibility, execution_feasibility, product_strategy, synthesis, information_synthesis]
+  security: [threat_modeling, data_privacy, technical_feasibility, risk_challenge, synthesis, information_synthesis]
+  operational: [operations, release_readiness, execution_feasibility, synthesis, information_synthesis]
+  finance: [financial_analysis, pricing, runway, synthesis, information_synthesis]
+  legal: [legal_review, compliance, risk_challenge, synthesis, information_synthesis]
+  full-board: [company_direction, market_strategy, product_strategy, customer_research, technical_feasibility, execution_feasibility, risk_challenge, synthesis, information_synthesis]
 
 clarification_gate:
   ambiguous_terms: ["business", "product", "ai", "search", "e-commerce", "ecommerce"]

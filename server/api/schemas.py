@@ -14,6 +14,7 @@ class QueryRequest(BaseModel):
     full_board: bool = False
     verify: bool = False
     clarification_answers: dict | None = None
+    discussion_mode: Literal["staged", "live"] = "staged"
 
 
 class WebSearchRequest(BaseModel):

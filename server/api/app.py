@@ -29,7 +29,9 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:8000",
         "http://localhost:8000",
+        "*",  # Allow all origins for remote access
     ],
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["content-type", "authorization"],
 )
@@ -52,27 +54,20 @@ async def enforce_local_only(request: Request, call_next):
             },
         )
 
+    # When remote access is enabled, optionally require Bearer token
     remote_token = (os.getenv("AGENTIC_BOARD_REMOTE_TOKEN") or "").strip()
-    if not remote_token:
-        return JSONResponse(
-            status_code=403,
-            content={
-                "code": "remote_auth_not_configured",
-                "message": "Remote access requires AGENTIC_BOARD_REMOTE_TOKEN.",
-            },
-        )
-
-    auth_header = request.headers.get("authorization", "")
-    expected = f"Bearer {remote_token}"
-    if not secrets.compare_digest(auth_header, expected):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "code": "remote_auth_required",
-                "message": "Remote access requires a valid bearer token.",
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if remote_token:
+        auth_header = request.headers.get("authorization", "")
+        expected = f"Bearer {remote_token}"
+        if not secrets.compare_digest(auth_header, expected):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "code": "remote_auth_required",
+                    "message": "Remote access requires a valid bearer token.",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return await call_next(request)
 

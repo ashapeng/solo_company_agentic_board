@@ -117,12 +117,19 @@ def adapt_session_record(record: dict[str, Any]) -> dict[str, Any]:
             session_id=str(record.get("session_id") or ""),
         )
 
+    # Extract secretary brief if available
+    secretary_brief_raw = record.get("secretary_brief")
+    secretary_brief_content = None
+    if isinstance(secretary_brief_raw, dict):
+        secretary_brief_content = secretary_brief_raw.get("content")
+
     return {
         "session_id": record.get("session_id"),
         "user_query": record.get("user_query"),
         "classification": record.get("classification"),
         "participation": record.get("participation", []),
         "decision": record.get("decision") or project_board_decision(synthesis),
+        "secretary_brief": secretary_brief_content,
         "delegation_plan": delegation_plan,
         "verification": record.get("verification"),
         "memory": {

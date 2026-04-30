@@ -40,4 +40,4 @@ echo "API docs at http://${HOST}:${PORT}/docs"
 echo ""
 
 # shellcheck disable=SC2086
-exec $UVICORN_BIN server.api:app --reload --host "$HOST" --port "$PORT"
+exec $UVICORN_BIN server.api:app --reload --reload-dir server --host "$HOST" --port "$PORT"

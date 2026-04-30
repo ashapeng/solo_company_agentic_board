@@ -26,7 +26,7 @@ class RosterRoutingTest(unittest.TestCase):
         selection = select_members_for_decision_type("full-board", stage_profile="pre_pmf")
 
         self.assertEqual(
-            ["chairperson", "strategist", "product", "researcher", "critic", "architect", "builder"],
+            ["chairperson", "strategist", "product", "researcher", "critic", "architect", "builder", "secretary"],
             selection.member_ids,
         )
 

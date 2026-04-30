@@ -19,6 +19,10 @@ class _FakePart:
     def __init__(self, *, text):
         self.text = text
 
+    @classmethod
+    def from_text(cls, *, text):
+        return cls(text=text)
+
 
 class _FakeGenerateContentConfig:
     def __init__(self, **kwargs):
@@ -35,7 +39,7 @@ class _FakeThinkingConfig:
 
 _FAKE_TYPES = SimpleNamespace(
     Content=lambda role, parts: _FakeContent(role=role, parts=parts),
-    Part=SimpleNamespace(from_text=lambda text: _FakePart(text=text)),
+    Part=_FakePart,
     GenerateContentConfig=_FakeGenerateContentConfig,
     ThinkingConfig=_FakeThinkingConfig,
 )
@@ -50,6 +54,12 @@ def _fake_gemini_response():
             candidates_token_count=5,
         ),
     )
+
+
+def test_gemini_text_part_uses_keyword_only_api():
+    part = llm._gemini_text_part(_FAKE_TYPES, "hi")
+
+    assert part.text == "hi"
 
 
 class _FakeModels:

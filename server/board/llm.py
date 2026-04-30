@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -35,6 +36,21 @@ class LLMResponse:
     latency_seconds: float
     finish_reason: str | None = None
     response_id: str | None = None
+
+
+@dataclass
+class LLMStreamChunk:
+    """One streamed text delta or final metadata marker from an LLM call."""
+    delta: str = ""
+    content: str = ""
+    done: bool = False
+    model: str | None = None
+    input_tokens: int = -1
+    output_tokens: int = -1
+    latency_seconds: float = 0.0
+    finish_reason: str | None = None
+    response_id: str | None = None
+    simulated_stream: bool = False
 
 
 class LLMProviderError(Exception):
@@ -145,6 +161,11 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
         or -1
     )
     return int(input_tokens), int(output_tokens)
+
+
+def _gemini_text_part(genai_types: Any, text: str) -> Any:
+    """Build a Gemini text part using the google-genai keyword-only API."""
+    return genai_types.Part.from_text(text=text)
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -340,7 +361,7 @@ async def _send_kimi(
         raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
 
     api_key = _read_required_env("MOONSHOT_API_KEY", "Kimi/Moonshot")
-    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1")
+    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1")
     _, provider_model = _split_model_id(model)
     full_messages = _full_messages(messages, system)
 
@@ -585,7 +606,7 @@ async def _send_gemini(
         role = _GEMINI_ROLE_MAP.get(msg.get("role", "user"), "user")
         contents.append(genai_types.Content(
             role=role,
-            parts=[genai_types.Part.from_text(msg.get("content", ""))],
+            parts=[_gemini_text_part(genai_types, msg.get("content", ""))],
         ))
 
     config_kwargs: dict[str, Any] = {
@@ -927,3 +948,264 @@ async def query_llm(
     if last_fallback_exc is not None and last_fallback_exc is not primary_exc:
         raise primary_exc from last_fallback_exc
     raise primary_exc
+
+
+async def _stream_deepseek(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    fallback: bool,
+) -> AsyncIterator[LLMStreamChunk]:
+    del fallback
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
+
+    api_key = _read_required_env("DEEPSEEK_API_KEY", "DeepSeek")
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    _, provider_model = _split_model_id(model)
+    kwargs: dict[str, Any] = {
+        "model": provider_model,
+        "messages": _full_messages(messages, system),
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    if provider_model not in {"deepseek-reasoner", "deepseek-v4-pro"}:
+        kwargs["temperature"] = temperature
+    if provider_model.startswith("deepseek-v4-"):
+        effort = os.getenv("DEEPSEEK_REASONING_EFFORT")
+        if effort:
+            if effort not in {"low", "medium", "high", "max"}:
+                raise RuntimeError(
+                    "DEEPSEEK_REASONING_EFFORT must be one of low|medium|high|max."
+                )
+            kwargs["reasoning_effort"] = effort
+
+    async for chunk in _stream_openai_compatible(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout,
+        kwargs=kwargs,
+    ):
+        yield chunk
+
+
+async def _stream_kimi(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    fallback: bool,
+) -> AsyncIterator[LLMStreamChunk]:
+    del fallback
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
+
+    api_key = _read_required_env("MOONSHOT_API_KEY", "Kimi/Moonshot")
+    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1")
+    _, provider_model = _split_model_id(model)
+    kwargs: dict[str, Any] = {
+        "model": provider_model,
+        "messages": _full_messages(messages, system),
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    if provider_model.startswith("kimi-k2-thinking"):
+        kwargs["temperature"] = 1.0
+    elif provider_model.startswith(("kimi-k2.5", "kimi-k2.6")):
+        pass
+    else:
+        kwargs["temperature"] = temperature
+
+    thinking = _env_bool("KIMI_THINKING")
+    if thinking is not None:
+        kwargs["extra_body"] = {"thinking": {"type": "enabled" if thinking else "disabled"}}
+
+    async for chunk in _stream_openai_compatible(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout,
+        kwargs=kwargs,
+    ):
+        yield chunk
+
+
+async def _stream_openai_compatible(
+    *,
+    model: str,
+    api_key: str,
+    base_url: str,
+    timeout: float,
+    kwargs: dict[str, Any],
+) -> AsyncIterator[LLMStreamChunk]:
+    from openai import OpenAI
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    def worker() -> None:
+        content = ""
+        finish_reason = None
+        response_id = None
+        t0 = time.monotonic()
+        try:
+            client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+            stream = client.chat.completions.create(**kwargs)
+            for raw_chunk in stream:
+                response_id = _openai_shape_response_id(raw_chunk) or response_id
+                delta, chunk_finish = _openai_stream_delta(raw_chunk)
+                finish_reason = chunk_finish or finish_reason
+                if not delta:
+                    continue
+                content += delta
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    LLMStreamChunk(
+                        delta=delta,
+                        content=content,
+                        model=model,
+                        response_id=response_id,
+                        simulated_stream=False,
+                    ),
+                )
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                LLMStreamChunk(
+                    content=content,
+                    done=True,
+                    model=model,
+                    input_tokens=-1,
+                    output_tokens=-1,
+                    latency_seconds=round(time.monotonic() - t0, 3),
+                    finish_reason=finish_reason,
+                    response_id=response_id,
+                    simulated_stream=False,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            loop.call_soon_threadsafe(queue.put_nowait, exc)
+
+    task = asyncio.create_task(asyncio.to_thread(worker))
+    try:
+        while True:
+            item = await queue.get()
+            if isinstance(item, Exception):
+                raise item
+            yield item
+            if item.done:
+                break
+    finally:
+        await task
+
+
+def _openai_stream_delta(chunk: Any) -> tuple[str, str | None]:
+    choices = _get_attr_or_item(chunk, "choices") or []
+    if not choices:
+        return "", None
+    choice = choices[0]
+    delta_obj = _get_attr_or_item(choice, "delta", {}) or {}
+    delta = _get_attr_or_item(delta_obj, "content", "") or ""
+    finish_reason = _get_attr_or_item(choice, "finish_reason", None)
+    return str(delta), finish_reason
+
+
+_STREAM_HANDLERS: dict[str, Callable[..., AsyncIterator[LLMStreamChunk]]] = {
+    "deepseek": _stream_deepseek,
+    "kimi": _stream_kimi,
+}
+
+
+async def query_llm_stream(
+    model: str,
+    messages: list[dict[str, str]],
+    *,
+    system: str | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 8192,
+    timeout: float = 240.0,
+    fallback: bool = True,
+) -> AsyncIterator[LLMStreamChunk]:
+    """Stream an LLM response.
+
+    Provider-native streaming is intentionally isolated behind this public
+    surface. The first implementation keeps all existing provider handlers
+    compatible by falling back to a simulated token stream from `query_llm()`;
+    callers still receive incremental deltas and a final metadata chunk.
+    """
+    primary_prefix, _ = _split_model_id(model)
+    stream_handler = _STREAM_HANDLERS.get(primary_prefix)
+    if stream_handler:
+        try:
+            async for chunk in stream_handler(
+                model,
+                messages,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                fallback=fallback,
+            ):
+                yield chunk
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Native stream for %s failed; falling back to simulated stream: %s",
+                model,
+                exc,
+            )
+
+    response = await query_llm(
+        model,
+        messages,
+        system=system,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        fallback=fallback,
+    )
+
+    content = response.content or ""
+    cumulative = ""
+    for delta in _simulated_stream_deltas(content):
+        cumulative += delta
+        yield LLMStreamChunk(
+            delta=delta,
+            content=cumulative,
+            model=response.model,
+            simulated_stream=True,
+        )
+        await asyncio.sleep(0)
+
+    yield LLMStreamChunk(
+        content=content,
+        done=True,
+        model=response.model,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        latency_seconds=response.latency_seconds,
+        finish_reason=response.finish_reason,
+        response_id=response.response_id,
+        simulated_stream=True,
+    )
+
+
+def _simulated_stream_deltas(content: str, *, target_chars: int = 48) -> list[str]:
+    """Split completed content into small stable deltas for stream consumers."""
+    if not content:
+        return []
+    return [
+        content[index:index + target_chars]
+        for index in range(0, len(content), target_chars)
+    ]

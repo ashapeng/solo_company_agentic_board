@@ -104,6 +104,22 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(503, raised.exception.status_code)
         self.assertEqual("deliberation_failed", raised.exception.detail["code"])
 
+    def test_content_filter_provider_errors_are_public_safe(self):
+        from server.api.routes.board import _public_error_payload
+
+        raw = (
+            "Error code: 400 - {'error': {'code': 400, 'message': "
+            "'The request was rejected because it was considered high risk', "
+            "'param': 'prompt', 'type': 'content_filter'}}"
+        )
+
+        payload = _public_error_payload(RuntimeError(raw))
+
+        self.assertEqual("content_filter", payload["code"])
+        self.assertIn("content filter", payload["message"].lower())
+        self.assertNotIn("{'error'", payload["message"])
+        self.assertNotIn("param", payload["message"])
+
     async def test_deliberate_endpoint_returns_session_contract(self):
         fake_request = Request({
             "type": "http",

@@ -14,6 +14,7 @@ _STAGE_TOKEN_FIELDS = {
     1: "stage1_max_tokens",
     2: "stage2_max_tokens",
     3: "stage3_max_tokens",
+    4: "stage4_max_tokens",
 }
 DEFAULT_STAGE1_COMPACTION_SECTIONS = [
     "confidence",
@@ -37,6 +38,7 @@ class HarnessConfig:
     stage1_max_tokens: int = 1200
     stage2_max_tokens: int = 800
     stage3_max_tokens: int = 4000
+    stage4_max_tokens: int = 3000
     revision_max_tokens: int = 2500
 
     # Response thresholds
