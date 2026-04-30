@@ -21,6 +21,12 @@ node_modules/
 .coverage
 .DS_Store
 Thumbs.db
+generate_pdf.py
+hackathon-product.pdf
+PRESENTATION.md
+PROJECT_DESCRIPTION.md
+CodeBuddy_Zai_Hackathon.pdf
+Demo_video_Hackathon2.mp4
 
 # Override global gitignore for project docs
 !docs/architecture/
@@ -31,3 +37,11 @@ Thumbs.db
 .superpowers/
 .playwright-cli/
 .business_ideas/
+business_ideas/
+.docs/
+.pdf_img/
+pdf-pages/
+body.json
+docs/Singapore_Hackathon_ParticipantsRubric*.pdf
+
+
