@@ -130,6 +130,8 @@ def adapt_session_record(record: dict[str, Any]) -> dict[str, Any]:
         "participation": record.get("participation", []),
         "decision": record.get("decision") or project_board_decision(synthesis),
         "secretary_brief": secretary_brief_content,
+        "secretary_briefs": record.get("secretary_briefs") or [],
+        "continuation_count": record.get("continuation_count", 0),
         "delegation_plan": delegation_plan,
         "verification": record.get("verification"),
         "memory": {
