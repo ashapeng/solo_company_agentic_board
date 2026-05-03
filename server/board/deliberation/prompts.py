@@ -472,111 +472,48 @@ def format_standalone_secretary_brief(*, user_query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Live Discussion Secretary Brief  (summarises a live conversation transcript)
-# ---------------------------------------------------------------------------
+_FALLBACK_LIVE_SECRETARY = """{{secretary_system_prompt}}
 
-LIVE_SECRETARY_BRIEF = """\
-{secretary_system_prompt}
+You are producing the Secretary brief for **Round {{round_index}}** of a live board meeting.{{round_hint}}
 
-───────────────────────────────────────
-LIVE BOARD DISCUSSION — SECRETARY {brief_mode} EXECUTIVE BRIEF
-───────────────────────────────────────
+The CEO's question: {{user_query}}
 
-You are the Board Secretary. A live boardroom discussion is in progress.
-{final_context}
+Full transcript so far:
+{{transcript}}
 
-## Your Job
-Produce a **precise, attributed executive brief** from the raw conversation
-transcript below so the CEO grasps the strategic picture in under 60 seconds
-while retaining drill-down ability.
-{interim_instruction}
+## Output rules
 
-## Required Format
+Emit only these four section headers, in this order, omitting any whose body would be empty:
 
-# 📋 Secretary Executive Brief ({brief_mode})
+1. `## Agreements` — bullets the board agrees on, each ending with `[Member Title]` attribution.
+2. `## Conflicts` — `**HARD** [topic]: [Member A] says X | [Member B] says NOT X` for direct contradictions, or `**SOFT** [topic]: [Member A] prioritizes X | [Member B] prioritizes Y` for tensions.
+3. `## Open Questions` — unresolved questions raised by one or more members, attributed.
+4. `## Decision Needed From CEO` — items requiring a CEO ruling, phrased as questions or A/B choices.
 
-## One-Liner
-*(Single sentence: what was discussed and the board's collective direction. Max 30 words.)*
-
-## Key Findings
-*(3-7 bullets. Each bullet MUST attribute source(s). Use format: " — [Role]".)*
-
-### Conflicts Flagged (if any)
-**CONFLICT [HARD/SOFT]: [Topic]**
-- Side A — [Role]: their exact position
-- Side B — [Role]: their exact position
-
-## Decision Summary
-| Aspect | Board Position | Source |
-|--------|----------------|--------|
-
-## Risk Snapshot
-| Risk | Prob×Impact | Mitigation | Raised By |
-|------|-------------|------------|-----------|
-
-## Action Items
-| # | Action | Owner | Deadline |
-|---|--------|-------|----------|
-
-## Detail Index
-| Topic | Member | Key Quote / Reference |
-|-------|--------|----------------------|
-
-## Operating Rules
-1. Attribute EVERY claim: always say who said what.
-2. Flag conflicts fairly: present both sides equally.
-3. Be precise: use numbers ("3 of 5 members") not vague words ("most").
-4. Stay neutral: you are organising information, not advocating.
-5. Do NOT introduce new analysis not present in the transcript.
-6. Preserve dissent: overruled objections MUST appear.
-
-───────────────────────────────────────
-CEO'S ORIGINAL TOPIC:
-───────────────────────────────────────
-
-{user_query}
-
-───────────────────────────────────────
-CONVERSATION TRANSCRIPT SO FAR:
-───────────────────────────────────────
-
-{transcript}
-
-───────────────────────────────────────
-YOUR SECRETARY BRIEF:
+Hard caps:
+- Maximum 5 bullets per section.
+- Maximum 25 words per bullet.
+- The whole brief MUST fit in 80 lines (including blank lines between sections).
+- No prose paragraphs. No preamble. No closing remarks.
+- Drop a section entirely if empty — never write `(none)` placeholder.
+- Do not emit tables, summaries, risk matrices, action item lists, indexes, or closing one-liners.
 """
 
-_FALLBACK_LIVE_SECRETARY = (
-    LIVE_SECRETARY_BRIEF
-    .replace("{secretary_system_prompt}", "{{secretary_system_prompt}}")
-    .replace("{user_query}", "{{user_query}}")
-    .replace("{transcript}", "{{transcript}}")
-    .replace("{brief_mode}", "{{brief_mode}}")
-    .replace("{final_context}", "{{final_context}}")
-    .replace("{interim_instruction}", "{{interim_instruction}}")
-)
 
+def format_live_secretary_brief(*, user_query: str, transcript: str, round_index: int) -> str:
+    """Build a Secretary prompt for a live discussion transcript.
 
-def format_live_secretary_brief(*, user_query: str, transcript: str, brief_mode: str = "FINAL", is_final: bool = True) -> str:
-    """Build a secretary prompt for a live discussion transcript."""
+    Single-mode template — no interim/final dimension. Each call corresponds to
+    one round (round_index 0 = initial CEO query, 1+ = CEO follow-ups).
+    """
     template = _load_or_fallback("live_secretary_brief", _FALLBACK_LIVE_SECRETARY)
 
-    if is_final:
-        final_context = (
-            "Every council member has spoken. The CEO (chairperson) now needs your "
-            "comprehensive executive brief to make an informed decision."
-        )
-        interim_instruction = ""
+    if round_index == 0:
+        round_hint = ""
     else:
-        final_context = (
-            f"The discussion is still ongoing — this is an **{brief_mode.lower()}** update. "
-            "More members may still speak after this brief."
-        )
-        interim_instruction = (
-            "\n## Interim Brief Rules\n"
-            "- Focus on what has been said so far; note that discussion continues.\n"
-            "- Highlight the latest speaker's key contributions.\n"
-            "- Keep it concise — this is a progress snapshot, not the final word."
+        round_hint = (
+            f" The CEO has sent {round_index} follow-up(s); incorporate the latest "
+            "follow-up content alongside prior turns."
         )
 
     return (
@@ -584,7 +521,6 @@ def format_live_secretary_brief(*, user_query: str, transcript: str, brief_mode:
         .replace("{{secretary_system_prompt}}", "")
         .replace("{{user_query}}", user_query)
         .replace("{{transcript}}", transcript)
-        .replace("{{brief_mode}}", brief_mode)
-        .replace("{{final_context}}", final_context)
-        .replace("{{interim_instruction}}", interim_instruction)
+        .replace("{{round_index}}", str(round_index))
+        .replace("{{round_hint}}", round_hint)
     )
