@@ -71,6 +71,7 @@ class BoardSession:
     stage3_synthesis: MemberResponse | None = None
     secretary_briefs: list[MemberResponse] = field(default_factory=list)
     continuation_count: int = 0
+    selected_council_ids: list[str] = field(default_factory=list)
 
     @property
     def secretary_brief(self) -> MemberResponse | None:
@@ -121,6 +122,7 @@ class BoardSession:
             "secretary_brief": _resp(self.secretary_brief) if self.secretary_brief else None,
             "secretary_briefs": [_resp(b) for b in self.secretary_briefs],
             "continuation_count": self.continuation_count,
+            "selected_council_ids": self.selected_council_ids,
             "decision": self.decision,
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,

@@ -374,6 +374,10 @@ async def continue_meeting(
     session.status = data.get("status", "awaiting_chair_decision")
     # (Other fields like stage1/stage2/stage3 are not required for live continuation.)
 
+    # Restore the original council selection so continuation rounds don't use the full roster.
+    selected_ids: list[str] = list(data.get("selected_council_ids") or [])
+    session.selected_council_ids = selected_ids
+
     # Cap check happens both here (for HTTP semantics) and inside discuss() (for direct callers).
     max_continuations = _positive_int_env("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS", 2)
     if session.continuation_count >= max_continuations:
@@ -395,6 +399,13 @@ async def continue_meeting(
 
     async def event_generator():
         conversation = LiveBoardConversation(on_event=on_event)
+        if selected_ids:
+            from server.board.config import get_members_by_id
+            members_by_id = get_members_by_id()
+            conversation.council = [
+                members_by_id[mid] for mid in selected_ids
+                if mid in members_by_id and mid != conversation.chairperson.id
+            ]
         task = asyncio.create_task(
             conversation.discuss(
                 req.user_input,

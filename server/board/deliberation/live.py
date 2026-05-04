@@ -358,6 +358,7 @@ class LiveBoardConversation:
                 classification=session.classification,
                 mode_reason=mode_reason,
             )
+            session.selected_council_ids = [m.id for m in self.council]
         else:
             mode_reason = "Reusing council from meeting start (continuation)."
 
@@ -770,9 +771,12 @@ class LiveBoardConversation:
         # Build transcript from all messages spoken so far
         transcript = _format_full_transcript(messages)
 
+        message_id = f"{session_id}_secretary_brief_r{round_index}"
+
         self._emit({
             "event": "secretary_starting",
             "session_id": session_id,
+            "message_id": message_id,
             "member_id": secretary.id,
             "member_title": secretary.title,
             "round_index": round_index,
@@ -797,8 +801,6 @@ class LiveBoardConversation:
             transcript=transcript,
             round_index=round_index,
         )
-
-        message_id = f"{session_id}_secretary_brief_r{round_index}"
 
         brief_content = ""
         final_chunk: LLMStreamChunk | None = None

@@ -126,6 +126,32 @@ class ContinueEndpointTest(unittest.IsolatedAsyncioTestCase):
         finally:
             os.environ.pop("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS", None)
 
+    async def test_continue_restores_selected_council(self) -> None:
+        """Continuation rounds must reuse the council from meeting start."""
+        # Seed session with explicit council selection.
+        data = json.loads(self.session_path.read_text())
+        data["selected_council_ids"] = ["strategist", "architect"]
+        self.session_path.write_text(json.dumps(data))
+
+        captured_council_ids: list[str] = []
+
+        async def fake_discuss(self_inner, *args, **kwargs):
+            captured_council_ids.extend([m.id for m in self_inner.council])
+            # Return the existing_session unchanged.
+            return kwargs.get("existing_session") or args[1] if len(args) > 1 else kwargs.get("existing_session")
+
+        with patch("server.board.deliberation.live.LiveBoardConversation.discuss", new=fake_discuss):
+            response = await board_routes.continue_meeting(
+                session_id=self.session_id,
+                req=ContinueRequest(user_input="Follow up"),
+                request=_fake_request(),
+            )
+            # Consume the SSE generator to trigger the async task.
+            async for _ in response.body_iterator:
+                pass
+
+        self.assertEqual(set(captured_council_ids), {"strategist", "architect"})
+
 
 class AdjournEndpointTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:

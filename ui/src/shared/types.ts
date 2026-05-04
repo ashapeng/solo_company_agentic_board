@@ -202,6 +202,7 @@ export type SecretaryBrief = {
 export type SecretaryStartingEvent = {
   event: 'secretary_starting';
   session_id: string;
+  message_id: string;
   member_id: string;
   member_title: string;
   round_index: number;
