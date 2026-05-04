@@ -1436,10 +1436,28 @@ function LiveBoardTranscript({
   const memberMap = new Map(members.map((member) => [member.id, member]));
   const hasConversation = messages.length > 0;
 
+  // Track whether the user is "stuck to the bottom". Default true on mount.
+  // If the user scrolls up, we stop auto-following. If they scroll back to the
+  // bottom, we resume.
+  const stuckToBottomRef = useRef(true);
+
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    scroller.scrollTop = scroller.scrollHeight;
+    const handleScroll = () => {
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      stuckToBottomRef.current = distance < 32; // within 32px of bottom counts as "at bottom"
+    };
+    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    if (stuckToBottomRef.current) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
   }, [messages, activeStreamMessageId]);
 
   return (
