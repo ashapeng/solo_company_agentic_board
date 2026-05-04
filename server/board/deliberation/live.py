@@ -227,6 +227,7 @@ class LiveBoardConversation:
         self.on_event = on_event
         self.max_turns = max_turns or int(os.getenv("AGENTIC_BOARD_LIVE_MAX_TURNS", "5"))
         self.max_continuations = _positive_int_env("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS") or 2
+        self._current_round = 0
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self.on_event:
@@ -241,12 +242,44 @@ class LiveBoardConversation:
         verify: bool = False,  # kept for endpoint symmetry; live verification is deferred
         session_id: str | None = None,
         clarification_answers: dict[str, Any] | None = None,  # reserved for parity
+        existing_session: BoardSession | None = None,
     ) -> BoardSession:
         del verify, clarification_answers
-        session_id = session_id or f"board_{int(time.time())}"
-        session = BoardSession(session_id=session_id, user_query=user_query)
-        session.metrics = self.metrics
-        session.status = "running"
+
+        if existing_session is not None:
+            session = existing_session
+            session_id = session.session_id
+            # Cap check before doing any work.
+            if session.continuation_count >= self.max_continuations:
+                self._emit({
+                    "event": "meeting_capped",
+                    "session_id": session_id,
+                    "continuation_count": session.continuation_count,
+                    "max_continuations": self.max_continuations,
+                    "message": "Continuation cap reached. Adjourn to finalize.",
+                })
+                return session
+            session.continuation_count += 1
+            session.status = "running"
+            self._current_round = session.continuation_count
+            # Append the new CEO message to the conversation.
+            session.conversation["messages"].append({
+                "id": f"user_{len(session.conversation['messages'])}",
+                "turn_index": len(session.conversation["messages"]),
+                "member_id": self.chairperson.id,
+                "member_title": "CEO / Chairperson",
+                "role": "CEO",
+                "speaker": "user",
+                "content": user_query,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        else:
+            session_id = session_id or f"board_{int(time.time())}"
+            session = BoardSession(session_id=session_id, user_query=user_query)
+            session.metrics = self.metrics
+            session.status = "running"
+            self._current_round = 0
+        self.metrics = session.metrics
         t0 = time.monotonic()
         response_language = detect_response_language(user_query)
 
@@ -277,67 +310,71 @@ class LiveBoardConversation:
 
         query_type = None
         complexity = None
-        if member_ids:
-            selected = set(member_ids)
-            self.council = [
-                member for member in self.all_members
-                if member.id in selected and member.id != self.chairperson.id
-            ]
-            mode_reason = "Selected by manual scope."
-        elif not skip_classify:
-            from .classifier import classify_query
+        if existing_session is None:
+            if member_ids:
+                selected = set(member_ids)
+                self.council = [
+                    member for member in self.all_members
+                    if member.id in selected and member.id != self.chairperson.id
+                ]
+                mode_reason = "Selected by manual scope."
+            elif not skip_classify:
+                from .classifier import classify_query
 
-            classification = await classify_query(user_query)
-            query_type = classification.query_type
-            complexity = classification.complexity
-            selected = set(classification.relevant_member_ids)
-            self.council = [
-                member for member in self.all_members
-                if member.id in selected and member.id != self.chairperson.id
-            ]
-            session.classification = {
-                "query_type": classification.query_type,
-                "complexity": classification.complexity,
-                "relevant_member_ids": classification.relevant_member_ids,
-                "reasoning": classification.reasoning,
-                "required_capabilities": classification.required_capabilities or [],
-                "unavailable_capabilities": classification.unavailable_capabilities or [],
-                "stage_profile": classification.stage_profile,
-                "role_gap_memo": classification.role_gap_memo,
-            }
-            mode_reason = "Selected by capability routing."
+                classification = await classify_query(user_query)
+                query_type = classification.query_type
+                complexity = classification.complexity
+                selected = set(classification.relevant_member_ids)
+                self.council = [
+                    member for member in self.all_members
+                    if member.id in selected and member.id != self.chairperson.id
+                ]
+                session.classification = {
+                    "query_type": classification.query_type,
+                    "complexity": classification.complexity,
+                    "relevant_member_ids": classification.relevant_member_ids,
+                    "reasoning": classification.reasoning,
+                    "required_capabilities": classification.required_capabilities or [],
+                    "unavailable_capabilities": classification.unavailable_capabilities or [],
+                    "stage_profile": classification.stage_profile,
+                    "role_gap_memo": classification.role_gap_memo,
+                }
+                mode_reason = "Selected by capability routing."
+            else:
+                mode_reason = "Selected by full-board mode."
+
+            if not self.council:
+                self.council = []
+
+            self.model_assignments = _assign_models(
+                [*self.council, self.chairperson],
+                query_type=query_type,
+                config=get_config(),
+            )
+            session.participation = _build_participation_decisions(
+                self.all_members,
+                self.council,
+                chairman_id=self.chairperson.id,
+                classification=session.classification,
+                mode_reason=mode_reason,
+            )
         else:
-            mode_reason = "Selected by full-board mode."
+            mode_reason = "Reusing council from meeting start (continuation)."
 
-        if not self.council:
-            self.council = []
-
-        self.model_assignments = _assign_models(
-            [*self.council, self.chairperson],
-            query_type=query_type,
-            config=get_config(),
-        )
-        session.participation = _build_participation_decisions(
-            self.all_members,
-            self.council,
-            chairman_id=self.chairperson.id,
-            classification=session.classification,
-            mode_reason=mode_reason,
-        )
-
-        session.conversation = {
-            "messages": [{
-                "id": "user_0",
-                "turn_index": 0,
-                "member_id": self.chairperson.id,
-                "member_title": "CEO / Chairperson",
-                "role": "CEO",
-                "speaker": "user",
-                "content": user_query,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }],
-            "routing_trace": [],
-        }
+        if existing_session is None:
+            session.conversation = {
+                "messages": [{
+                    "id": "user_0",
+                    "turn_index": 0,
+                    "member_id": self.chairperson.id,
+                    "member_title": "CEO / Chairperson",
+                    "role": "CEO",
+                    "speaker": "user",
+                    "content": user_query,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }],
+                "routing_trace": [],
+            }
 
         self._emit({
             "event": "council_selected",
@@ -448,7 +485,7 @@ class LiveBoardConversation:
                 messages=messages,
                 response_language=response_language,
                 session_id=session_id,
-                round_index=session.continuation_count,
+                round_index=self._current_round,
             )
 
         # Only emit chair_decision_required AFTER secretary has briefed.
