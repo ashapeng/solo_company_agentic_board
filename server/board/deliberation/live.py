@@ -795,9 +795,17 @@ class LiveBoardConversation:
         # and the bullet output. 4500 covers worst-case reasoning + ≤80-line brief.
         max_tokens = max(max_tokens, 4500)
 
-        system = _live_system_prompt(
-            secretary,
-            user_query=user_query,
+        # Use a MINIMAL system prompt for the live brief. The full secretary.md
+        # member prompt (~130 lines) combined with a long transcript triggers
+        # heavy reasoning on K2.6 / DeepSeek that consumes the entire token
+        # budget without emitting visible content. The user-prompt template
+        # already specifies the four-section format, attribution rules, and
+        # hard caps — that's enough for the model.
+        system = (
+            "You are the Board Secretary producing concise executive briefs "
+            "for the CEO. Follow the user message instructions exactly. Output "
+            "only the requested section headers and bullets — no preamble, no "
+            "closing remarks, no reasoning trace."
         )
 
         prompt = format_live_secretary_brief(
