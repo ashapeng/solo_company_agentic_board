@@ -127,5 +127,71 @@ class ContinueEndpointTest(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS", None)
 
 
+class AdjournEndpointTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = Path("data/sessions").resolve()
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.session_id = "board_88888"
+        self.session_path = self.tmp_dir / f"{self.session_id}.json"
+        self.session_path.write_text(json.dumps({
+            "session_id": self.session_id,
+            "user_query": "Q1",
+            "status": "awaiting_chair_decision",
+            "continuation_count": 1,
+            "secretary_brief": {"member_id": "secretary", "stage": 4, "content": "b", "model": "m", "elapsed_seconds": 0.1},
+            "secretary_briefs": [{"member_id": "secretary", "stage": 4, "content": "b", "model": "m", "elapsed_seconds": 0.1}],
+            "conversation": {"messages": [], "routing_trace": []},
+            "stage1": [], "stage2": [], "stage3": None,
+            "decision": None, "delegation_plan": None, "verification": None, "memory": None,
+            "intake_cards": [], "clarification": {}, "structured_output_warnings": [],
+            "evidence_packets": {}, "participation": [], "classification": None,
+        }))
+
+    def tearDown(self) -> None:
+        if self.session_path.exists():
+            self.session_path.unlink()
+
+    async def test_adjourn_unknown_session_returns_404(self) -> None:
+        from fastapi import HTTPException
+        from server.api.schemas import AdjournRequest
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.adjourn_meeting(
+                session_id="board_77404",  # valid format, no on-disk file
+                req=AdjournRequest(),
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_adjourn_marks_session_adjourned(self) -> None:
+        from server.api.schemas import AdjournRequest
+        result = await board_routes.adjourn_meeting(
+            session_id=self.session_id,
+            req=AdjournRequest(ceo_decision="Ship it."),
+        )
+        self.assertEqual(result["status"], "adjourned")
+        self.assertEqual(result["session_id"], self.session_id)
+
+        # Verify the persisted file reflects the new status.
+        persisted = json.loads(self.session_path.read_text())
+        self.assertEqual(persisted["status"], "adjourned")
+
+    async def test_adjourn_idempotent(self) -> None:
+        from server.api.schemas import AdjournRequest
+        first = await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        second = await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        self.assertEqual(first["status"], "adjourned")
+        self.assertEqual(second["status"], "adjourned")
+
+    async def test_adjourn_rejects_running_session(self) -> None:
+        data = json.loads(self.session_path.read_text())
+        data["status"] = "running"
+        self.session_path.write_text(json.dumps(data))
+
+        from fastapi import HTTPException
+        from server.api.schemas import AdjournRequest
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        self.assertEqual(ctx.exception.status_code, 409)
+
+
 if __name__ == "__main__":
     unittest.main()

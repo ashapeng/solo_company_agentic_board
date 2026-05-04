@@ -8,6 +8,7 @@ import os
 import re
 import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path as FilePath
 
 from fastapi import APIRouter, HTTPException, Path, Request
@@ -426,6 +427,63 @@ async def continue_meeting(
             return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id:path}/adjourn")
+async def adjourn_meeting(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+    req: AdjournRequest = ...,  # type: ignore[assignment]
+):
+    """Mark a meeting adjourned. Idempotent."""
+    _validate_session_id(session_id)
+
+    session_path = None
+    for dirname in ("data/sessions", "data/conversations"):
+        candidate = FilePath(f"{dirname}/{session_id}.json")
+        if candidate.exists():
+            session_path = candidate
+            break
+    if session_path is None:
+        raise HTTPException(404, detail="Session not found")
+
+    data = json.loads(session_path.read_text())
+    current_status = data.get("status")
+
+    # Idempotent: already-adjourned sessions are returned as-is.
+    if current_status == "adjourned":
+        return {
+            "session_id": session_id,
+            "status": "adjourned",
+            "final_brief": data.get("secretary_brief"),
+        }
+
+    if current_status != "awaiting_chair_decision":
+        raise HTTPException(
+            409,
+            detail=f"Session is in status '{current_status}'; can only adjourn from 'awaiting_chair_decision'.",
+        )
+
+    if req.ceo_decision and req.ceo_decision.strip():
+        messages = data.setdefault("conversation", {"messages": [], "routing_trace": []}).setdefault("messages", [])
+        messages.append({
+            "id": f"user_{len(messages)}",
+            "turn_index": len(messages),
+            "member_id": "chairperson",
+            "member_title": "CEO / Chairperson",
+            "role": "CEO",
+            "speaker": "user",
+            "content": req.ceo_decision.strip(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    data["status"] = "adjourned"
+    session_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+    return {
+        "session_id": session_id,
+        "status": "adjourned",
+        "final_brief": data.get("secretary_brief"),
+    }
 
 
 @router.get("/sessions")
