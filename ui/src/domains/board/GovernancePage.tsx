@@ -1436,10 +1436,28 @@ function LiveBoardTranscript({
   const memberMap = new Map(members.map((member) => [member.id, member]));
   const hasConversation = messages.length > 0;
 
+  // Track whether the user is "stuck to the bottom". Default true on mount.
+  // If the user scrolls up, we stop auto-following. If they scroll back to the
+  // bottom, we resume.
+  const stuckToBottomRef = useRef(true);
+
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    scroller.scrollTop = scroller.scrollHeight;
+    const handleScroll = () => {
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      stuckToBottomRef.current = distance < 32; // within 32px of bottom counts as "at bottom"
+    };
+    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    if (stuckToBottomRef.current) {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
   }, [messages, activeStreamMessageId]);
 
   return (
@@ -1509,18 +1527,15 @@ function TranscriptMessage({
   }
 
   const isUser = message.speaker === 'user';
-  const isSecretaryFinal = message.role === 'Secretary-Final';
-  const isSecretaryInterim = message.role === 'Secretary-Interim';
-  const isSecretary = isSecretaryFinal || isSecretaryInterim;
+  const isSecretary = message.role === 'Secretary';
   const memberId = message.member_id || member?.id || 'chairperson';
   const imageUrl = MEMBER_IMAGES[memberId];
   const Icon = isSecretary ? FileText : (MEMBER_ICONS[memberId] || Users);
-  const tone = isSecretaryFinal ? '#155e3c' : isSecretaryInterim ? '#1E3A5F' : memberTone(memberId);
+  const tone = isSecretary ? '#1E3A5F' : memberTone(memberId);
   const title = message.member_title || member?.title || (isUser ? 'CEO / Chairperson' : humanize(memberId));
   const role = message.role || (member ? roleLabelFor(member) : '');
   let roleLabel: string | null = role;
-  if (isSecretaryFinal) roleLabel = '✅ Final Executive Brief';
-  else if (isSecretaryInterim) roleLabel = '📋 Interim Brief';
+  if (isSecretary) roleLabel = 'Executive Brief';
 
   return (
     <li className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -1556,19 +1571,17 @@ function TranscriptMessage({
         className={`max-w-[min(100%,720px)] rounded-lg px-4 py-3 shadow-[0_8px_24px_-20px_rgba(26,22,20,0.25)] ${
           isUser
             ? 'bg-secondary-container text-on-secondary-container'
-            : isSecretaryFinal
-              ? 'border-l-[3px] border-l-green-600 bg-green-50/[0.5] text-on-surface'
-              : isSecretaryInterim
-                ? 'border-l-[3px] border-l-primary/60 bg-primary/[0.04] text-on-surface'
-                : 'bg-surface-container-lowest text-on-surface'
+            : isSecretary
+              ? 'border-l-[3px] border-l-primary/60 bg-primary/[0.04] text-on-surface'
+              : 'bg-surface-container-lowest text-on-surface'
         }`}
       >
         <header className="mb-2 flex flex-wrap items-center gap-2">
-          <h3 className={`font-body text-sm font-semibold ${isUser ? 'text-on-secondary-container' : isSecretaryFinal ? 'text-green-800' : isSecretaryInterim ? 'text-primary' : 'text-on-surface'}`}>
+          <h3 className={`font-body text-sm font-semibold ${isUser ? 'text-on-secondary-container' : isSecretary ? 'text-primary' : 'text-on-surface'}`}>
             {title}
           </h3>
           {roleLabel && !isUser ? (
-            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-body tracking-wider ${isSecretaryFinal ? 'bg-green-100 text-green-700 font-semibold' : isSecretaryInterim ? 'bg-primary/10 text-primary font-semibold' : 'text-on-surface-variant'}`}>
+            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-body tracking-wider ${isSecretary ? 'bg-primary/10 text-primary font-semibold' : 'text-on-surface-variant'}`}>
               {roleLabel}
             </span>
           ) : null}

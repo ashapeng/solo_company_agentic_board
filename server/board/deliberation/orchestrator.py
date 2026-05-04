@@ -69,7 +69,23 @@ class BoardSession:
     stage1_responses: list[MemberResponse] = field(default_factory=list)
     stage2_responses: list[MemberResponse] = field(default_factory=list)
     stage3_synthesis: MemberResponse | None = None
-    secretary_brief: MemberResponse | None = None
+    secretary_briefs: list[MemberResponse] = field(default_factory=list)
+    continuation_count: int = 0
+    selected_council_ids: list[str] = field(default_factory=list)
+
+    @property
+    def secretary_brief(self) -> MemberResponse | None:
+        """Latest Secretary brief — alias for `secretary_briefs[-1]` for back-compat."""
+        return self.secretary_briefs[-1] if self.secretary_briefs else None
+
+    @secretary_brief.setter
+    def secretary_brief(self, value: MemberResponse | None) -> None:
+        """Setter retained for back-compat: appends to `secretary_briefs` if non-None.
+
+        New code should use `secretary_briefs.append(...)` directly.
+        """
+        if value is not None:
+            self.secretary_briefs.append(value)
     total_elapsed: float = 0.0
     metrics: SessionMetrics = field(default_factory=SessionMetrics)
     classification: dict | None = None  # query classification info
@@ -104,6 +120,9 @@ class BoardSession:
             "stage2": [_resp(r) for r in self.stage2_responses],
             "stage3": _resp(self.stage3_synthesis) if self.stage3_synthesis else None,
             "secretary_brief": _resp(self.secretary_brief) if self.secretary_brief else None,
+            "secretary_briefs": [_resp(b) for b in self.secretary_briefs],
+            "continuation_count": self.continuation_count,
+            "selected_council_ids": self.selected_council_ids,
             "decision": self.decision,
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,
