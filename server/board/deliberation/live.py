@@ -435,9 +435,7 @@ class LiveBoardConversation:
                 messages=messages,
                 response_language=response_language,
                 session_id=session_id,
-                turn_index=turn_index,
-                last_member=member,
-                is_final=False,
+                round_index=session.continuation_count,
             )
 
             used_member_ids.add(member.id)
@@ -463,9 +461,7 @@ class LiveBoardConversation:
                 messages=messages,
                 response_language=response_language,
                 session_id=session_id,
-                turn_index=len(messages),
-                last_member=None,
-                is_final=True,
+                round_index=session.continuation_count,
             )
 
         # Only emit chair_decision_required AFTER secretary has briefed.
@@ -734,16 +730,9 @@ class LiveBoardConversation:
         messages: list[ConversationMessage],
         response_language: str,
         session_id: str,
-        turn_index: int = 0,
-        last_member=None,
-        is_final: bool = False,
+        round_index: int,
     ) -> None:
-        """Summarise the live discussion via the Secretary agent.
-
-        Called after **each** council member speaks (``is_final=False``) for
-        incremental briefs, and once more at discussion end (``is_final=True``)
-        for the comprehensive final executive brief.
-        """
+        """Summarise the live discussion via the Secretary agent (one call per round)."""
         from ..config import get_members_by_id
         from ..llm import LLMStreamChunk, query_llm_stream
         from ..metrics import CallMetrics
@@ -757,16 +746,12 @@ class LiveBoardConversation:
         # Build transcript from all messages spoken so far
         transcript = _format_full_transcript(messages)
 
-        brief_mode = "FINAL" if is_final else f"INTERIM (after {last_member.title if last_member else f'turn #{turn_index}'})"
-
         self._emit({
             "event": "secretary_starting",
             "session_id": session_id,
             "member_id": secretary.id,
             "member_title": secretary.title,
-            "turn_index": turn_index,
-            "brief_mode": brief_mode,
-            "is_final": is_final,
+            "round_index": round_index,
         })
 
         started = time.monotonic()
@@ -775,8 +760,8 @@ class LiveBoardConversation:
             query_type=None,
             complexity=None,
         )
-        # Give the secretary more room for structured output
-        max_tokens = max(max_tokens, 3200)
+        # Four-section bullet brief (≤80 lines × ~12 tokens/line) fits in 1500.
+        max_tokens = max(max_tokens, 1500)
 
         system = _live_system_prompt(
             secretary,
@@ -786,13 +771,10 @@ class LiveBoardConversation:
         prompt = format_live_secretary_brief(
             user_query=user_query,
             transcript=transcript,
-            brief_mode=brief_mode,
-            is_final=is_final,
+            round_index=round_index,
         )
 
-        # Unique message_id per turn (final overrides previous)
-        suffix = "final" if is_final else f"t{turn_index}"
-        message_id = f"{session_id}_secretary_brief_{suffix}"
+        message_id = f"{session_id}_secretary_brief_r{round_index}"
 
         brief_content = ""
         final_chunk: LLMStreamChunk | None = None
@@ -818,7 +800,7 @@ class LiveBoardConversation:
                     "message_id": message_id,
                     "member_id": secretary.id,
                     "member_title": secretary.title,
-                    "turn_index": turn_index,
+                    "round_index": round_index,
                     "delta": chunk.delta,
                     "content": brief_content,
                     "simulated_stream": chunk.simulated_stream,
@@ -829,7 +811,7 @@ class LiveBoardConversation:
                 "event": "secretary_failed",
                 "session_id": session_id,
                 "member_id": secretary.id,
-                "turn_index": turn_index,
+                "round_index": round_index,
                 "error": str(exc),
             })
             return
@@ -844,25 +826,21 @@ class LiveBoardConversation:
             "message_id": message_id,
             "member_id": secretary.id,
             "member_title": secretary.title,
-            "turn_index": turn_index,
+            "round_index": round_index,
             "content": brief_content,
             "model": final_model,
             "elapsed": elapsed,
             "finish_reason": finish_reason,
-            "is_final": is_final,
-            "brief_mode": brief_mode,
         })
 
-        # Persist only the final brief on the session; interim ones are live-only
-        if is_final:
-            from .orchestrator import MemberResponse
-            session.secretary_brief = MemberResponse(
-                member_id=secretary.id,
-                stage=4,
-                content=brief_content,
-                model=final_model,
-                elapsed_seconds=elapsed,
-            )
+        from .orchestrator import MemberResponse
+        session.secretary_briefs.append(MemberResponse(
+            member_id=secretary.id,
+            stage=4,
+            content=brief_content,
+            model=final_model,
+            elapsed_seconds=elapsed,
+        ))
         self.metrics.record(CallMetrics(
             member_id=secretary.id,
             stage=4,
