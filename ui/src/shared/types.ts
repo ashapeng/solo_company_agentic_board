@@ -323,10 +323,6 @@ export type StreamEvent = {
   session?: BoardSession;
   error?: string;
   message?: string;
-  /** @deprecated use round_index instead */
-  is_final?: boolean;
-  /** @deprecated use round_index instead */
-  brief_mode?: string;
   continuation_count?: number;
   max_continuations?: number;
 };

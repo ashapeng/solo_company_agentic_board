@@ -7,6 +7,7 @@ import {
   PortfolioPage,
   loadMembers,
   streamDeliberation,
+  streamContinuation,
   type BoardMember,
   type BoardSession,
   type Classification,
@@ -57,6 +58,50 @@ function upsertConversationMessage(
   return messages.map((message, currentIndex) => (
     currentIndex === index ? { ...message, ...patch } : message
   ));
+}
+
+const maxContinuations = Number(import.meta.env.VITE_MAX_CONTINUATIONS ?? 2);
+
+type FollowupBarProps = {
+  continuationCount: number;
+  maxContinuations: number;
+  onSendFollowup: (text: string) => void;
+  onAdjourn: (decisionText: string) => void;
+};
+
+function FollowupBar({ continuationCount, maxContinuations: cap, onSendFollowup, onAdjourn }: FollowupBarProps) {
+  const [text, setText] = useState('');
+  const atCap = continuationCount >= cap;
+  return (
+    <div className="flex flex-col gap-3 border-t border-outline p-3 bg-surface">
+      <textarea
+        value={text}
+        placeholder={atCap
+          ? `Continuation cap reached (${continuationCount}/${cap}). Adjourn to finalize.`
+          : 'Send a follow-up to the board…'}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        className="w-full rounded border border-outline-variant bg-surface-container-low px-3 py-2 text-sm font-body text-on-surface placeholder-on-surface-variant/60 focus:outline-none focus:ring-2 focus:ring-secondary"
+      />
+      <div className="flex gap-2 justify-end">
+        <button
+          type="button"
+          disabled={atCap || !text.trim()}
+          onClick={() => { onSendFollowup(text.trim()); setText(''); }}
+          className="rounded bg-secondary px-4 py-2 text-sm font-medium text-on-secondary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-container transition-colors"
+        >
+          Send follow-up
+        </button>
+        <button
+          type="button"
+          onClick={() => { onAdjourn(text.trim()); setText(''); }}
+          className="rounded border border-outline-variant px-4 py-2 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors"
+        >
+          Adjourn
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -422,8 +467,7 @@ export default function App() {
     // ── Secretary Executive Brief (live discussion post-summary) ──────
     if (data.event === 'secretary_starting' && data.member_id) {
       const briefId = data.message_id || `secretary-brief-${data.session_id || Date.now()}`;
-      const isFinal = !!data.is_final;
-      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      const roundIndex = data.round_index ?? 0;
       setActiveStreamMessageId(briefId);
       setConversationMessages((current) => [
         ...current,
@@ -434,20 +478,19 @@ export default function App() {
           member_title: data.member_title || 'Board Secretary',
           speaker: 'agent',
           content: '',
-          role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+          role: 'Secretary',
           created_at: new Date().toISOString(),
         },
       ]);
       setSeatStates((states) => ({
         ...states,
-        [data.member_id!]: { status: 'active', label: isFinal ? 'finalizing brief…' : 'summarizing…' },
+        [data.member_id!]: { status: 'active', label: 'summarizing...' },
       }));
-      pushLiveFeed({ kind: 'speaking', memberId: data.member_id, text: `Secretary preparing ${briefMode.toLowerCase()} executive brief\u2026` });
+      pushLiveFeed({ kind: 'speaking', memberId: data.member_id, text: `Secretary preparing brief for round ${roundIndex}...` });
       return;
     }
 
     if (data.event === 'secretary_delta' && data.message_id) {
-      const isFinal = !!data.is_final;
       setConversationMessages((current) => upsertConversationMessage(current, {
         id: data.message_id!,
         turn_index: -1,
@@ -455,15 +498,14 @@ export default function App() {
         member_title: data.member_title,
         speaker: 'agent',
         content: data.content || '',
-        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        role: 'Secretary',
         simulated_stream: data.simulated_stream,
       }));
       return;
     }
 
     if (data.event === 'secretary_done' && data.message_id) {
-      const isFinal = !!data.is_final;
-      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      const roundIndex = data.round_index ?? 0;
       setConversationMessages((current) => upsertConversationMessage(current, {
         id: data.message_id!,
         turn_index: -1,
@@ -473,7 +515,7 @@ export default function App() {
         content: data.content || '',
         model: data.model,
         elapsed_seconds: data.elapsed,
-        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        role: 'Secretary',
         simulated_stream: false,
       }));
       setActiveStreamMessageId((current) =>
@@ -482,13 +524,13 @@ export default function App() {
       if (data.member_id) {
         setSeatStates((states) => ({
           ...states,
-          [data.member_id!]: { status: 'done', label: `${briefMode} brief ready`, model: data.model },
+          [data.member_id!]: { status: 'done', label: 'brief ready', model: data.model },
         }));
       }
       pushLiveFeed({
         kind: 'done',
         memberId: data.member_id,
-        text: `${data.member_title || 'Secretary'} completed executive brief`,
+        text: `${data.member_title || 'Secretary'} completed brief for round ${roundIndex}`,
       });
       return;
     }
@@ -496,6 +538,15 @@ export default function App() {
     if (data.event === 'secretary_failed') {
       setActiveStreamMessageId(null);
       pushLiveFeed({ kind: 'failed', text: `Secretary brief failed: ${data.error || 'unknown error'}` });
+      return;
+    }
+
+    if (data.event === 'meeting_capped') {
+      pushLiveFeed({
+        kind: 'failed',
+        text: `Continuation cap reached (${data.continuation_count}/${data.max_continuations}). Adjourn to finalize.`,
+      });
+      setTableStatus({ label: 'CEO decision', title: 'Cap reached — adjourn', detail: '' });
       return;
     }
 
@@ -699,6 +750,34 @@ export default function App() {
     }
   }
 
+  async function sendFollowup(text: string) {
+    const sessionId = session?.session_id;
+    if (!sessionId) return;
+    setActiveStreamMessageId(null);
+    try {
+      await streamContinuation(sessionId, text, { onEvent: handleStreamEvent });
+      loadMetricsSummary().then(setMetricsSummary).catch(() => undefined);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Follow-up failed.';
+      pushLiveFeed({ kind: 'failed', text: `Follow-up rejected: ${message}` });
+    }
+  }
+
+  async function adjournMeeting(decisionText: string) {
+    const sessionId = session?.session_id;
+    if (!sessionId) return;
+    const resp = await fetch(`/sessions/${encodeURIComponent(sessionId)}/adjourn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ceo_decision: decisionText || undefined }),
+    });
+    if (resp.ok) {
+      setTableStatus({ label: 'Adjourned', title: 'Meeting closed', detail: 'The board meeting has been adjourned.' });
+    } else {
+      pushLiveFeed({ kind: 'failed', text: `Adjourn rejected (${resp.status})` });
+    }
+  }
+
   function mergeDelegatedTask(task: DelegatedTask) {
     setSession((current) => {
       if (!current?.delegation_plan) return current;
@@ -817,6 +896,17 @@ export default function App() {
             )}
           </motion.div>
         </AnimatePresence>
+
+        {tableStatus.label === 'CEO decision' && session?.session_id && (
+          <div className="px-8 pb-6">
+            <FollowupBar
+              continuationCount={session.continuation_count ?? 0}
+              maxContinuations={maxContinuations}
+              onSendFollowup={sendFollowup}
+              onAdjourn={adjournMeeting}
+            />
+          </div>
+        )}
 
         <footer className="px-8 py-3 text-[10px] text-on-surface-variant/50">
           The Executive Atelier &copy; 2026. Authority and Craftsmanship.
