@@ -425,19 +425,6 @@ class LiveBoardConversation:
             messages.append(message)
             session.conversation["messages"].append(message.to_dict())
 
-            # ── Per-turn Secretary Brief ──────────────────────────────
-            # After each council member finishes speaking, the Secretary
-            # produces an incremental executive brief so the CEO can follow
-            # the discussion in real time without reading raw transcripts.
-            await self._produce_live_secretary_brief(
-                session=session,
-                user_query=user_query,
-                messages=messages,
-                response_language=response_language,
-                session_id=session_id,
-                round_index=session.continuation_count,
-            )
-
             used_member_ids.add(member.id)
             decision = route_next_speaker(
                 self.council,
