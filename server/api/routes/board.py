@@ -24,6 +24,8 @@ from server.harness.ledger import LedgerError, record_feedback, record_routing_s
 
 from .. import state
 from ..schemas import (
+    AdjournRequest,
+    ContinueRequest,
     FeedbackRequest,
     MemberInfo,
     QueryRequest,
@@ -318,6 +320,110 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                 # Silently exit — this is expected shutdown behaviour.
                 return
             raise
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id:path}/continue")
+async def continue_meeting(
+    session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
+    req: ContinueRequest = ...,  # type: ignore[assignment]
+    request: Request = ...,  # type: ignore[assignment]
+):
+    """Resume a meeting waiting on the CEO with a follow-up message."""
+    _enforce_deliberate_rate_limit(request)
+    _validate_session_id(session_id)
+
+    if not req.user_input or not req.user_input.strip():
+        raise HTTPException(400, detail="user_input must be non-empty")
+
+    session_path = None
+    for dirname in ("data/sessions", "data/conversations"):
+        candidate = FilePath(f"{dirname}/{session_id}.json")
+        if candidate.exists():
+            session_path = candidate
+            break
+    if session_path is None:
+        raise HTTPException(404, detail="Session not found")
+
+    data = json.loads(session_path.read_text())
+    if data.get("status") != "awaiting_chair_decision":
+        raise HTTPException(
+            409,
+            detail=f"Session is in status '{data.get('status')}'; cannot continue.",
+        )
+
+    # Re-hydrate BoardSession from persisted JSON.
+    from server.board.deliberation.orchestrator import BoardSession, MemberResponse
+
+    def _resp_from_dict(d: dict | None) -> MemberResponse | None:
+        if not d:
+            return None
+        return MemberResponse(
+            member_id=d["member_id"], stage=d["stage"], content=d["content"],
+            model=d["model"], elapsed_seconds=d["elapsed_seconds"],
+        )
+
+    session = BoardSession(session_id=data["session_id"], user_query=data["user_query"])
+    session.continuation_count = int(data.get("continuation_count", 0))
+    session.secretary_briefs = [
+        _resp_from_dict(b) for b in (data.get("secretary_briefs") or []) if b is not None
+    ]
+    session.conversation = data.get("conversation") or {"messages": [], "routing_trace": []}
+    session.status = data.get("status", "awaiting_chair_decision")
+    # (Other fields like stage1/stage2/stage3 are not required for live continuation.)
+
+    # Cap check happens both here (for HTTP semantics) and inside discuss() (for direct callers).
+    max_continuations = _positive_int_env("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS", 2)
+    if session.continuation_count >= max_continuations:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "event": "meeting_capped",
+                "session_id": session_id,
+                "continuation_count": session.continuation_count,
+                "max_continuations": max_continuations,
+                "message": "Continuation cap reached. Adjourn to finalize.",
+            },
+        )
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    def on_event(event: dict) -> None:
+        queue.put_nowait(event)
+
+    async def event_generator():
+        conversation = LiveBoardConversation(on_event=on_event)
+        task = asyncio.create_task(
+            conversation.discuss(
+                req.user_input,
+                existing_session=session,
+            )
+        )
+
+        try:
+            while True:
+                if task.done():
+                    while not queue.empty():
+                        event = queue.get_nowait()
+                        yield f"data: {json.dumps(event)}\n\n"
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+
+            try:
+                resumed = task.result()
+                # Persist the updated session so a subsequent /continue or /adjourn sees it.
+                resumed.save()
+                yield f"data: {json.dumps({'event': 'complete', 'session': resumed.to_dict()})}\n\n"
+            except Exception as e:
+                payload = _public_error_payload(e, default_code="unexpected_error")
+                yield f"data: {json.dumps({'event': 'error', **payload})}\n\n"
+        except asyncio.CancelledError:
+            return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
