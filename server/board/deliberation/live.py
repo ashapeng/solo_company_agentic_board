@@ -783,17 +783,25 @@ class LiveBoardConversation:
         })
 
         started = time.monotonic()
-        # Force the chairman model. Secretary must produce visible bullet output;
-        # reasoning models in the council pool can burn the entire token budget
-        # on internal thinking and emit zero content.
-        model = self.chairman_model
+        # Pin the secretary to a non-reasoning model. Both kimi/k2.6 (chair) and
+        # deepseek-v4-pro (council) combine reasoning + output into one
+        # max_tokens budget; on the secretary's prompt they burn the entire
+        # budget on internal thinking and emit zero visible content
+        # (finish_reason=length, output_tokens=0). qwen3.6-max-preview is
+        # non-thinking by default and produces structured bullet output
+        # reliably (~77s, finish_reason=stop in production runs).
+        # Override via AGENTIC_BOARD_LIVE_SECRETARY_MODEL if a future config
+        # needs a different choice.
+        model = os.getenv("AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview")
         max_tokens = _resolve_live_turn_max_tokens(
             query_type=None,
             complexity=None,
         )
-        # Reserve room for both reasoning tokens (some models think internally)
-        # and the bullet output. 4500 covers worst-case reasoning + ≤80-line brief.
-        max_tokens = max(max_tokens, 4500)
+        # Belt-and-suspenders: 6000 covers a worst-case ~80-line bullet brief
+        # plus headroom for any provider that silently leaks reasoning tokens
+        # into the output budget. The brief itself is ~960 tokens of bullets;
+        # remaining ~5000 tokens absorb any reasoning the model insists on.
+        max_tokens = max(max_tokens, 6000)
 
         # Use a MINIMAL system prompt for the live brief. The full secretary.md
         # member prompt (~130 lines) combined with a long transcript triggers
