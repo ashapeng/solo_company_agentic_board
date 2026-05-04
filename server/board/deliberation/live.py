@@ -783,13 +783,17 @@ class LiveBoardConversation:
         })
 
         started = time.monotonic()
-        model = self.model_assignments.get(secretary.id, self.chairman_model)
+        # Force the chairman model. Secretary must produce visible bullet output;
+        # reasoning models in the council pool can burn the entire token budget
+        # on internal thinking and emit zero content.
+        model = self.chairman_model
         max_tokens = _resolve_live_turn_max_tokens(
             query_type=None,
             complexity=None,
         )
-        # Four-section bullet brief (≤80 lines × ~12 tokens/line) fits in 1500.
-        max_tokens = max(max_tokens, 1500)
+        # Reserve room for both reasoning tokens (some models think internally)
+        # and the bullet output. 4500 covers worst-case reasoning + ≤80-line brief.
+        max_tokens = max(max_tokens, 4500)
 
         system = _live_system_prompt(
             secretary,

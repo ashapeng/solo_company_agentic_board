@@ -151,6 +151,8 @@ export function GovernancePage({
   activePhase = null,
   conversationMessages = [],
   activeStreamMessageId = null,
+  awaitingFollowup = false,
+  capReached = false,
 }: {
   members: BoardMember[];
   activeCouncilMembers: BoardMember[];
@@ -179,6 +181,8 @@ export function GovernancePage({
   activePhase?: string | null;
   conversationMessages?: ConversationMessage[];
   activeStreamMessageId?: string | null;
+  awaitingFollowup?: boolean;
+  capReached?: boolean;
 }) {
   const displayCouncil = activeCouncilMembers.length ? activeCouncilMembers : members;
   const stagePhases = STAGE_PIPS.map((pip) => (
@@ -359,6 +363,8 @@ export function GovernancePage({
               routingLabel={routingLabel}
               session={session}
               verified={verified}
+              awaitingFollowup={awaitingFollowup}
+              capReached={capReached}
             />
 
             <div className="flex shrink-0 flex-col items-center gap-3">
@@ -1183,6 +1189,8 @@ function CeoComposer({
   routingLabel,
   session,
   verified,
+  awaitingFollowup = false,
+  capReached = false,
 }: {
   query: string;
   setQuery: (value: string) => void;
@@ -1196,11 +1204,20 @@ function CeoComposer({
   routingLabel: string;
   session: BoardSession | null;
   verified: boolean;
+  awaitingFollowup?: boolean;
+  capReached?: boolean;
 }) {
-  const isDisabled = running || !query.trim();
+  const inputDisabled = capReached || running;
+  const isDisabled = inputDisabled || !query.trim();
   const activeQuery = session?.user_query || query || '';
   const hasQuery = Boolean(activeQuery.trim());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const placeholder = awaitingFollowup
+    ? 'Follow up with the board… (Enter to send, Shift+Enter for new line)'
+    : capReached
+      ? 'Continuation cap reached. Start a new meeting to ask more.'
+      : 'What should the board decide? (Enter to send, Shift+Enter for a new line)';
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1236,8 +1253,9 @@ function CeoComposer({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          placeholder="What should the board decide? (Enter to send, Shift+Enter for a new line)"
-          className="min-h-14 max-h-56 w-full resize-none rounded-lg bg-surface-container-highest py-4 pl-4 pr-14 font-body leading-relaxed text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-0 focus:border-b-2 focus:border-b-secondary-container"
+          disabled={inputDisabled}
+          placeholder={placeholder}
+          className="min-h-14 max-h-56 w-full resize-none rounded-lg bg-surface-container-highest py-4 pl-4 pr-14 font-body leading-relaxed text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-0 focus:border-b-2 focus:border-b-secondary-container disabled:opacity-50 disabled:cursor-not-allowed"
           rows={1}
         />
         <button
@@ -1246,7 +1264,8 @@ function CeoComposer({
           className={`absolute bottom-2 right-2 grid h-10 w-10 place-items-center rounded-full text-on-primary transition ${
             isDisabled ? 'bg-surface-container-high opacity-40 cursor-not-allowed' : 'metallic-gradient'
           }`}
-          aria-label="Send question"
+          aria-label={capReached ? 'Cap reached' : awaitingFollowup ? 'Send follow-up' : 'Send question'}
+          title={capReached ? 'Cap reached' : awaitingFollowup ? 'Send follow-up' : 'Send question'}
         >
           <Send className="h-4 w-4" />
         </button>
@@ -1262,6 +1281,16 @@ function CeoComposer({
             <>
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
               <span>Deliberating…</span>
+            </>
+          ) : capReached ? (
+            <>
+              <Sparkles className="h-3 w-3 text-on-surface-variant/40" aria-hidden="true" />
+              <span>Cap reached</span>
+            </>
+          ) : awaitingFollowup ? (
+            <>
+              <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
+              <span>Send follow-up</span>
             </>
           ) : (
             <>

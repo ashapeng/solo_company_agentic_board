@@ -62,48 +62,6 @@ function upsertConversationMessage(
 
 const maxContinuations = Number(import.meta.env.VITE_MAX_CONTINUATIONS ?? 2);
 
-type FollowupBarProps = {
-  continuationCount: number;
-  maxContinuations: number;
-  onSendFollowup: (text: string) => void;
-  onAdjourn: (decisionText: string) => void;
-};
-
-function FollowupBar({ continuationCount, maxContinuations: cap, onSendFollowup, onAdjourn }: FollowupBarProps) {
-  const [text, setText] = useState('');
-  const atCap = continuationCount >= cap;
-  return (
-    <div className="flex flex-col gap-3 border-t border-outline p-3 bg-surface">
-      <textarea
-        value={text}
-        placeholder={atCap
-          ? `Continuation cap reached (${continuationCount}/${cap}). Adjourn to finalize.`
-          : 'Send a follow-up to the board…'}
-        onChange={(e) => setText(e.target.value)}
-        rows={3}
-        className="w-full rounded border border-outline-variant bg-surface-container-low px-3 py-2 text-sm font-body text-on-surface placeholder-on-surface-variant/60 focus:outline-none focus:ring-2 focus:ring-secondary"
-      />
-      <div className="flex gap-2 justify-end">
-        <button
-          type="button"
-          disabled={atCap || !text.trim()}
-          onClick={() => { onSendFollowup(text.trim()); setText(''); }}
-          className="rounded bg-secondary px-4 py-2 text-sm font-medium text-on-secondary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary-container transition-colors"
-        >
-          Send follow-up
-        </button>
-        <button
-          type="button"
-          onClick={() => { onAdjourn(text.trim()); setText(''); }}
-          className="rounded border border-outline-variant px-4 py-2 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors"
-        >
-          Adjourn
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
   const [members, setMembers] = useState<BoardMember[]>([]);
@@ -249,6 +207,28 @@ export default function App() {
     event.preventDefault();
     const cleanQuery = query.trim();
     if (!cleanQuery || running) return;
+
+    // If a meeting is already at the CEO-decision checkpoint and we have headroom,
+    // route this submit as a follow-up instead of starting a new meeting.
+    if (
+      session?.session_id &&
+      tableStatus.label === 'CEO decision' &&
+      (session.continuation_count ?? 0) < maxContinuations
+    ) {
+      setRunning(true);
+      setError('');
+      setQuery('');
+      try {
+        await sendFollowup(cleanQuery);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Follow-up failed.';
+        setError(message);
+        setTableStatus({ label: 'Error', title: 'Follow-up stopped', detail: message });
+      } finally {
+        setRunning(false);
+      }
+      return;
+    }
 
     setRunning(true);
     setError('');
@@ -544,9 +524,9 @@ export default function App() {
     if (data.event === 'meeting_capped') {
       pushLiveFeed({
         kind: 'failed',
-        text: `Continuation cap reached (${data.continuation_count}/${data.max_continuations}). Adjourn to finalize.`,
+        text: `Continuation cap reached (${data.continuation_count}/${data.max_continuations}). Start a new meeting to continue.`,
       });
-      setTableStatus({ label: 'CEO decision', title: 'Cap reached — adjourn', detail: '' });
+      setTableStatus({ label: 'CEO decision', title: 'Cap reached — start new meeting to continue', detail: '' });
       return;
     }
 
@@ -763,21 +743,6 @@ export default function App() {
     }
   }
 
-  async function adjournMeeting(decisionText: string) {
-    const sessionId = session?.session_id;
-    if (!sessionId) return;
-    const resp = await fetch(`/sessions/${encodeURIComponent(sessionId)}/adjourn`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ceo_decision: decisionText || undefined }),
-    });
-    if (resp.ok) {
-      setTableStatus({ label: 'Adjourned', title: 'Meeting closed', detail: 'The board meeting has been adjourned.' });
-    } else {
-      pushLiveFeed({ kind: 'failed', text: `Adjourn rejected (${resp.status})` });
-    }
-  }
-
   function mergeDelegatedTask(task: DelegatedTask) {
     setSession((current) => {
       if (!current?.delegation_plan) return current;
@@ -886,6 +851,14 @@ export default function App() {
                 activePhase={activePhase}
                 conversationMessages={conversationMessages}
                 activeStreamMessageId={activeStreamMessageId}
+                awaitingFollowup={
+                  tableStatus.label === 'CEO decision' &&
+                  (session?.continuation_count ?? 0) < maxContinuations
+                }
+                capReached={
+                  tableStatus.label === 'CEO decision' &&
+                  (session?.continuation_count ?? 0) >= maxContinuations
+                }
               />
             )}
             {activeTab === 'performance' && (
@@ -896,17 +869,6 @@ export default function App() {
             )}
           </motion.div>
         </AnimatePresence>
-
-        {tableStatus.label === 'CEO decision' && session?.session_id && (
-          <div className="px-8 pb-6">
-            <FollowupBar
-              continuationCount={session.continuation_count ?? 0}
-              maxContinuations={maxContinuations}
-              onSendFollowup={sendFollowup}
-              onAdjourn={adjournMeeting}
-            />
-          </div>
-        )}
 
         <footer className="px-8 py-3 text-[10px] text-on-surface-variant/50">
           The Executive Atelier &copy; 2026. Authority and Craftsmanship.
