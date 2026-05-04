@@ -197,6 +197,66 @@ export type SecretaryBrief = {
   elapsed_seconds?: number | null;
 };
 
+// --- Secretary live-event types (discriminated by `event`) ---
+
+export type SecretaryStartingEvent = {
+  event: 'secretary_starting';
+  session_id: string;
+  member_id: string;
+  member_title: string;
+  round_index: number;
+};
+
+export type SecretaryDeltaEvent = {
+  event: 'secretary_delta';
+  session_id: string;
+  message_id: string;
+  member_id: string;
+  member_title: string;
+  round_index: number;
+  delta: string;
+  content: string;
+  simulated_stream?: boolean;
+};
+
+export type SecretaryDoneEvent = {
+  event: 'secretary_done';
+  session_id: string;
+  message_id: string;
+  member_id: string;
+  member_title: string;
+  round_index: number;
+  content: string;
+  model: string;
+  elapsed: number;
+  finish_reason?: string;
+};
+
+export type SecretaryFailedEvent = {
+  event: 'secretary_failed';
+  session_id: string;
+  member_id: string;
+  round_index: number;
+  error: string;
+};
+
+export type MeetingCappedEvent = {
+  event: 'meeting_capped';
+  session_id: string;
+  continuation_count: number;
+  max_continuations: number;
+  message: string;
+};
+
+export type SecretaryLiveEvent =
+  | SecretaryStartingEvent
+  | SecretaryDeltaEvent
+  | SecretaryDoneEvent
+  | SecretaryFailedEvent
+  | MeetingCappedEvent;
+
+// --- End secretary live-event types ---
+
 export type BoardSession = {
   session_id?: string;
   user_query?: string;
@@ -229,6 +289,8 @@ export type BoardSession = {
   stage3_synthesis?: { content?: string };
   participation?: ParticipationDecision[];
   secretary_brief?: SecretaryBrief | null;
+  continuation_count?: number;
+  secretary_briefs?: SecretaryBrief[];
 };
 
 export type StreamEvent = {
@@ -246,6 +308,7 @@ export type StreamEvent = {
   phase?: string;
   message_id?: string;
   turn_index?: number;
+  round_index?: number;
   reply_to_message_id?: string | null;
   delta?: string;
   content?: string;
@@ -260,6 +323,12 @@ export type StreamEvent = {
   session?: BoardSession;
   error?: string;
   message?: string;
+  /** @deprecated use round_index instead */
+  is_final?: boolean;
+  /** @deprecated use round_index instead */
+  brief_mode?: string;
+  continuation_count?: number;
+  max_continuations?: number;
 };
 
 export type LiveFeedItem = {
