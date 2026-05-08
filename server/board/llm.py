@@ -306,7 +306,7 @@ async def _send_zai(
 
 async def _send_deepseek(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None,
     temperature: float,
@@ -314,6 +314,8 @@ async def _send_deepseek(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Send a request to DeepSeek via the OpenAI-compatible endpoint."""
     try:
@@ -346,6 +348,10 @@ async def _send_deepseek(
                 )
             kwargs["reasoning_effort"] = effort
 
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         t0 = time.monotonic()
@@ -362,6 +368,7 @@ async def _send_deepseek(
                 latency_seconds=latency,
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
+                tool_calls=_openai_shape_tool_calls(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
@@ -816,6 +823,10 @@ async def _send_openrouter(
 #                       timeout, max_retries, backoff_seconds) -> LLMResponse
 # ---------------------------------------------------------------------------
 
+# Providers whose handlers accept the `tools=` / `tool_choice=` kwargs.
+# Phase 1: Kimi + DeepSeek. Other providers will be wired in Phase 2.
+TOOL_SUPPORTING_PREFIXES: set[str] = {"kimi", "moonshot", "deepseek"}
+
 HandlerType = Callable[..., Awaitable[LLMResponse]]
 _PROVIDERS: dict[str, HandlerType] = {
     "glm": _send_zai,
@@ -903,7 +914,7 @@ async def _dispatch_to_handler(
         max_retries=max_retries,
         backoff_seconds=backoff_seconds,
     )
-    if tools is not None:
+    if tools is not None and prefix in TOOL_SUPPORTING_PREFIXES:
         handler_kwargs["tools"] = tools
         handler_kwargs["tool_choice"] = tool_choice
     return await handler(model, messages, **handler_kwargs)

@@ -112,3 +112,54 @@ async def test_kimi_no_tools_does_not_pass_kwarg(monkeypatch):
         await llm.query_llm("kimi/kimi-k2.6", [{"role": "user", "content": "hi"}])
     assert "tools" not in _FakeOpenAIWithTools.last_create
     assert "tool_choice" not in _FakeOpenAIWithTools.last_create
+
+
+async def test_deepseek_passes_tools_and_parses_tool_calls(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    _FakeOpenAIWithTools.last_create = None
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAIWithTools)
+    tools_schema = [{
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search",
+            "parameters": {"type": "object",
+                            "properties": {"query": {"type": "string"}}},
+        },
+    }]
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        resp = await llm.query_llm(
+            "deepseek/deepseek-chat",
+            [{"role": "user", "content": "find X"}],
+            tools=tools_schema,
+        )
+    assert _FakeOpenAIWithTools.last_create["tools"] == tools_schema
+    assert len(resp.tool_calls) == 1
+    assert resp.tool_calls[0].name == "web_search"
+
+
+async def test_dispatch_does_not_pass_tools_to_unsupported_handler(monkeypatch):
+    """Fallback to non-tool-supporting providers must not crash."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")  # ensure deepseek primary fails
+
+    # We dispatch directly to gemini with tools=[...] to confirm the
+    # whitelist prevents tools from reaching gemini.
+    captured: dict = {}
+    async def fake_gemini(*args, **kwargs):
+        captured.update(kwargs)
+        return llm.LLMResponse(
+            content="ok", model="gemini/gemini-2.5-flash",
+            input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        )
+    monkeypatch.setitem(llm._PROVIDERS, "gemini", fake_gemini)
+
+    await llm.query_llm(
+        "gemini/gemini-2.5-flash",
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "x",
+                "description": "", "parameters": {}}}],
+        fallback=False,
+    )
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
