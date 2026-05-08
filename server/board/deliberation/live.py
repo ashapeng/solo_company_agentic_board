@@ -1211,8 +1211,14 @@ async def run_live_research(
         transcript=transcript,
         round_index=0,
     )
+    # Pin to a non-reasoning model (same pattern as _produce_live_secretary_brief).
+    # kimi/kimi-k2.6 (chair) burns its entire token budget on internal reasoning
+    # and emits empty content; qwen3.6-max-preview is non-thinking by default.
+    secretary_model = os.getenv(
+        "AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview"
+    )
     brief_response = await query_llm(
-        get_chairman_model(),
+        secretary_model,
         [{"role": "user", "content": secretary_prompt}],
         system=secretary_system,
         max_tokens=2000,
@@ -1221,5 +1227,5 @@ async def run_live_research(
     return LiveResearchResult(
         routing=routing_with_phase1,
         member_responses=responses,
-        secretary_brief=brief_response.content,
+        secretary_brief=brief_response.content or "[Secretary brief unavailable]",
     )

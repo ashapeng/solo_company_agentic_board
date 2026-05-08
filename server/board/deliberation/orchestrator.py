@@ -177,7 +177,20 @@ async def agentic_member_turn(
                               result.summary, result.cost_units))
         return tc, result
 
+    _iter = 0
+    _MAX_ITERS = max(budget.tool_calls_max + 4, 12)
+
     while True:
+        _iter += 1
+        if _iter > _MAX_ITERS:
+            on_event(SimpleEvent("MemberAborted", member.id, "max_iters_exceeded"))
+            return MemberTurnResult(
+                content="[Aborted: tool-use loop exceeded max iterations]",
+                tool_calls_made=budget.tool_calls_used,
+                finish_reason="aborted",
+                aborted=True,
+                abort_reason="max_iters_exceeded",
+            )
         wall = time.monotonic() - t_start
         budget.wall_seconds_used = wall
         budget_tools = _budget_filtered_tools(tools, budget)

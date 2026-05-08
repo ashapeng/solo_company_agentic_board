@@ -7,8 +7,10 @@ schema conversion lives in llm.py.
 """
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 ToolHandler = Callable[..., Awaitable["ToolResult"]]
 
@@ -141,6 +143,29 @@ TOOLS["web_search"] = Tool(
 )
 
 
+# ────────────── SSRF guard ──────────────
+
+_SSRF_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _is_blocked_url(url: str) -> bool:
+    """Return True if the URL targets a loopback, private, or link-local host."""
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        return True
+    if host.lower() in _SSRF_BLOCKED_HOSTS:
+        return True
+    # Block private and link-local IP ranges
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return True
+    except ValueError:
+        pass  # not a literal IP — hostname; assume external
+    return False
+
+
 # ────────────── fetch_url ──────────────
 
 async def _handle_fetch_url(
@@ -153,7 +178,7 @@ async def _handle_fetch_url(
     """HTTP GET a URL; return its text (truncated to 12k chars)."""
     import httpx
 
-    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")) or _is_blocked_url(url):
         return ToolResult(
             content_for_model=f"fetch_url: invalid URL {url!r}",
             summary="fetch_url invalid URL",
@@ -318,6 +343,13 @@ async def _open_browser_via_playwright(
 ) -> ToolResult:
     """Drive local Chrome with the user's profile via Playwright.
     Falls back to Tavily-style search if Playwright isn't installed."""
+    if _is_blocked_url(url):
+        return ToolResult(
+            content_for_model=f"open_browser: blocked URL {url!r}",
+            summary="open_browser blocked URL",
+            cost_units=0.0,
+            error=f"invalid URL: {url!r}",
+        )
     try:
         from playwright.async_api import async_playwright
     except ImportError:
