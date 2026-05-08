@@ -118,3 +118,36 @@ async def test_fetch_url_handler_failure_returns_error():
         session=None, member_id=None,
     )
     assert result.error is not None
+
+
+async def test_ask_user_uses_session_callback():
+    captured: dict = {}
+
+    async def fake_ask(question: str, why: str) -> str:
+        captured["question"] = question
+        captured["why"] = why
+        return "user-answer"
+
+    class _FakeSession:
+        ask_user = staticmethod(fake_ask)
+
+    result = await tools.execute_tool(
+        name="ask_user_clarifying_question",
+        arguments={"question": "Which segment?",
+                   "why_it_matters": "TAM differs by segment"},
+        session=_FakeSession(),
+        member_id="strategist",
+    )
+    assert result.error is None
+    assert captured["question"] == "Which segment?"
+    assert "user-answer" in result.content_for_model
+
+
+async def test_ask_user_session_without_callback_returns_no_response():
+    class _SessionNoCallback: pass
+    result = await tools.execute_tool(
+        name="ask_user_clarifying_question",
+        arguments={"question": "Q?", "why_it_matters": "Y"},
+        session=_SessionNoCallback(), member_id="strategist",
+    )
+    assert "[NO_USER_RESPONSE]" in result.content_for_model
