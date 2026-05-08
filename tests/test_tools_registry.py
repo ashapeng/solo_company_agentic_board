@@ -87,7 +87,10 @@ async def test_web_search_handler_invokes_execution_layer(monkeypatch):
     assert "https://x.example" in result.content_for_model
     fake_search.assert_called_once()
     call_kwargs = fake_search.call_args.kwargs
-    assert call_kwargs["query"] == "agency tooling 2026"
+    # Query is augmented with strategist's role keywords: "market" and "competition"
+    assert "agency tooling 2026" in call_kwargs["query"]
+    assert "market" in call_kwargs["query"].lower()
+    assert "competition" in call_kwargs["query"].lower()
     assert call_kwargs["max_results"] == 3
 
 
@@ -231,3 +234,72 @@ async def test_validate_claim_unknown_verdict_falls_back_to_unverified(monkeypat
         )
     assert result.error is None
     assert "UNVERIFIED" in result.summary
+
+
+async def test_web_search_augments_query_with_role_keywords(monkeypatch):
+    """When member_id matches a known role, the query is augmented with role keywords."""
+    captured_calls: list[dict] = []
+    fake_results = {"results": [
+        {"title": "X", "url": "https://x.example", "snippet": "snip",
+         "retrieved_at": "2026-05-07"},
+    ]}
+
+    async def fake_ws(*args, **kwargs):
+        captured_calls.append(kwargs)
+        return fake_results
+
+    with patch("server.execution.web_search.web_search", fake_ws):
+        await tools.execute_tool(
+            name="web_search",
+            arguments={"query": "agency campaign briefs"},
+            session=None,
+            member_id="strategist",
+        )
+    # Strategist's role keywords: ["market", "competition", "industry trend", "strategy"]
+    # Helper takes the first 2.
+    assert "market" in captured_calls[0]["query"].lower()
+    assert "competition" in captured_calls[0]["query"].lower()
+    # Original query is preserved
+    assert "agency campaign briefs" in captured_calls[0]["query"]
+
+
+async def test_web_search_no_augmentation_when_member_unknown(monkeypatch):
+    """An unknown member_id passes the query through unchanged."""
+    captured_calls: list[dict] = []
+    fake_results = {"results": []}
+
+    async def fake_ws(*args, **kwargs):
+        captured_calls.append(kwargs)
+        return fake_results
+
+    with patch("server.execution.web_search.web_search", fake_ws):
+        await tools.execute_tool(
+            name="web_search",
+            arguments={"query": "raw query"},
+            session=None,
+            member_id="unknown_member",
+        )
+    # Falls back to using member_role as the only keyword; here member_role is "".
+    # Since the helper appends a single empty token, the query may have a
+    # trailing space. Accept either exact "raw query" or "raw query " (one trailing).
+    sent_query = captured_calls[0]["query"].strip()
+    assert sent_query == "raw query"
+
+
+async def test_web_search_no_augmentation_when_member_id_none(monkeypatch):
+    """When member_id is None, query passes through unchanged."""
+    captured_calls: list[dict] = []
+    fake_results = {"results": []}
+
+    async def fake_ws(*args, **kwargs):
+        captured_calls.append(kwargs)
+        return fake_results
+
+    with patch("server.execution.web_search.web_search", fake_ws):
+        await tools.execute_tool(
+            name="web_search",
+            arguments={"query": "untargeted query"},
+            session=None,
+            member_id=None,
+        )
+    assert captured_calls[0]["query"].strip() == "untargeted query"

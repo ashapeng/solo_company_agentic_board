@@ -89,12 +89,21 @@ async def _handle_web_search(
     member_id: str | None = None,
     **_unused: Any,
 ) -> ToolResult:
-    """Wraps server.execution.web_search.web_search()."""
-    from server.execution.web_search import web_search as _ws
+    """Wraps server.execution.web_search.web_search().
+    Auto-augments query with role-specific keywords when member_id is known."""
+    from server.execution.web_search import (
+        web_search as _ws,
+        _build_role_specific_query,
+    )
 
     session_id = getattr(session, "session_id", None) if session else None
+    effective_query = query
+    if member_id:
+        effective_query = _build_role_specific_query(
+            base_query=query, member_id=member_id, member_role=""
+        )
     raw = await _ws(
-        query=query,
+        query=effective_query,
         max_results=min(int(max_results or 5), 10),
         session_id=session_id,
     )
