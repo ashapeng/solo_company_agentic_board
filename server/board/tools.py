@@ -139,3 +139,47 @@ TOOLS["web_search"] = Tool(
     },
     handler=_handle_web_search,
 )
+
+
+# ────────────── fetch_url ──────────────
+
+async def _handle_fetch_url(
+    *,
+    url: str,
+    session: Any = None,
+    member_id: str | None = None,
+    **_unused: Any,
+) -> ToolResult:
+    """HTTP GET a URL; return its text (truncated to 12k chars)."""
+    import httpx
+
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        return ToolResult(
+            content_for_model=f"fetch_url: invalid URL {url!r}",
+            summary="fetch_url invalid URL",
+            cost_units=0.0,
+            error=f"invalid URL: {url!r}",
+        )
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True,
+                                  headers={"User-Agent": "AgenticBoard/1.0"}) as c:
+        resp = await c.get(url)
+        resp.raise_for_status()
+    text = resp.text[:12000]
+    return ToolResult(
+        content_for_model=f"fetch_url('{url}') →\n{text}",
+        summary=f"fetched {url} ({len(resp.text)} chars)",
+        cost_units=0.5,
+    )
+
+
+TOOLS["fetch_url"] = Tool(
+    name="fetch_url",
+    description="HTTP GET a URL and return its text. Faster than open_browser "
+                "but fails on JS-rendered or anti-bot-protected sites.",
+    parameters={
+        "type": "object",
+        "properties": {"url": {"type": "string"}},
+        "required": ["url"],
+    },
+    handler=_handle_fetch_url,
+)

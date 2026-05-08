@@ -89,3 +89,32 @@ async def test_web_search_handler_invokes_execution_layer(monkeypatch):
     call_kwargs = fake_search.call_args.kwargs
     assert call_kwargs["query"] == "agency tooling 2026"
     assert call_kwargs["max_results"] == 3
+
+
+async def test_fetch_url_handler_returns_text(monkeypatch):
+    class _FakeResp:
+        status_code = 200
+        text = "<html><body><h1>Hi</h1></body></html>"
+        def raise_for_status(self): pass
+
+    class _FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def get(self, url, **kw): return _FakeResp()
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda **kw: _FakeClient())
+    result = await tools.execute_tool(
+        name="fetch_url", arguments={"url": "https://example.test"},
+        session=None, member_id=None,
+    )
+    assert result.error is None
+    assert "Hi" in result.content_for_model or "<h1>Hi</h1>" in result.content_for_model
+    assert result.cost_units == 0.5
+
+
+async def test_fetch_url_handler_failure_returns_error():
+    result = await tools.execute_tool(
+        name="fetch_url", arguments={"url": "not-a-url"},
+        session=None, member_id=None,
+    )
+    assert result.error is not None
