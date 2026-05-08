@@ -46,6 +46,7 @@ from .shortcut import ShortcutType, detect_shortcut
 logger = logging.getLogger(__name__)
 
 _LEDGER_DB_PATH = None  # Use default; tests can patch this
+MAX_TOOL_RESULT_CHARS = 8000
 
 
 class BoardDeliberationError(Exception):
@@ -142,7 +143,7 @@ class SimpleEvent:
 
 async def agentic_member_turn(
     *,
-    member: "BoardMember",
+    member: BoardMember,
     model: str,
     system_prompt: str,
     initial_user_message: str,
@@ -164,6 +165,17 @@ async def agentic_member_turn(
         {"role": "user", "content": initial_user_message}
     ]
     t_start = time.monotonic()
+
+    # Define _exec outside the loop; it captures member, session, on_event via closure
+    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+        on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
+        result = await execute_tool(
+            name=tc.name, arguments=tc.arguments,
+            session=session, member_id=member.id,
+        )
+        on_event(SimpleEvent("ToolResult", member.id, tc.name,
+                              result.summary, result.cost_units))
+        return tc, result
 
     while True:
         wall = time.monotonic() - t_start
@@ -196,21 +208,11 @@ async def agentic_member_turn(
         messages.append(_tool_call_message(response.tool_calls))
 
         # Execute tool calls in parallel
-        async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
-            on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
-            result = await execute_tool(
-                name=tc.name, arguments=tc.arguments,
-                session=session, member_id=member.id,
-            )
-            on_event(SimpleEvent("ToolResult", member.id, tc.name,
-                                  result.summary, result.cost_units))
-            return tc, result
-
         results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
         for tc, result in results:
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
-                "content": result.content_for_model[:8000],
+                "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
             })
             budget.spend(tc.name, result.cost_units)
 
