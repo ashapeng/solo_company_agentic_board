@@ -254,3 +254,140 @@ def _resolve_chrome_user_data_dir() -> str:
         local = _os.getenv("LOCALAPPDATA") or str(home / "AppData" / "Local")
         return str(_Path(local) / "Google" / "Chrome" / "User Data")
     return str(home / ".config" / "google-chrome")
+
+
+# ────────────── open_browser ──────────────
+
+import asyncio as _asyncio
+
+_BROWSER_SEMAPHORE = _asyncio.Semaphore(1)
+_OPEN_BROWSER_MAX_CHARS = 12000
+
+
+async def _handle_open_browser(
+    *,
+    url: str,
+    wait_for: str | None = None,
+    extract: str = "markdown",
+    session: Any = None,
+    member_id: str | None = None,
+    **_unused: Any,
+) -> ToolResult:
+    """Open a URL in local Chrome via Playwright; return rendered text.
+    Mode controlled by AGENTIC_BOARD_BROWSER env: chrome (default) | tavily | disabled."""
+    mode = (_os.getenv("AGENTIC_BOARD_BROWSER") or "chrome").lower()
+    if mode == "disabled":
+        return ToolResult(
+            content_for_model="open_browser disabled (AGENTIC_BOARD_BROWSER=disabled)",
+            summary="browser disabled",
+            cost_units=0.0,
+            error="browser disabled",
+        )
+    if mode == "tavily":
+        return await _open_browser_via_tavily(url=url, member_id=member_id, session=session)
+    return await _open_browser_via_playwright(
+        url=url, wait_for=wait_for, extract=extract, member_id=member_id,
+    )
+
+
+async def _open_browser_via_tavily(
+    *, url: str, member_id: str | None, session: Any,
+) -> ToolResult:
+    """Fallback when Playwright is unavailable: search the URL and return top snippets."""
+    from server.execution.web_search import web_search as _ws
+    session_id = getattr(session, "session_id", None) if session else None
+    raw = await _ws(query=url, max_results=3, session_id=session_id)
+    results = raw.get("results", []) if isinstance(raw, dict) else []
+    if not results:
+        return ToolResult(
+            content_for_model=f"open_browser(fallback) for {url}: no content",
+            summary="no fallback content", cost_units=1.0,
+        )
+    lines = [f"open_browser fallback for {url} (Tavily snippets):"]
+    for r in results:
+        lines.append(f"- {r.get('title', '')}: {r.get('snippet', '')[:300]}")
+    return ToolResult(
+        content_for_model="\n".join(lines)[:_OPEN_BROWSER_MAX_CHARS],
+        summary=f"opened (fallback) {url}",
+        cost_units=1.5,
+    )
+
+
+async def _open_browser_via_playwright(
+    *, url: str, wait_for: str | None, extract: str, member_id: str | None,
+) -> ToolResult:
+    """Drive local Chrome with the user's profile via Playwright."""
+    from playwright.async_api import async_playwright
+    try:
+        from markdownify import markdownify as _md
+    except ImportError:
+        _md = None
+
+    user_data_dir = _resolve_chrome_user_data_dir()
+    headed = _os.getenv("AGENTIC_BOARD_BROWSER_HEADED", "1") != "0"
+    async with _BROWSER_SEMAPHORE:
+        async with async_playwright() as pw:
+            try:
+                ctx = await pw.chromium.launch_persistent_context(
+                    user_data_dir=user_data_dir,
+                    channel="chrome",
+                    headless=not headed,
+                )
+            except Exception as exc:
+                return ToolResult(
+                    content_for_model=(
+                        f"open_browser failed to launch Chrome: {exc}. "
+                        "Close any running Chrome with this profile, OR set "
+                        "AGENTIC_BOARD_BROWSER=tavily."),
+                    summary="chrome launch failed",
+                    cost_units=0.0,
+                    error=str(exc),
+                )
+            try:
+                page = await ctx.new_page()
+                await page.goto(url, timeout=30000)
+                await page.wait_for_load_state("networkidle", timeout=20000)
+                if wait_for:
+                    try:
+                        await page.wait_for_selector(wait_for, timeout=15000)
+                    except Exception:
+                        pass
+                html = await page.content()
+            finally:
+                await ctx.close()
+
+    if extract == "html":
+        body = html
+    elif extract == "text":
+        # naive strip — markdownify gives us cleaner output normally
+        import re
+        body = re.sub(r"<[^>]+>", "", html)
+    else:  # markdown
+        body = _md(html, heading_style="ATX") if _md else html
+    body = body[:_OPEN_BROWSER_MAX_CHARS]
+    return ToolResult(
+        content_for_model=f"open_browser('{url}') →\n{body}",
+        summary=f"opened {url}",
+        cost_units=3.0,
+    )
+
+
+TOOLS["open_browser"] = Tool(
+    name="open_browser",
+    description="Open a URL in a real Chrome browser session and extract the "
+                "rendered page text. Use for sites that block scrapers, JS-rendered "
+                "content, or pages needing your logged-in session. Slower (~5–15s). "
+                "Use sparingly.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string"},
+            "wait_for": {"type": "string",
+                          "description": "(optional) CSS selector to wait for"},
+            "extract": {"type": "string", "enum": ["text", "markdown", "html"],
+                         "default": "markdown"},
+        },
+        "required": ["url"],
+    },
+    handler=_handle_open_browser,
+)
