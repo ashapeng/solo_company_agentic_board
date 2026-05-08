@@ -163,3 +163,23 @@ async def test_dispatch_does_not_pass_tools_to_unsupported_handler(monkeypatch):
     )
     assert "tools" not in captured
     assert "tool_choice" not in captured
+
+
+async def test_tool_role_message_passes_through_to_openai_compatible(monkeypatch):
+    """role='tool' messages must pass through llm.py to the provider intact."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    _FakeOpenAIWithTools.last_create = None
+    fake_openai = SimpleNamespace(OpenAI=_FakeOpenAIWithTools)
+    msgs = [
+        {"role": "user", "content": "find X"},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": "tc_1", "type": "function",
+                          "function": {"name": "web_search",
+                                       "arguments": '{"q": "X"}'}}]},
+        {"role": "tool", "tool_call_id": "tc_1", "content": "results: 1, 2, 3"},
+    ]
+    with patch.dict("sys.modules", {"openai": fake_openai}):
+        await llm.query_llm("deepseek/deepseek-chat", msgs)
+    sent = _FakeOpenAIWithTools.last_create["messages"]
+    assert any(m.get("role") == "tool" and m.get("tool_call_id") == "tc_1" for m in sent)
+    assert any(m.get("role") == "assistant" and "tool_calls" in m for m in sent)
