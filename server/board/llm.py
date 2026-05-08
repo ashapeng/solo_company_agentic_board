@@ -46,6 +46,7 @@ class LLMResponse:
     finish_reason: str | None = None
     response_id: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    reasoning_content: str | None = None
 
 
 @dataclass
@@ -171,6 +172,16 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
         or -1
     )
     return int(input_tokens), int(output_tokens)
+
+
+def _openai_shape_reasoning_content(response: Any) -> str | None:
+    """Extract reasoning_content from a response (Kimi/DeepSeek thinking mode)."""
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return None
+    msg = _get_attr_or_item(choices[0], "message", {}) or {}
+    rc = _get_attr_or_item(msg, "reasoning_content", None)
+    return str(rc) if rc else None
 
 
 def _openai_shape_tool_calls(response: Any) -> list[ToolCall]:
@@ -369,6 +380,7 @@ async def _send_deepseek(
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
                 tool_calls=_openai_shape_tool_calls(response),
+                reasoning_content=_openai_shape_reasoning_content(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
@@ -446,6 +458,7 @@ async def _send_kimi(
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
                 tool_calls=_openai_shape_tool_calls(response),
+                reasoning_content=_openai_shape_reasoning_content(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):

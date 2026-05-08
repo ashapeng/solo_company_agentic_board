@@ -197,7 +197,7 @@ async def run_chair_intake(
         last_content = response.content or last_content
         if not response.tool_calls:
             break
-        messages.append({
+        asst_msg = {
             "role": "assistant", "content": response.content or "",
             "tool_calls": [
                 {"id": tc.id, "type": "function",
@@ -205,7 +205,10 @@ async def run_chair_intake(
                               "arguments": json.dumps(tc.arguments)}}
                 for tc in response.tool_calls
             ],
-        })
+        }
+        if response.reasoning_content:
+            asst_msg["reasoning_content"] = response.reasoning_content
+        messages.append(asst_msg)
         from ..tools import execute_tool as _exec  # local import — avoids load-order issues
         for tc in response.tool_calls:
             r = await _exec(name=tc.name, arguments=tc.arguments,

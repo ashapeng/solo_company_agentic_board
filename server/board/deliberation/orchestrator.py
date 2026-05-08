@@ -118,9 +118,9 @@ def _budget_filtered_tools(all_tools: list[Tool], budget: ToolBudget) -> list[di
     return [t.to_openai_schema() for t in all_tools if budget.can_call(t.name)]
 
 
-def _tool_call_message(tcs: list[ToolCall]) -> dict:
+def _tool_call_message(tcs: list[ToolCall], reasoning_content: str | None = None) -> dict:
     """Build the assistant message that records the tool_calls request."""
-    return {
+    msg = {
         "role": "assistant", "content": "",
         "tool_calls": [
             {"id": tc.id, "type": "function",
@@ -129,6 +129,9 @@ def _tool_call_message(tcs: list[ToolCall]) -> dict:
             for tc in tcs
         ],
     }
+    if reasoning_content:
+        msg["reasoning_content"] = reasoning_content
+    return msg
 
 
 class SimpleEvent:
@@ -218,7 +221,7 @@ async def agentic_member_turn(
             )
 
         # Append assistant tool-call message
-        messages.append(_tool_call_message(response.tool_calls))
+        messages.append(_tool_call_message(response.tool_calls, response.reasoning_content))
 
         # Execute tool calls in parallel
         results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
