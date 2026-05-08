@@ -53,6 +53,65 @@ class BoardDeliberationError(Exception):
 
 
 @dataclass
+class ToolBudget:
+    tool_calls_max: int
+    wall_seconds_max: int
+    per_call_timeout: float
+    open_browser_max: int
+    web_search_max: int
+    fetch_url_max: int
+    ask_user_max: int
+    tool_calls_used: int = 0
+    wall_seconds_used: float = 0.0
+    sub_used: dict[str, int] = field(default_factory=dict)
+
+    SUB_CAPS_BY_TOOL = {
+        "web_search": "web_search_max",
+        "open_browser": "open_browser_max",
+        "fetch_url": "fetch_url_max",
+        "ask_user_clarifying_question": "ask_user_max",
+    }
+
+    @classmethod
+    def for_mode(cls, mode: str, *, member_role: str = "member") -> "ToolBudget":
+        if mode == "fast":
+            return cls(0, 60, 240.0, 0, 0, 0, 1 if member_role == "chair" else 0)
+        if mode == "standard":
+            return cls(3, 180, 240.0, 1, 3, 2,
+                        2 if member_role == "chair" else 0)
+        if mode == "deep":
+            return cls(8, 480, 240.0, 3, 6, 4,
+                        3 if member_role == "chair" else 1)
+        raise ValueError(f"unknown mode {mode!r}; expected fast|standard|deep")
+
+    def can_call(self, name: str) -> bool:
+        if self.tool_calls_used >= self.tool_calls_max:
+            return False
+        cap_attr = self.SUB_CAPS_BY_TOOL.get(name)
+        if cap_attr is None:
+            return True
+        cap = getattr(self, cap_attr)
+        return self.sub_used.get(name, 0) < cap
+
+    def spend(self, name: str, cost_units: float) -> None:
+        self.tool_calls_used += 1
+        self.sub_used[name] = self.sub_used.get(name, 0) + 1
+
+    def exhausted(self) -> bool:
+        return self.tool_calls_used >= self.tool_calls_max
+
+
+@dataclass
+class MemberTurnResult:
+    content: str
+    tool_calls_made: int
+    finish_reason: str | None
+    aborted: bool = False
+    abort_reason: str | None = None
+    evidence_packets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class MemberResponse:
     member_id: str
     stage: int
