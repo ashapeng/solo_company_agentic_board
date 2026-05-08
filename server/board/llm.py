@@ -75,7 +75,7 @@ class LLMProviderError(Exception):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _full_messages(messages: list[dict[str, str]], system: str | None) -> list[dict[str, str]]:
+def _full_messages(messages: list[dict[str, Any]], system: str | None) -> list[dict[str, Any]]:
     """Build message list with optional system message prepended."""
     if system is None:
         return list(messages)
@@ -170,6 +170,31 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
         or -1
     )
     return int(input_tokens), int(output_tokens)
+
+
+def _openai_shape_tool_calls(response: Any) -> list[ToolCall]:
+    """Parse tool_calls out of an OpenAI-shape chat completion response."""
+    import json
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return []
+    msg = _get_attr_or_item(choices[0], "message", {}) or {}
+    raw_calls = _get_attr_or_item(msg, "tool_calls", None) or []
+    out: list[ToolCall] = []
+    for raw in raw_calls:
+        fn = _get_attr_or_item(raw, "function", {}) or {}
+        name = _get_attr_or_item(fn, "name", "") or ""
+        args_str = _get_attr_or_item(fn, "arguments", "") or ""
+        try:
+            args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
+        except json.JSONDecodeError:
+            args = {"_raw": args_str}
+        out.append(ToolCall(
+            id=str(_get_attr_or_item(raw, "id", "") or ""),
+            name=name,
+            arguments=args,
+        ))
+    return out
 
 
 def _gemini_text_part(genai_types: Any, text: str) -> Any:
@@ -362,6 +387,8 @@ async def _send_kimi(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Send a request to Moonshot/Kimi via the OpenAI-compatible endpoint."""
     try:
@@ -391,6 +418,10 @@ async def _send_kimi(
     if thinking is not None:
         kwargs["extra_body"] = {"thinking": {"type": "enabled" if thinking else "disabled"}}
 
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         t0 = time.monotonic()
@@ -407,6 +438,7 @@ async def _send_kimi(
                 latency_seconds=latency,
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
+                tool_calls=_openai_shape_tool_calls(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
@@ -853,6 +885,8 @@ async def _dispatch_to_handler(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Dispatch a single call to the registered handler. Raises if no handler."""
     handler = _PROVIDERS.get(prefix)
@@ -861,9 +895,7 @@ async def _dispatch_to_handler(
             f"unknown provider prefix: {prefix!r} for model {model!r}. "
             f"Known prefixes: {sorted(_PROVIDERS)}"
         )
-    return await handler(
-        model,
-        messages,
+    handler_kwargs = dict(
         system=system,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -871,6 +903,10 @@ async def _dispatch_to_handler(
         max_retries=max_retries,
         backoff_seconds=backoff_seconds,
     )
+    if tools is not None:
+        handler_kwargs["tools"] = tools
+        handler_kwargs["tool_choice"] = tool_choice
+    return await handler(model, messages, **handler_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -912,6 +948,7 @@ async def query_llm(
             timeout=timeout,
             max_retries=PRIMARY_MAX_RETRIES,
             backoff_seconds=PRIMARY_BACKOFF_SECONDS,
+            tools=tools, tool_choice=tool_choice,
         )
     except LLMProviderError as e:
         primary_exc = e
@@ -934,6 +971,7 @@ async def query_llm(
                 timeout=timeout,
                 max_retries=FALLBACK_MAX_RETRIES,
                 backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+                tools=tools, tool_choice=tool_choice,
             )
         except LLMProviderError as e:
             last_fallback_exc = e
@@ -951,6 +989,7 @@ async def query_llm(
                 timeout=timeout,
                 max_retries=FALLBACK_MAX_RETRIES,
                 backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+                tools=tools, tool_choice=tool_choice,
             )
         except LLMProviderError as e:
             last_fallback_exc = e
