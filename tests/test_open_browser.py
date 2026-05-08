@@ -105,3 +105,37 @@ async def test_open_browser_disabled_returns_error(monkeypatch):
     )
     assert result.error is not None
     assert "disabled" in result.error.lower()
+
+
+async def test_open_browser_fallback_when_playwright_missing(monkeypatch):
+    """If playwright import fails, transparently fall back to Tavily."""
+    monkeypatch.setenv("AGENTIC_BOARD_BROWSER", "chrome")
+    fake_results = {"results": [
+        {"title": "T", "url": "https://x.example", "snippet": "snip",
+         "retrieved_at": "2026-05-07"},
+    ]}
+    fake_search = AsyncMock(return_value=fake_results)
+
+    # Make playwright import fail by injecting a sentinel into sys.modules
+    # that raises ImportError when attribute access is attempted.
+    real_modules = dict(sys.modules)
+    # Remove cached playwright modules
+    for key in list(sys.modules.keys()):
+        if key == "playwright" or key.startswith("playwright."):
+            del sys.modules[key]
+    # Block re-import by setting to None (Python's standard "module not found" sentinel)
+    sys.modules["playwright"] = None
+    sys.modules["playwright.async_api"] = None
+
+    try:
+        with patch("server.execution.web_search.web_search", fake_search):
+            result = await tools.execute_tool(
+                name="open_browser", arguments={"url": "https://x.example"},
+                session=None, member_id="strategist",
+            )
+        assert result.error is None
+        assert "T" in result.content_for_model
+    finally:
+        # Restore sys.modules
+        sys.modules.clear()
+        sys.modules.update(real_modules)

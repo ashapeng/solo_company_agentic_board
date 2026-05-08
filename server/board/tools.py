@@ -316,8 +316,15 @@ async def _open_browser_via_tavily(
 async def _open_browser_via_playwright(
     *, url: str, wait_for: str | None, extract: str, member_id: str | None,
 ) -> ToolResult:
-    """Drive local Chrome with the user's profile via Playwright."""
-    from playwright.async_api import async_playwright
+    """Drive local Chrome with the user's profile via Playwright.
+    Falls back to Tavily-style search if Playwright isn't installed."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        # Fall back transparently
+        return await _open_browser_via_tavily(
+            url=url, member_id=member_id, session=None,
+        )
     try:
         from markdownify import markdownify as _md
     except ImportError:
