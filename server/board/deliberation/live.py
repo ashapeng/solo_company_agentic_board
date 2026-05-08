@@ -1200,17 +1200,20 @@ async def run_live_research(
         transcript_lines.append(f"**{title}**: {r.content}")
     transcript = "\n\n".join(transcript_lines)
 
-    secretary_system = format_live_secretary_brief(
+    secretary_system = (
+        "You are the Board Secretary producing concise executive briefs "
+        "for the CEO. Follow the user message instructions exactly. Output "
+        "only the requested section headers and bullets — no preamble, no "
+        "closing remarks, no reasoning trace."
+    )
+    secretary_prompt = format_live_secretary_brief(
         user_query=routing_with_phase1.interpreted_query,
         transcript=transcript,
         round_index=0,
     )
     brief_response = await query_llm(
         get_chairman_model(),
-        [{"role": "user", "content": (
-            f"User query: {routing_with_phase1.interpreted_query}\n\n"
-            f"Transcript:\n{transcript}"
-        )}],
+        [{"role": "user", "content": secretary_prompt}],
         system=secretary_system,
         max_tokens=2000,
         timeout=120.0,
