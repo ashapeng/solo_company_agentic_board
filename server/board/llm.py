@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -27,6 +27,14 @@ FALLBACK_BACKOFF_SECONDS = [1, 2]
 
 
 @dataclass
+class ToolCall:
+    """A single tool/function invocation requested by the model."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
 class LLMResponse:
     """Structured response from an LLM call."""
     content: str
@@ -36,6 +44,7 @@ class LLMResponse:
     latency_seconds: float
     finish_reason: str | None = None
     response_id: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -870,9 +879,11 @@ async def _dispatch_to_handler(
 
 async def query_llm(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
     temperature: float = 0.7,
     max_tokens: int = 8192,        # was 4096 — reasoning models need headroom
     timeout: float = 240.0,        # was 120.0 — deep reasoning takes 60-90s
