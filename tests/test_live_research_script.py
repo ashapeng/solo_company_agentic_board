@@ -144,3 +144,57 @@ async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tm
     assert result.routing.members[0].mode == "deep", "strategist should remain in deep mode"
     assert any(m.member_id == "chairperson" and m.mode == "fast"
                for m in result.routing.members)
+
+
+async def test_secretary_brief_includes_sources_in_system_prompt(monkeypatch, tmp_path):
+    """The secretary system prompt must mention the Sources section so the
+    LLM produces it when members cite sources."""
+    proto = tmp_path / "chair_intake.md"
+    proto.write_text("test")
+    monkeypatch.setattr(intake_mod, "_PROTOCOL_PATH", str(proto))
+
+    routing_json = json.dumps({
+        "interpreted_query": "Q",
+        "decision_type": "strategic", "complexity": "low",
+        "importance": "routine", "rationale": "ok",
+        "members": [{"member_id": "strategist", "mode": "fast",
+                     "focus": "x", "priority": 90}],
+        "script": "live_research", "deep_research_dossier": False,
+    })
+    intake_resp = llm.LLMResponse(
+        content=routing_json, model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    member_resp = llm.LLMResponse(
+        content="my analysis", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    brief_resp = llm.LLMResponse(
+        content="brief", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+
+    captured_systems: list[str] = []
+    async def fake_query(model, messages, **kw):
+        if kw.get("tools"):
+            return intake_resp if any(
+                t.get("function", {}).get("name") == "ask_user_clarifying_question"
+                for t in kw["tools"] if isinstance(t, dict)
+            ) else member_resp
+        # Capture system prompts on no-tool calls (member fast + secretary)
+        sys_prompt = kw.get("system", "")
+        captured_systems.append(sys_prompt or "")
+        return brief_resp
+
+    with patch("server.board.deliberation.intake.query_llm",
+               AsyncMock(side_effect=fake_query)), \
+         patch("server.board.deliberation.orchestrator.query_llm",
+                AsyncMock(side_effect=fake_query)), \
+         patch("server.board.deliberation.live.query_llm",
+                AsyncMock(side_effect=fake_query)):
+        await live.run_live_research(
+            query="Q", user_overrides=intake_mod.ChairOverrides())
+
+    # The secretary system prompt should mention Sources
+    assert any("Sources" in s and "[source:" in s for s in captured_systems), \
+        f"No system prompt mentions Sources extraction. Got: {captured_systems}"

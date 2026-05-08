@@ -1203,10 +1203,26 @@ async def run_live_research(
     transcript = "\n\n".join(transcript_lines)
 
     secretary_system = (
-        "You are the Board Secretary producing concise executive briefs "
-        "for the CEO. Follow the user message instructions exactly. Output "
-        "only the requested section headers and bullets — no preamble, no "
-        "closing remarks, no reasoning trace."
+        "You are the Board Secretary. Consolidate the council's Stage 1 outputs "
+        "into a precise executive brief.\n\n"
+        "Output sections, in order, omitting any that would be empty:\n"
+        "## Agreements\n"
+        "## Conflicts\n"
+        "## Open Questions\n"
+        "## Decision Needed From CEO\n"
+        "## Sources\n\n"
+        "Rules:\n"
+        "- Bullet points, terse, one claim per line.\n"
+        "- Attribute every claim with the member's title in square brackets at the end, "
+        "e.g., '[Customer Researcher]'.\n"
+        "- For ## Sources: extract every distinct source citation that members wrote inline "
+        "as `[source: <title>, <url>, retrieved <date>]`. Number them, dedupe by URL, and "
+        "list which members cited each one. Format: '1. <Title> — <URL> (retrieved <date>; "
+        "cited by: <Member Title>, <Member Title>)'. If no members cited any sources, OMIT "
+        "this section entirely.\n"
+        "- Do NOT invent claims, sources, or attributions not present in the input.\n"
+        "- Do NOT add commentary, conclusions, or recommendations of your own — only "
+        "consolidate what the council provided."
     )
     secretary_prompt = format_live_secretary_brief(
         user_query=routing_with_phase1.interpreted_query,
