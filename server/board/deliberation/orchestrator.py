@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from server.execution import parse_delegation_plan, record_delegation_plan
 from server.harness.config import (
@@ -36,7 +36,8 @@ from .compaction import (
     compact_stage2_with_warnings,
 )
 from ..config import BoardMember, get_board_members, get_members_by_id, get_chairman_model, get_council_models
-from ..llm import query_llm, LLMResponse
+from ..llm import query_llm, LLMResponse, ToolCall
+from ..tools import Tool, ToolResult, execute_tool
 from ..metrics import CallMetrics, SessionMetrics
 from ..projection import project_board_decision, verification_to_dict
 from .prompts import format_stage1, format_stage2, format_stage3, format_stage4, format_standalone_secretary_brief
@@ -109,6 +110,109 @@ class MemberTurnResult:
     aborted: bool = False
     abort_reason: str | None = None
     evidence_packets: list[str] = field(default_factory=list)
+
+
+def _budget_filtered_tools(all_tools: list[Tool], budget: ToolBudget) -> list[dict]:
+    """Return only the tool schemas the budget still allows."""
+    return [t.to_openai_schema() for t in all_tools if budget.can_call(t.name)]
+
+
+def _tool_call_message(tcs: list[ToolCall]) -> dict:
+    """Build the assistant message that records the tool_calls request."""
+    return {
+        "role": "assistant", "content": "",
+        "tool_calls": [
+            {"id": tc.id, "type": "function",
+             "function": {"name": tc.name,
+                          "arguments": json.dumps(tc.arguments)}}
+            for tc in tcs
+        ],
+    }
+
+
+class SimpleEvent:
+    """Lightweight event for the on_event stream during Phase 1.
+    Phase 2 replaces this with the proper Event hierarchy in live.py."""
+    def __init__(self, kind: str, *args: Any) -> None:
+        self.kind = kind
+        self.args = args
+    def __repr__(self) -> str:
+        return f"Event({self.kind!r}, {self.args!r})"
+
+
+async def agentic_member_turn(
+    *,
+    member: "BoardMember",
+    model: str,
+    system_prompt: str,
+    initial_user_message: str,
+    tools: list[Tool],
+    budget: ToolBudget,
+    session: object,
+    stage: int,
+    on_event: Callable[[Any], None],
+) -> MemberTurnResult:
+    """Run the model in a tool-use loop bounded by `budget`.
+    Loop terminates when:
+      - LLM returns content with no tool_calls, OR
+      - budget is exhausted (one final tool_choice='none' call to write
+        the final analysis), OR
+      - wall-clock budget is exceeded.
+    """
+    on_event(SimpleEvent("MemberStart", member.id, stage))
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": initial_user_message}
+    ]
+    t_start = time.monotonic()
+
+    while True:
+        wall = time.monotonic() - t_start
+        budget.wall_seconds_used = wall
+        budget_tools = _budget_filtered_tools(tools, budget)
+        no_more_tools = (
+            not budget_tools
+            or budget.exhausted()
+            or wall >= budget.wall_seconds_max
+        )
+
+        on_event(SimpleEvent("MemberThinking", member.id))
+        response: LLMResponse = await query_llm(
+            model, messages,
+            system=system_prompt,
+            tools=None if no_more_tools else budget_tools,
+            tool_choice="none" if no_more_tools else "auto",
+            timeout=budget.per_call_timeout,
+        )
+
+        if not response.tool_calls:
+            on_event(SimpleEvent("MemberComplete", member.id, response.finish_reason))
+            return MemberTurnResult(
+                content=response.content or "",
+                tool_calls_made=budget.tool_calls_used,
+                finish_reason=response.finish_reason,
+            )
+
+        # Append assistant tool-call message
+        messages.append(_tool_call_message(response.tool_calls))
+
+        # Execute tool calls in parallel
+        async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+            on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
+            result = await execute_tool(
+                name=tc.name, arguments=tc.arguments,
+                session=session, member_id=member.id,
+            )
+            on_event(SimpleEvent("ToolResult", member.id, tc.name,
+                                  result.summary, result.cost_units))
+            return tc, result
+
+        results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
+        for tc, result in results:
+            messages.append({
+                "role": "tool", "tool_call_id": tc.id,
+                "content": result.content_for_model[:8000],
+            })
+            budget.spend(tc.name, result.cost_units)
 
 
 @dataclass
