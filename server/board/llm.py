@@ -8,6 +8,7 @@ Handlers are added one per provider in subsequent tasks.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -174,7 +175,6 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
 
 def _openai_shape_tool_calls(response: Any) -> list[ToolCall]:
     """Parse tool_calls out of an OpenAI-shape chat completion response."""
-    import json
     choices = _get_attr_or_item(response, "choices") or []
     if not choices:
         return []
@@ -379,7 +379,7 @@ async def _send_deepseek(
 
 async def _send_kimi(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None,
     temperature: float,
