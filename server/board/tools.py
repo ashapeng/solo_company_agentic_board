@@ -230,3 +230,27 @@ TOOLS["ask_user_clarifying_question"] = Tool(
     },
     handler=_handle_ask_user,
 )
+
+
+# ────────────── Chrome / Playwright helpers ──────────────
+
+import os as _os
+import sys as _sys
+from pathlib import Path as _Path
+
+
+def _resolve_chrome_user_data_dir() -> str:
+    """Return the path to Chrome's user-data dir for the current OS.
+    Override with AGENTIC_BOARD_CHROME_USER_DATA_DIR env var."""
+    override = _os.getenv("AGENTIC_BOARD_CHROME_USER_DATA_DIR")
+    if override:
+        return override
+    home = _Path(_os.path.expanduser("~"))
+    if _sys.platform.startswith("linux"):
+        return str(home / ".config" / "google-chrome")
+    if _sys.platform == "darwin":
+        return str(home / "Library" / "Application Support" / "Google" / "Chrome")
+    if _sys.platform.startswith("win"):
+        local = _os.getenv("LOCALAPPDATA") or str(home / "AppData" / "Local")
+        return str(_Path(local) / "Google" / "Chrome" / "User Data")
+    return str(home / ".config" / "google-chrome")
