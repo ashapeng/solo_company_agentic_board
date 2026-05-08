@@ -1138,8 +1138,14 @@ async def run_live_research(
     query: str,
     user_overrides: ChairOverrides | None = None,
     on_event=None,
+    followup_buffer=None,
 ) -> LiveResearchResult:
-    """Phase 1 live_research script: intake -> first round -> secretary brief."""
+    """Phase 1 live_research script: intake -> first round -> secretary brief.
+
+    followup_buffer: optional FollowupBuffer instance. When provided, the
+    function drains it between rounds and re-invokes targeted members with
+    a deep budget + the new focus. Loop is bounded to max_followup_rounds=10.
+    """
     from types import SimpleNamespace
     overrides = user_overrides or ChairOverrides()
     on_event = on_event or (lambda e: None)
@@ -1194,13 +1200,13 @@ async def run_live_research(
     pairs = await _aio.gather(*[_run_one(a) for a in routing_with_phase1.members])
     responses = {mid: r for mid, r in pairs if r is not None}
 
-    # Secretary brief — build transcript from member responses
-    transcript_lines = []
-    for mid, r in responses.items():
-        member = members_by_id.get(mid)
-        title = member.title if member else mid
-        transcript_lines.append(f"**{title}**: {r.content}")
-    transcript = "\n\n".join(transcript_lines)
+    def _build_transcript(resp_dict: dict) -> str:
+        lines = []
+        for mid, r in resp_dict.items():
+            member = members_by_id.get(mid)
+            title = member.title if member else mid
+            lines.append(f"**{title}**: {r.content}")
+        return "\n\n".join(lines)
 
     secretary_system = (
         "You are the Board Secretary. Consolidate the council's Stage 1 outputs "
@@ -1224,26 +1230,85 @@ async def run_live_research(
         "- Do NOT add commentary, conclusions, or recommendations of your own — only "
         "consolidate what the council provided."
     )
-    secretary_prompt = format_live_secretary_brief(
-        user_query=routing_with_phase1.interpreted_query,
-        transcript=transcript,
-        round_index=0,
-    )
     # Pin to a non-reasoning model (same pattern as _produce_live_secretary_brief).
     # kimi/kimi-k2.6 (chair) burns its entire token budget on internal reasoning
     # and emits empty content; qwen3.6-max-preview is non-thinking by default.
     secretary_model = os.getenv(
         "AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview"
     )
-    brief_response = await query_llm(
-        secretary_model,
-        [{"role": "user", "content": secretary_prompt}],
-        system=secretary_system,
-        max_tokens=2000,
-        timeout=120.0,
-    )
+
+    async def _generate_brief(round_index: int) -> str:
+        transcript = _build_transcript(responses)
+        secretary_prompt = format_live_secretary_brief(
+            user_query=routing_with_phase1.interpreted_query,
+            transcript=transcript,
+            round_index=round_index,
+        )
+        brief_response = await query_llm(
+            secretary_model,
+            [{"role": "user", "content": secretary_prompt}],
+            system=secretary_system,
+            max_tokens=2000,
+            timeout=120.0,
+        )
+        return brief_response.content or "[Secretary brief unavailable]"
+
+    secretary_brief = await _generate_brief(round_index=0)
+
+    # ── Follow-up loop ────────────────────────────────────────────────────────
+    # Drain the buffer between rounds; re-invoke targeted members with deep
+    # budget and updated focus. Loop is bounded to prevent runaway execution.
+    if followup_buffer is not None:
+        from .followup import FollowupBuffer
+        from .orchestrator import SimpleEvent
+        max_followup_rounds = 10
+        rounds = 0
+        while rounds < max_followup_rounds:
+            rounds += 1
+            pending = await followup_buffer.snapshot()
+            if not pending:
+                break
+            for f in pending:
+                if f.target is None:
+                    on_event(SimpleEvent("FollowupSkipped", "no_target", f.raw))
+                    continue
+                if f.target not in UPGRADED_MEMBERS:
+                    on_event(SimpleEvent("FollowupSkipped", "unknown_member", f.target))
+                    continue
+                member = members_by_id.get(f.target)
+                if member is None:
+                    on_event(SimpleEvent("FollowupSkipped", "missing_member", f.target))
+                    continue
+                on_event(SimpleEvent("MemberRevising", f.target, f.text))
+                prev_content = (
+                    responses[f.target].content if f.target in responses else ""
+                )[:4000]
+                cont_msg = (
+                    f"Continue your earlier analysis with this new focus from the user:\n"
+                    f"\n{f.text}\n\n"
+                    f"Your earlier analysis:\n{prev_content}\n\n"
+                    f"Add new findings or revisions; reference your prior conclusions "
+                    f"where unchanged. Your tool budget for this revision: deep."
+                )
+                new_budget = ToolBudget.for_mode("deep", member_role="member")
+                new_result = await agentic_member_turn(
+                    member=member,
+                    model=_select_member_model(f.target, council),
+                    system_prompt=member.system_prompt,
+                    initial_user_message=cont_msg,
+                    tools=available_tools,
+                    budget=new_budget,
+                    session=session,
+                    stage=1,
+                    on_event=on_event,
+                )
+                responses[f.target] = new_result
+                on_event(SimpleEvent("MemberRevised", f.target, new_result.tool_calls_made))
+            # Regenerate secretary brief after this follow-up round
+            secretary_brief = await _generate_brief(round_index=rounds)
+
     return LiveResearchResult(
         routing=routing_with_phase1,
         member_responses=responses,
-        secretary_brief=brief_response.content or "[Secretary brief unavailable]",
+        secretary_brief=secretary_brief,
     )

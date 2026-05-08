@@ -581,6 +581,7 @@ def cli():
     if args.live_research:
         from server.board.deliberation.live import run_live_research
         from server.board.deliberation.intake import ChairOverrides
+        from server.board.deliberation.followup import FollowupBuffer, parse_followup_line
 
         members_filter = None
         if args.members:
@@ -608,10 +609,50 @@ def cli():
             kind = ev.get("event", str(ev)) if isinstance(ev, dict) else getattr(ev, "kind", str(ev))
             print(f"  · {kind}")
 
+        async def _stdin_followup_reader(buf: FollowupBuffer) -> None:
+            loop = asyncio.get_running_loop()
+            while True:
+                try:
+                    line = await loop.run_in_executor(None, sys.stdin.readline)
+                except (EOFError, OSError):
+                    return
+                if not line:
+                    await asyncio.sleep(0.1)
+                    continue
+                f = parse_followup_line(line)
+                if f is None:
+                    continue
+                if f.target is None:
+                    print(f"  · followup ignored (no target prefix): {f.raw[:60]}")
+                    continue
+                await buf.add(f)
+                print(f"  · followup queued for {f.target}: {f.text[:60]}")
+
         query = args.query or ""
-        result = asyncio.run(run_live_research(
-            query=query, user_overrides=overrides, on_event=_print_event,
-        ))
+
+        async def _run_with_followups():
+            buf = FollowupBuffer() if sys.stdin.isatty() else None
+            reader_task = (
+                asyncio.create_task(_stdin_followup_reader(buf))
+                if buf is not None else None
+            )
+            print("\n[Hint] Type 'member: text' (e.g., 'strategist: search more on X') to inject follow-ups.")
+            print("[Hint] Press Ctrl-D to stop accepting follow-ups.\n")
+            try:
+                return await run_live_research(
+                    query=query, user_overrides=overrides,
+                    on_event=_print_event,
+                    followup_buffer=buf,
+                )
+            finally:
+                if reader_task is not None:
+                    reader_task.cancel()
+                    try:
+                        await reader_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+        result = asyncio.run(_run_with_followups())
 
         print("\n=== Routing ===")
         print(f"  decision_type: {result.routing.decision_type}")

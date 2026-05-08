@@ -146,6 +146,92 @@ async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tm
                for m in result.routing.members)
 
 
+async def test_live_research_processes_followup(monkeypatch, tmp_path):
+    """A queued follow-up triggers re-invocation of the target member."""
+    from server.board.deliberation.followup import FollowupBuffer, Followup
+
+    proto = tmp_path / "chair_intake.md"
+    proto.write_text("test")
+    monkeypatch.setattr(intake_mod, "_PROTOCOL_PATH", str(proto))
+
+    routing_json = json.dumps({
+        "interpreted_query": "Q",
+        "decision_type": "strategic", "complexity": "low",
+        "importance": "routine", "rationale": "ok",
+        "members": [{"member_id": "strategist", "mode": "fast",
+                     "focus": "x", "priority": 90}],
+        "script": "live_research", "deep_research_dossier": False,
+    })
+    intake_resp = llm.LLMResponse(
+        content=routing_json, model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    member_resp = llm.LLMResponse(
+        content="initial analysis", model="m",
+        input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+    revised_resp = llm.LLMResponse(
+        content="revised analysis with follow-up", model="m",
+        input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+    brief_resp = llm.LLMResponse(
+        content="brief v1", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    brief_resp_v2 = llm.LLMResponse(
+        content="brief v2 incorporating follow-up", model="m",
+        input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+
+    call_count = {"intake": 0, "member": 0, "brief": 0}
+    async def fake_query(model, messages, **kw):
+        # Detect intake by checking message content: intake sends the chair
+        # protocol prompt which always references "routing" or "JSON" in the
+        # user message, not a "User query:" structured member turn.
+        user_content = " ".join(
+            m.get("content", "") for m in messages if m.get("role") == "user"
+        )
+        sys_prompt = kw.get("system", "")
+        # Secretary brief: system prompt contains "Board Secretary" or "Sources"
+        if "Board Secretary" in sys_prompt or "Sources" in sys_prompt:
+            call_count["brief"] += 1
+            return brief_resp_v2 if call_count["brief"] >= 2 else brief_resp
+        # Intake: the ask_user tool is present AND no "Continue your earlier" in user msg
+        tools_kw = kw.get("tools") or []
+        names = {t.get("function", {}).get("name") for t in tools_kw if isinstance(t, dict)}
+        if "ask_user_clarifying_question" in names and "Continue your earlier" not in user_content:
+            call_count["intake"] += 1
+            return intake_resp
+        # Member/revision call
+        call_count["member"] += 1
+        if call_count["member"] >= 2:  # second member call = revision
+            return revised_resp
+        return member_resp
+
+    buf = FollowupBuffer()
+    await buf.add(Followup(target="strategist",
+                            text="search more on X", raw="strategist: search more on X"))
+
+    with patch("server.board.deliberation.intake.query_llm",
+               AsyncMock(side_effect=fake_query)), \
+         patch("server.board.deliberation.orchestrator.query_llm",
+                AsyncMock(side_effect=fake_query)), \
+         patch("server.board.deliberation.live.query_llm",
+                AsyncMock(side_effect=fake_query)):
+        result = await live.run_live_research(
+            query="Q", user_overrides=intake_mod.ChairOverrides(),
+            followup_buffer=buf,
+        )
+
+    # The strategist's content should be the revised version
+    assert result.member_responses["strategist"].content == "revised analysis with follow-up"
+    # The secretary brief should be the v2
+    assert "v2" in result.secretary_brief
+
+
 async def test_secretary_brief_includes_sources_in_system_prompt(monkeypatch, tmp_path):
     """The secretary system prompt must mention the Sources section so the
     LLM produces it when members cite sources."""
