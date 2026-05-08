@@ -1057,3 +1057,166 @@ def _format_full_transcript(messages: list[ConversationMessage]) -> str:
     for msg in messages:
         lines.append(f"**{msg.member_title}**: {msg.content}")
     return "\n\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# live_research script — Phase 1 implementation
+# ---------------------------------------------------------------------------
+
+import asyncio as _aio
+from dataclasses import dataclass as _dc, field as _field
+
+from ..config import get_council_models
+from ..llm import query_llm
+from ..tools import TOOLS, Tool
+from .intake import (
+    ChairOverrides, MemberAssignment, RoutingDecision, run_chair_intake,
+)
+from .orchestrator import (
+    MemberTurnResult, ToolBudget, agentic_member_turn,
+)
+
+
+PHASE1_UPGRADED_MEMBERS = {"strategist", "researcher"}
+PHASE1_TOOLS_FOR_MEMBERS = ["web_search", "fetch_url", "open_browser",
+                             "ask_user_clarifying_question"]
+
+
+@_dc
+class LiveResearchResult:
+    routing: RoutingDecision
+    member_responses: dict[str, MemberTurnResult] = _field(default_factory=dict)
+    secretary_brief: str = ""
+
+
+def _phase1_mode_override(assignments: list[MemberAssignment]) -> list[MemberAssignment]:
+    """Phase 1: only strategist+researcher can run with tools. Force all
+    other members to mode=fast."""
+    out: list[MemberAssignment] = []
+    for a in assignments:
+        if a.member_id in PHASE1_UPGRADED_MEMBERS:
+            out.append(a)
+        else:
+            out.append(MemberAssignment(
+                member_id=a.member_id, mode="fast",
+                focus=a.focus, priority=a.priority,
+            ))
+    return out
+
+
+def _select_member_model(member_id: str, council_models: list[str]) -> str:
+    """Round-robin council models by member id; deterministic for tests."""
+    if not council_models:
+        return get_chairman_model()
+    members = ["strategist", "product", "researcher", "critic",
+               "architect", "builder"]
+    try:
+        idx = members.index(member_id)
+    except ValueError:
+        idx = 0
+    return council_models[idx % len(council_models)]
+
+
+def _budget_descriptor(budget: ToolBudget) -> str:
+    return (f"{budget.tool_calls_max} tool calls, "
+            f"{budget.web_search_max} web searches, "
+            f"{budget.open_browser_max} browser opens, "
+            f"{budget.wall_seconds_max}s wall budget")
+
+
+def _user_message_for_member(query: str, focus: str, budget: ToolBudget) -> str:
+    return (f"User query: {query}\n\n"
+            f"Your focus: {focus}\n\n"
+            f"Your tool budget: {_budget_descriptor(budget)}.\n\n"
+            "Produce your Stage 1 analysis per your role's operating procedures.")
+
+
+async def run_live_research(
+    *,
+    query: str,
+    user_overrides: ChairOverrides | None = None,
+    on_event=None,
+) -> LiveResearchResult:
+    """Phase 1 live_research script: intake -> first round -> secretary brief."""
+    from types import SimpleNamespace
+    overrides = user_overrides or ChairOverrides()
+    on_event = on_event or (lambda e: None)
+    session = SimpleNamespace(
+        session_id=None,
+        ask_user=getattr(overrides, "ask_user", None),
+    )
+
+    routing = await run_chair_intake(
+        raw_query=query,
+        user_overrides=overrides,
+        session=session,
+        on_event=on_event,
+        chair_model=get_chairman_model(),
+    )
+    routing_with_phase1 = RoutingDecision(
+        interpreted_query=routing.interpreted_query,
+        decision_type=routing.decision_type,
+        complexity=routing.complexity,
+        importance=routing.importance,
+        rationale=routing.rationale,
+        members=_phase1_mode_override(routing.members),
+        script=routing.script,
+        deep_research_dossier=routing.deep_research_dossier,
+    )
+
+    members_by_id = get_members_by_id()
+    council = get_council_models()
+    available_tools = [TOOLS[n] for n in PHASE1_TOOLS_FOR_MEMBERS if n in TOOLS]
+
+    async def _run_one(asg: MemberAssignment):
+        member = members_by_id.get(asg.member_id)
+        if member is None:
+            return asg.member_id, None
+        budget = ToolBudget.for_mode(asg.mode, member_role="member")
+        tools_for_member = available_tools if asg.mode != "fast" else []
+        model = _select_member_model(asg.member_id, council)
+        result = await agentic_member_turn(
+            member=member,
+            model=model,
+            system_prompt=member.system_prompt,
+            initial_user_message=_user_message_for_member(
+                routing_with_phase1.interpreted_query, asg.focus, budget),
+            tools=tools_for_member,
+            budget=budget,
+            session=session,
+            stage=1,
+            on_event=on_event,
+        )
+        return asg.member_id, result
+
+    pairs = await _aio.gather(*[_run_one(a) for a in routing_with_phase1.members])
+    responses = {mid: r for mid, r in pairs if r is not None}
+
+    # Secretary brief — build transcript from member responses
+    transcript_lines = []
+    for mid, r in responses.items():
+        member = members_by_id.get(mid)
+        title = member.title if member else mid
+        transcript_lines.append(f"**{title}**: {r.content}")
+    transcript = "\n\n".join(transcript_lines)
+
+    secretary_system = format_live_secretary_brief(
+        user_query=routing_with_phase1.interpreted_query,
+        transcript=transcript,
+        round_index=0,
+    )
+    brief_response = await query_llm(
+        get_chairman_model(),
+        [{"role": "user", "content": (
+            f"User query: {routing_with_phase1.interpreted_query}\n\n"
+            f"Transcript:\n{transcript}"
+        )}],
+        system=secretary_system,
+        max_tokens=2000,
+        timeout=120.0,
+    )
+    return LiveResearchResult(
+        routing=routing_with_phase1,
+        member_responses=responses,
+        secretary_brief=brief_response.content,
+    )
