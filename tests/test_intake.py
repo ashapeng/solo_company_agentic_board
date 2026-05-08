@@ -178,3 +178,49 @@ async def test_run_chair_intake_depth_override_applied(monkeypatch, tmp_path):
         )
     # All members should now be 'deep' even though chair routed 'fast'
     assert all(m.mode == "deep" for m in rd.members)
+
+
+async def test_run_chair_intake_clarification_then_route(monkeypatch, tmp_path):
+    """Chair asks 1 clarifying question, then emits routing on next call."""
+    proto = tmp_path / "chair_intake.md"
+    proto.write_text("test")
+    monkeypatch.setattr(intake_mod, "_PROTOCOL_PATH", str(proto))
+
+    ask_response = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="tool_calls",
+        tool_calls=[llm.ToolCall(
+            id="tc_1", name="ask_user_clarifying_question",
+            arguments={"question": "Which segment?",
+                       "why_it_matters": "TAM differs"})],
+    )
+    routing_json = json.dumps({
+        "interpreted_query": "Q after clarification",
+        "decision_type": "strategic", "complexity": "medium",
+        "importance": "notable", "rationale": "Routed.",
+        "members": [{"member_id": "strategist", "mode": "standard",
+                     "focus": "x", "priority": 90}],
+        "script": "live_research", "deep_research_dossier": False,
+    })
+    final_response = llm.LLMResponse(
+        content=routing_json, model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    responses = iter([ask_response, final_response])
+    fake_query = AsyncMock(side_effect=lambda *a, **kw: next(responses))
+
+    # Provide an ask_user channel on session
+    answers = {"Which segment?": "Independent agencies, US"}
+    async def _ask(q: str, why: str) -> str:
+        return answers[q]
+    session = SimpleNamespace(ask_user=_ask)
+
+    with patch("server.board.deliberation.intake.query_llm", fake_query):
+        rd = await intake_mod.run_chair_intake(
+            raw_query="Should we build for agencies?",
+            user_overrides=intake_mod.ChairOverrides(),
+            session=session, on_event=lambda e: None,
+            chair_model="kimi/kimi-k2.6",
+        )
+    assert rd.decision_type == "strategic"
+    assert fake_query.call_count == 2
