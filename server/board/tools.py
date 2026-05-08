@@ -7,7 +7,7 @@ schema conversion lives in llm.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 ToolHandler = Callable[..., Awaitable["ToolResult"]]
@@ -74,3 +74,68 @@ async def execute_tool(
             cost_units=0.0,
             error=str(exc),
         )
+
+
+# ────────────── web_search ──────────────
+
+async def _handle_web_search(
+    *,
+    query: str,
+    max_results: int = 5,
+    recency_days: int | None = None,
+    session: Any = None,
+    member_id: str | None = None,
+    **_unused: Any,
+) -> ToolResult:
+    """Wraps server.execution.web_search.web_search()."""
+    from server.execution.web_search import web_search as _ws
+
+    session_id = getattr(session, "session_id", None) if session else None
+    raw = await _ws(
+        query=query,
+        max_results=min(int(max_results or 5), 10),
+        session_id=session_id,
+    )
+    results = raw.get("results", []) if isinstance(raw, dict) else []
+    if not results:
+        return ToolResult(
+            content_for_model=f"web_search('{query}') returned no results.",
+            summary=f"web_search '{query}' → 0 results",
+            cost_units=1.0,
+        )
+    lines = [f"web_search('{query}') results:"]
+    for i, r in enumerate(results, 1):
+        title = r.get("title", "(no title)")
+        url = r.get("url", "")
+        snippet = (r.get("snippet") or r.get("description") or "")[:300]
+        retrieved = r.get("retrieved_at", "")
+        lines.append(f"{i}. {title}\n   URL: {url}\n   Snippet: {snippet}"
+                     + (f"\n   Retrieved: {retrieved}" if retrieved else ""))
+    return ToolResult(
+        content_for_model="\n".join(lines),
+        summary=f"web_search '{query}' → {len(results)} results",
+        cost_units=1.0,
+    )
+
+
+TOOLS["web_search"] = Tool(
+    name="web_search",
+    description="Search the web for current information. Returns a list of "
+                "results with title, snippet, url, retrieved_at. Use when you "
+                "need facts you don't have or to verify a claim.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "the search query"},
+            "max_results": {
+                "type": "integer", "minimum": 1, "maximum": 10, "default": 5,
+            },
+            "recency_days": {
+                "type": "integer",
+                "description": "(optional) only results from last N days",
+            },
+        },
+        "required": ["query"],
+    },
+    handler=_handle_web_search,
+)
