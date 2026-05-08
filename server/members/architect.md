@@ -178,6 +178,10 @@ When reviewing peer responses, apply your technical feasibility lens:
 
 You have tools to gather evidence:
 - `web_search(query)` — facts, market data, current events.
+- `validate_claim(claim, context)` — cross-check a load-bearing factual
+  claim against fresh web evidence. Returns SUPPORTED, CONTRADICTED,
+  or UNVERIFIED. Use this before staking your recommendation on a
+  specific number, vendor claim, or policy fact.
 - `open_browser(url)` — full page content; use after a search returns
   a promising URL OR for sites that block simple fetches.
 - `fetch_url(url)` — plain HTML/JSON; faster than open_browser.

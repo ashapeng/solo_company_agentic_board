@@ -430,3 +430,134 @@ TOOLS["open_browser"] = Tool(
     },
     handler=_handle_open_browser,
 )
+
+
+# ────────────── validate_claim ──────────────
+
+import os as _os_validate
+
+VALIDATE_CLAIM_DEFAULT_MODEL = "gemini/gemini-2.5-flash"
+
+# Module-level reference so tests can patch "server.board.tools.query_llm"
+from server.board.llm import query_llm  # noqa: E402
+
+
+async def _handle_validate_claim(
+    *,
+    claim: str,
+    context: str = "",
+    session: Any = None,
+    member_id: str | None = None,
+    **_unused: Any,
+) -> ToolResult:
+    """Cross-check a factual claim by searching the web and asking a fast
+    judge LLM to verdict SUPPORTED / CONTRADICTED / UNVERIFIED."""
+    if not claim or not claim.strip():
+        return ToolResult(
+            content_for_model="validate_claim: empty claim",
+            summary="validate_claim: empty",
+            cost_units=0.0,
+            error="claim must be a non-empty string",
+        )
+
+    # Step 1: web_search for evidence
+    from server.execution.web_search import web_search as _ws
+    session_id = getattr(session, "session_id", None) if session else None
+    raw = await _ws(query=claim, max_results=5, session_id=session_id)
+    results = raw.get("results", []) if isinstance(raw, dict) else []
+
+    if not results:
+        return ToolResult(
+            content_for_model=(
+                f"validate_claim('{claim[:80]}'):\n"
+                f"VERDICT: UNVERIFIED\n"
+                f"RATIONALE: No web_search results returned for the query.\n"
+                f"KEY_SOURCES: (none)"
+            ),
+            summary=f"validate_claim: UNVERIFIED (no search results)",
+            cost_units=1.0,
+        )
+
+    # Step 2: build judge prompt
+    evidence_text = "\n".join(
+        f"- {r.get('title', '(no title)')}: "
+        f"{(r.get('snippet') or r.get('description') or '')[:300]} "
+        f"({r.get('url', '')})"
+        for r in results[:5]
+    )
+    judge_prompt = (
+        f"Claim to verify:\n{claim}\n\n"
+        f"Context: {context or '(none)'}\n\n"
+        f"Web search evidence:\n{evidence_text}\n\n"
+        f"Judge whether the claim is SUPPORTED, CONTRADICTED, or UNVERIFIED "
+        f"by the evidence above:\n"
+        f"- SUPPORTED: At least 2 sources directly affirm the claim.\n"
+        f"- CONTRADICTED: At least 1 credible source directly contradicts the claim.\n"
+        f"- UNVERIFIED: Evidence is insufficient, ambiguous, or off-topic.\n\n"
+        f"Respond in this exact format and nothing else:\n"
+        f"VERDICT: <SUPPORTED|CONTRADICTED|UNVERIFIED>\n"
+        f"RATIONALE: <one sentence>\n"
+        f"KEY_SOURCES: <comma-separated URLs of the most relevant sources>"
+    )
+
+    # Step 3: call judge LLM
+    judge_model = _os_validate.getenv("VALIDATE_CLAIM_MODEL", VALIDATE_CLAIM_DEFAULT_MODEL)
+    try:
+        judge_response = await query_llm(
+            judge_model,
+            [{"role": "user", "content": judge_prompt}],
+            max_tokens=400,
+            timeout=60.0,
+            fallback=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface judge failures as ToolResult
+        return ToolResult(
+            content_for_model=(
+                f"validate_claim('{claim[:80]}'):\n"
+                f"VERDICT: UNVERIFIED\n"
+                f"RATIONALE: Judge LLM call failed: {exc}\n"
+                f"KEY_SOURCES: (none)"
+            ),
+            summary="validate_claim: judge failed",
+            cost_units=1.0,
+            error=str(exc),
+        )
+
+    # Step 4: parse verdict (loose match)
+    content = (judge_response.content or "").strip()
+    upper = content.upper()
+    if "VERDICT: SUPPORTED" in upper or "VERDICT:SUPPORTED" in upper:
+        verdict = "SUPPORTED"
+    elif "VERDICT: CONTRADICTED" in upper or "VERDICT:CONTRADICTED" in upper:
+        verdict = "CONTRADICTED"
+    else:
+        verdict = "UNVERIFIED"
+
+    return ToolResult(
+        content_for_model=(
+            f"validate_claim('{claim[:80]}'):\n{content}\n\n"
+            f"Searched evidence:\n{evidence_text}"
+        ),
+        summary=f"validate_claim: {verdict}",
+        cost_units=2.0,
+    )
+
+
+TOOLS["validate_claim"] = Tool(
+    name="validate_claim",
+    description="Cross-check a factual claim against a fresh web search. "
+                "Returns SUPPORTED, CONTRADICTED, or UNVERIFIED with rationale "
+                "and key sources. Use BEFORE relying on a load-bearing fact in "
+                "your recommendation.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "claim": {"type": "string",
+                       "description": "The factual claim to verify"},
+            "context": {"type": "string",
+                         "description": "(optional) context to help the judge"},
+        },
+        "required": ["claim"],
+    },
+    handler=_handle_validate_claim,
+)

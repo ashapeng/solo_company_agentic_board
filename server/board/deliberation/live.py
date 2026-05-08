@@ -1080,7 +1080,7 @@ from .orchestrator import (
 UPGRADED_MEMBERS = {"strategist", "researcher", "product", "critic",
                      "architect", "builder"}
 PHASE1_TOOLS_FOR_MEMBERS = ["web_search", "fetch_url", "open_browser",
-                             "ask_user_clarifying_question"]
+                             "ask_user_clarifying_question", "validate_claim"]
 
 
 @_dc

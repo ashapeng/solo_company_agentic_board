@@ -151,3 +151,83 @@ async def test_ask_user_session_without_callback_returns_no_response():
         session=_SessionNoCallback(), member_id="strategist",
     )
     assert "[NO_USER_RESPONSE]" in result.content_for_model
+
+
+from types import SimpleNamespace
+
+
+async def test_validate_claim_supported_verdict(monkeypatch):
+    """validate_claim runs a search + judge and returns the verdict."""
+    fake_search_results = {
+        "results": [
+            {"title": "Source A", "url": "https://a.example",
+             "snippet": "Tokyo metropolitan area population is 37 million.",
+             "retrieved_at": "2026-05-07"},
+            {"title": "Source B", "url": "https://b.example",
+             "snippet": "Tokyo has 37M people in greater area.",
+             "retrieved_at": "2026-05-07"},
+        ],
+    }
+    fake_search = AsyncMock(return_value=fake_search_results)
+
+    fake_judge_response = SimpleNamespace(
+        content=("VERDICT: SUPPORTED\n"
+                  "RATIONALE: Multiple sources confirm 37 million.\n"
+                  "KEY_SOURCES: https://a.example, https://b.example"),
+        model="gemini/gemini-2.5-flash",
+        input_tokens=20, output_tokens=10, latency_seconds=0.2,
+        finish_reason="stop", tool_calls=[], reasoning_content=None,
+    )
+    fake_query = AsyncMock(return_value=fake_judge_response)
+
+    with patch("server.execution.web_search.web_search", fake_search), \
+         patch("server.board.tools.query_llm", fake_query):
+        result = await tools.execute_tool(
+            name="validate_claim",
+            arguments={"claim": "Tokyo population is 37 million"},
+            session=None, member_id="strategist",
+        )
+
+    assert result.error is None
+    assert "SUPPORTED" in result.summary or "SUPPORTED" in result.content_for_model
+    assert "https://a.example" in result.content_for_model
+    fake_search.assert_called_once()
+    fake_query.assert_called_once()
+
+
+async def test_validate_claim_no_search_results():
+    """When web_search returns nothing, validate_claim short-circuits gracefully."""
+    fake_search = AsyncMock(return_value={"results": []})
+    with patch("server.execution.web_search.web_search", fake_search):
+        result = await tools.execute_tool(
+            name="validate_claim",
+            arguments={"claim": "Some unverifiable claim"},
+            session=None, member_id="strategist",
+        )
+    assert result.error is None
+    assert "no" in result.summary.lower() or "unverified" in result.summary.lower()
+
+
+async def test_validate_claim_unknown_verdict_falls_back_to_unverified(monkeypatch):
+    """If the judge response doesn't contain a recognizable verdict word,
+    treat it as UNVERIFIED (don't crash)."""
+    fake_search_results = {
+        "results": [{"title": "X", "url": "https://x", "snippet": "data",
+                     "retrieved_at": "2026-05-07"}],
+    }
+    fake_search = AsyncMock(return_value=fake_search_results)
+    fake_judge = AsyncMock(return_value=SimpleNamespace(
+        content="some unparsable response",
+        model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[], reasoning_content=None,
+    ))
+
+    with patch("server.execution.web_search.web_search", fake_search), \
+         patch("server.board.tools.query_llm", fake_judge):
+        result = await tools.execute_tool(
+            name="validate_claim",
+            arguments={"claim": "X"},
+            session=None, member_id="strategist",
+        )
+    assert result.error is None
+    assert "UNVERIFIED" in result.summary
