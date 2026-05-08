@@ -138,3 +138,50 @@ async def test_agentic_turn_executes_one_tool_call_then_returns(monkeypatch):
     assert result.content == "Done with results."
     assert result.tool_calls_made == 1
     assert fake_query_llm.call_count == 2
+
+
+async def test_agentic_turn_force_finishes_on_budget_exhaustion(monkeypatch):
+    """When budget is exhausted mid-loop, the loop forces a final analysis."""
+    tool_call_resp = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="tool_calls",
+        tool_calls=[llm.ToolCall(id="tc", name="web_search",
+                                  arguments={"query": "x"})],
+    )
+    final_resp = llm.LLMResponse(
+        content="Forced final: budget spent, [UNRESOLVED] remains.",
+        model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+
+    captured_kwargs: list[dict] = []
+
+    async def _spy_query(*args, **kwargs):
+        captured_kwargs.append(kwargs)
+        # First call: tool_call response. Second call: final.
+        if len(captured_kwargs) == 1:
+            return tool_call_resp
+        return final_resp
+
+    fake_tool_result = tools.ToolResult(
+        content_for_model="ok", summary="ok", cost_units=1.0,
+    )
+    budget = ToolBudget(
+        tool_calls_max=1, wall_seconds_max=300, per_call_timeout=240.0,
+        open_browser_max=1, web_search_max=1, fetch_url_max=1, ask_user_max=0,
+    )
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_spy_query)), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(return_value=fake_tool_result)):
+        result = await agentic_member_turn(
+            member=_make_member(), model="m",
+            system_prompt="x", initial_user_message="x",
+            tools=[tools.TOOLS["web_search"]],
+            budget=budget,
+            session=SimpleNamespace(), stage=1, on_event=lambda e: None,
+        )
+    assert "Forced final" in result.content
+    # Second call must have tool_choice="none" and tools=None
+    assert captured_kwargs[-1].get("tool_choice") == "none"
+    assert captured_kwargs[-1].get("tools") is None
