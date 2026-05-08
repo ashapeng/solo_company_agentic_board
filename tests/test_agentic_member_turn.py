@@ -185,3 +185,56 @@ async def test_agentic_turn_force_finishes_on_budget_exhaustion(monkeypatch):
     # Second call must have tool_choice="none" and tools=None
     assert captured_kwargs[-1].get("tool_choice") == "none"
     assert captured_kwargs[-1].get("tools") is None
+
+
+async def test_force_finish_appends_final_analysis_instruction(monkeypatch):
+    """When budget is exhausted, the loop appends an explicit instruction
+    telling the model to write final analysis (not emit tool markup)."""
+    tool_call_resp = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="tool_calls",
+        tool_calls=[llm.ToolCall(id="tc", name="web_search",
+                                  arguments={"query": "x"})],
+    )
+    final_resp = llm.LLMResponse(
+        content="Real final analysis.", model="m",
+        input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+
+    captured_messages: list[list] = []
+    responses = iter([tool_call_resp, final_resp])
+
+    async def _spy_query(*args, **kwargs):
+        captured_messages.append(list(args[1]) if len(args) > 1 else list(kwargs.get("messages", [])))
+        return next(responses)
+
+    fake_tool_result = tools.ToolResult(
+        content_for_model="ok", summary="ok", cost_units=1.0,
+    )
+    budget = ToolBudget(
+        tool_calls_max=1, wall_seconds_max=300, per_call_timeout=240.0,
+        open_browser_max=1, web_search_max=1, fetch_url_max=1, ask_user_max=0,
+    )
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_spy_query)), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(return_value=fake_tool_result)):
+        result = await agentic_member_turn(
+            member=_make_member(), model="m",
+            system_prompt="x", initial_user_message="x",
+            tools=[tools.TOOLS["web_search"]],
+            budget=budget,
+            session=SimpleNamespace(), stage=1, on_event=lambda e: None,
+        )
+    assert result.content == "Real final analysis."
+    # The SECOND call's messages must include the final-analysis instruction.
+    second_call_msgs = captured_messages[1]
+    final_instruction_msgs = [
+        m for m in second_call_msgs
+        if m.get("role") == "user" and "FINAL ANALYSIS" in (m.get("content") or "")
+    ]
+    assert len(final_instruction_msgs) == 1
+    assert "no XML" in final_instruction_msgs[0]["content"].lower() or \
+           "no xml" in final_instruction_msgs[0]["content"].lower() or \
+           "DSML" in final_instruction_msgs[0]["content"]

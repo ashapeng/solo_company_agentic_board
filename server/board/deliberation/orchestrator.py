@@ -182,6 +182,7 @@ async def agentic_member_turn(
 
     _iter = 0
     _MAX_ITERS = max(budget.tool_calls_max + 4, 12)
+    final_instruction_appended = False
 
     while True:
         _iter += 1
@@ -202,6 +203,24 @@ async def agentic_member_turn(
             or budget.exhausted()
             or wall >= budget.wall_seconds_max
         )
+
+        # When budget is exhausted and tools were used, explicitly instruct the
+        # model to write its final analysis. Without this, some models (e.g.
+        # DeepSeek v4-pro) emit their own proprietary tool-call markup (DSML)
+        # instead of prose, because they expected to call another tool.
+        if no_more_tools and budget.tool_calls_used > 0 and not final_instruction_appended:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Your tool budget is exhausted. Produce your FINAL ANALYSIS now "
+                    "using only the evidence already gathered above. Follow the "
+                    "output format from your role's operating procedures. Mark any "
+                    "unresolved gaps as [UNRESOLVED]. Do NOT emit tool-call markup "
+                    "of any kind (no XML, no DSML, no function-call wrappers) — "
+                    "write plain analysis text."
+                ),
+            })
+            final_instruction_appended = True
 
         on_event(SimpleEvent("MemberThinking", member.id))
         response: LLMResponse = await query_llm(
