@@ -81,7 +81,7 @@ async def test_live_research_runs_intake_then_first_round(monkeypatch, tmp_path)
 
 
 async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tmp_path):
-    """Phase 1: critic/architect/etc. must run mode=fast even if chair routes 'deep'."""
+    """Phase 2: chairperson/secretary must run mode=fast even if chair routes 'deep'."""
     proto = tmp_path / "chair_intake.md"
     proto.write_text("test")
     monkeypatch.setattr(intake_mod, "_PROTOCOL_PATH", str(proto))
@@ -93,8 +93,8 @@ async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tm
         "members": [
             {"member_id": "strategist", "mode": "deep",
              "focus": "x", "priority": 90},
-            {"member_id": "critic",     "mode": "deep",
-             "focus": "x", "priority": 75},
+            {"member_id": "chairperson", "mode": "deep",
+             "focus": "x", "priority": 100},
         ],
         "script": "live_research", "deep_research_dossier": False,
     })
@@ -122,8 +122,8 @@ async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tm
         # Extract which member this is for (if in the user message)
         for msg in messages:
             content = msg.get("content", "")
-            for member_id in ["strategist", "critic", "architect", "builder", "product"]:
-                if f"User query:" in content:
+            for member_id in ["strategist", "chairperson", "architect", "builder", "product"]:
+                if "User query:" in content:
                     # This is a member turn; capture which one + tools status
                     if member_id not in captured_by_member:
                         captured_by_member[member_id] = tools_kw
@@ -140,8 +140,7 @@ async def test_live_research_forces_non_upgraded_members_to_fast(monkeypatch, tm
             query="Q", user_overrides=intake_mod.ChairOverrides())
     # Verify final routing reflects the override:
     # - strategist should keep deep (upgraded)
-    # - critic should be forced to fast (not upgraded)
+    # - chairperson should be forced to fast (not in UPGRADED_MEMBERS)
     assert result.routing.members[0].mode == "deep", "strategist should remain in deep mode"
-    critic_member = [m for m in result.routing.members if m.member_id == "critic"]
-    assert len(critic_member) == 1, "critic should be in routing"
-    assert critic_member[0].mode == "fast", f"critic should be forced to fast, got {critic_member[0].mode}"
+    assert any(m.member_id == "chairperson" and m.mode == "fast"
+               for m in result.routing.members)

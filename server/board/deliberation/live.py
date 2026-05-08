@@ -1077,7 +1077,8 @@ from .orchestrator import (
 )
 
 
-PHASE1_UPGRADED_MEMBERS = {"strategist", "researcher"}
+UPGRADED_MEMBERS = {"strategist", "researcher", "product", "critic",
+                     "architect", "builder"}
 PHASE1_TOOLS_FOR_MEMBERS = ["web_search", "fetch_url", "open_browser",
                              "ask_user_clarifying_question"]
 
@@ -1090,11 +1091,12 @@ class LiveResearchResult:
 
 
 def _phase1_mode_override(assignments: list[MemberAssignment]) -> list[MemberAssignment]:
-    """Phase 1: only strategist+researcher can run with tools. Force all
-    other members to mode=fast."""
+    """Force any member NOT in UPGRADED_MEMBERS to mode=fast (no tools).
+    Phase 2: 6 council members are upgraded; chairperson runs intake separately,
+    secretary runs the brief separately."""
     out: list[MemberAssignment] = []
     for a in assignments:
-        if a.member_id in PHASE1_UPGRADED_MEMBERS:
+        if a.member_id in UPGRADED_MEMBERS:
             out.append(a)
         else:
             out.append(MemberAssignment(

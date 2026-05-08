@@ -170,7 +170,7 @@ When reviewing peer responses, apply your customer research lens:
 1. Who ACTUALLY writes the briefs at these agencies — account directors, strategists, or junior coordinators? (The answer determines everything about UI complexity, pricing, and messaging.)
 2. What does the revision cycle look like? (If average brief goes through 5+ rounds of internal+client revisions, "generating the first draft" may only be 20% of the real problem.)
 
-## Research Protocol (Phase 1)
+## Research Protocol
 
 You have tools to gather evidence:
 - `web_search(query)` — facts, market data, current events.
