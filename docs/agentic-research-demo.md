@@ -33,8 +33,8 @@ You should see:
 1. **Chair intake** — restates your question; may ask 1–3 clarifying
    questions.
 2. **Strategist** — runs `web_search`, possibly `open_browser` (Chrome
-   opens), produces analysis with `[SEARCH_EVIDENCE]` tags and inline
-   citations.
+   opens) or `validate_claim`, produces analysis with `[SEARCH_EVIDENCE]`
+   tags and inline citations.
 3. **Researcher** — same; may also call `ask_user_clarifying_question`
    if running in `deep` mode.
 4. **Secretary brief** — Agreements / Conflicts / Open Questions.
@@ -47,6 +47,42 @@ You should see:
   domain knowledge. Re-run with a more specific factual question, or
   raise `--depth deep`.
 - *`MOONSHOT_API_KEY` errors* — chair model lookup fails; check `.env`.
+
+## Mid-deliberation follow-ups
+
+While the council is running, you can type a follow-up at any time to
+deepen a specific member's analysis:
+
+```
+strategist: search for Indian agency tooling spend trends
+critic: pre-mortem the privacy and MSA legal exposure
+researcher: do agencies actually pay for ops tools, or are they bundled?
+```
+
+Format: `<member_id>: <text>`. Lines without a `member_id:` prefix are
+ignored. Press Ctrl-D when you're done — the runtime drains the queue
+between rounds, re-invokes each targeted member with a fresh `deep`
+budget plus their previous analysis as context, then regenerates the
+secretary brief. Maximum 10 follow-up rounds per session.
+
+The follow-up channel only activates in interactive (TTY) sessions.
+Scripted runs and CI ignore it.
+
+## validate_claim tool
+
+In addition to `web_search`, `fetch_url`, and `open_browser`, members
+can call `validate_claim(claim, context)`. The tool runs a fresh web
+search, asks a fast judge LLM to score the claim against the evidence,
+and returns one of:
+
+- `SUPPORTED` — at least 2 sources directly affirm the claim
+- `CONTRADICTED` — at least 1 credible source directly contradicts
+- `UNVERIFIED` — evidence is insufficient or off-topic
+
+Use this before staking a recommendation on a specific number, vendor
+claim, or policy fact. The judge model defaults to
+`gemini/gemini-2.5-flash` (free tier) and can be overridden via the
+`VALIDATE_CLAIM_MODEL` env var.
 
 ## Recording
 

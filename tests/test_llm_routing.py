@@ -35,5 +35,5 @@ def test_llm_response_dataclass_unchanged():
     assert fields == {
         "content", "model", "input_tokens", "output_tokens",
         "latency_seconds", "finish_reason", "response_id",
-        "tool_calls",
+        "tool_calls", "reasoning_content",
     }
