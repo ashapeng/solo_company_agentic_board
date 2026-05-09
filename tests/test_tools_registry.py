@@ -1,6 +1,9 @@
 """Tool registry contract tests."""
 from __future__ import annotations
 
+import asyncio
+import socket
+
 import pytest
 
 from server.board import tools
@@ -104,6 +107,12 @@ async def test_fetch_url_handler_returns_text(monkeypatch):
         async def __aenter__(self): return self
         async def __aexit__(self, *a): pass
         async def get(self, url, **kw): return _FakeResp()
+
+    # Patch DNS so test TLD resolves to a public IP (not private)
+    async def fake_resolve(host, port, *a, **kw):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    loop = asyncio.get_event_loop()
+    monkeypatch.setattr(loop, "getaddrinfo", fake_resolve)
 
     monkeypatch.setattr("httpx.AsyncClient", lambda **kw: _FakeClient())
     result = await tools.execute_tool(
@@ -303,3 +312,34 @@ async def test_web_search_no_augmentation_when_member_id_none(monkeypatch):
             member_id=None,
         )
     assert captured_calls[0]["query"].strip() == "untargeted query"
+
+
+async def test_validate_claim_evidence_wrapped_in_evidence_tags(monkeypatch):
+    """The judge prompt must wrap evidence in <evidence> tags with an
+    untrusted-content instruction to prevent prompt injection."""
+    fake_results = {"results": [
+        {"title": "X", "url": "https://x", "snippet": "Tokyo population is 37M",
+         "retrieved_at": "2026-05-07"},
+    ]}
+    fake_search = AsyncMock(return_value=fake_results)
+
+    captured_prompts: list[str] = []
+
+    async def fake_judge(model, messages, **kwargs):
+        captured_prompts.append(messages[0]["content"])
+        return SimpleNamespace(
+            content="VERDICT: SUPPORTED\nRATIONALE: yes\nKEY_SOURCES: https://x",
+            model=model, input_tokens=1, output_tokens=1, latency_seconds=0.1,
+            finish_reason="stop", tool_calls=[], reasoning_content=None,
+        )
+
+    with patch("server.execution.web_search.web_search", fake_search), \
+         patch("server.board.tools.query_llm", fake_judge):
+        await tools.execute_tool(
+            name="validate_claim", arguments={"claim": "Tokyo is 37M"},
+            session=None, member_id="strategist",
+        )
+    assert captured_prompts, "judge LLM was not called"
+    prompt = captured_prompts[0]
+    assert "<evidence>" in prompt and "</evidence>" in prompt
+    assert "untrusted" in prompt.lower() or "ignore" in prompt.lower()
