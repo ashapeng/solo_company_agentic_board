@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from server.execution import parse_delegation_plan, record_delegation_plan
 from server.harness.config import (
@@ -36,7 +36,8 @@ from .compaction import (
     compact_stage2_with_warnings,
 )
 from ..config import BoardMember, get_board_members, get_members_by_id, get_chairman_model, get_council_models
-from ..llm import query_llm, LLMResponse
+from ..llm import query_llm, LLMResponse, ToolCall
+from ..tools import Tool, ToolResult, execute_tool
 from ..metrics import CallMetrics, SessionMetrics
 from ..projection import project_board_decision, verification_to_dict
 from .prompts import format_stage1, format_stage2, format_stage3, format_stage4, format_standalone_secretary_brief
@@ -45,11 +46,210 @@ from .shortcut import ShortcutType, detect_shortcut
 logger = logging.getLogger(__name__)
 
 _LEDGER_DB_PATH = None  # Use default; tests can patch this
+MAX_TOOL_RESULT_CHARS = 8000
 
 
 class BoardDeliberationError(Exception):
     """Raised when a deliberation cannot complete (e.g. too few members responded)."""
     pass
+
+
+@dataclass
+class ToolBudget:
+    tool_calls_max: int
+    wall_seconds_max: int
+    per_call_timeout: float
+    open_browser_max: int
+    web_search_max: int
+    fetch_url_max: int
+    ask_user_max: int
+    tool_calls_used: int = 0
+    wall_seconds_used: float = 0.0
+    sub_used: dict[str, int] = field(default_factory=dict)
+
+    SUB_CAPS_BY_TOOL = {
+        "web_search": "web_search_max",
+        "open_browser": "open_browser_max",
+        "fetch_url": "fetch_url_max",
+        "ask_user_clarifying_question": "ask_user_max",
+    }
+
+    @classmethod
+    def for_mode(cls, mode: str, *, member_role: str = "member") -> "ToolBudget":
+        if mode == "fast":
+            return cls(0, 60, 240.0, 0, 0, 0, 1 if member_role == "chair" else 0)
+        if mode == "standard":
+            return cls(3, 180, 240.0, 1, 3, 2,
+                        2 if member_role == "chair" else 0)
+        if mode == "deep":
+            return cls(8, 480, 240.0, 3, 6, 4,
+                        3 if member_role == "chair" else 1)
+        raise ValueError(f"unknown mode {mode!r}; expected fast|standard|deep")
+
+    def can_call(self, name: str) -> bool:
+        if self.tool_calls_used >= self.tool_calls_max:
+            return False
+        cap_attr = self.SUB_CAPS_BY_TOOL.get(name)
+        if cap_attr is None:
+            return True
+        cap = getattr(self, cap_attr)
+        return self.sub_used.get(name, 0) < cap
+
+    def spend(self, name: str, cost_units: float) -> None:
+        self.tool_calls_used += 1
+        self.sub_used[name] = self.sub_used.get(name, 0) + 1
+
+    def exhausted(self) -> bool:
+        return self.tool_calls_used >= self.tool_calls_max
+
+
+@dataclass
+class MemberTurnResult:
+    content: str
+    tool_calls_made: int
+    finish_reason: str | None
+    aborted: bool = False
+    abort_reason: str | None = None
+    evidence_packets: list[str] = field(default_factory=list)
+
+
+def _budget_filtered_tools(all_tools: list[Tool], budget: ToolBudget) -> list[dict]:
+    """Return only the tool schemas the budget still allows."""
+    return [t.to_openai_schema() for t in all_tools if budget.can_call(t.name)]
+
+
+def _tool_call_message(tcs: list[ToolCall], reasoning_content: str | None = None) -> dict:
+    """Build the assistant message that records the tool_calls request."""
+    msg = {
+        "role": "assistant", "content": "",
+        "tool_calls": [
+            {"id": tc.id, "type": "function",
+             "function": {"name": tc.name,
+                          "arguments": json.dumps(tc.arguments)}}
+            for tc in tcs
+        ],
+    }
+    if reasoning_content:
+        msg["reasoning_content"] = reasoning_content
+    return msg
+
+
+class SimpleEvent:
+    """Lightweight event for the on_event stream during Phase 1.
+    Phase 2 replaces this with the proper Event hierarchy in live.py."""
+    def __init__(self, kind: str, *args: Any) -> None:
+        self.kind = kind
+        self.args = args
+    def __repr__(self) -> str:
+        return f"Event({self.kind!r}, {self.args!r})"
+
+
+async def agentic_member_turn(
+    *,
+    member: BoardMember,
+    model: str,
+    system_prompt: str,
+    initial_user_message: str,
+    tools: list[Tool],
+    budget: ToolBudget,
+    session: object,
+    stage: int,
+    on_event: Callable[[Any], None],
+) -> MemberTurnResult:
+    """Run the model in a tool-use loop bounded by `budget`.
+    Loop terminates when:
+      - LLM returns content with no tool_calls, OR
+      - budget is exhausted (one final tool_choice='none' call to write
+        the final analysis), OR
+      - wall-clock budget is exceeded.
+    """
+    on_event(SimpleEvent("MemberStart", member.id, stage))
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": initial_user_message}
+    ]
+    t_start = time.monotonic()
+
+    # Define _exec outside the loop; it captures member, session, on_event via closure
+    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+        on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
+        result = await execute_tool(
+            name=tc.name, arguments=tc.arguments,
+            session=session, member_id=member.id,
+        )
+        on_event(SimpleEvent("ToolResult", member.id, tc.name,
+                              result.summary, result.cost_units))
+        return tc, result
+
+    _iter = 0
+    _MAX_ITERS = max(budget.tool_calls_max + 4, 12)
+    final_instruction_appended = False
+
+    while True:
+        _iter += 1
+        if _iter > _MAX_ITERS:
+            on_event(SimpleEvent("MemberAborted", member.id, "max_iters_exceeded"))
+            return MemberTurnResult(
+                content="[Aborted: tool-use loop exceeded max iterations]",
+                tool_calls_made=budget.tool_calls_used,
+                finish_reason="aborted",
+                aborted=True,
+                abort_reason="max_iters_exceeded",
+            )
+        wall = time.monotonic() - t_start
+        budget.wall_seconds_used = wall
+        budget_tools = _budget_filtered_tools(tools, budget)
+        no_more_tools = (
+            not budget_tools
+            or budget.exhausted()
+            or wall >= budget.wall_seconds_max
+        )
+
+        # When budget is exhausted and tools were used, explicitly instruct the
+        # model to write its final analysis. Without this, some models (e.g.
+        # DeepSeek v4-pro) emit their own proprietary tool-call markup (DSML)
+        # instead of prose, because they expected to call another tool.
+        if no_more_tools and budget.tool_calls_used > 0 and not final_instruction_appended:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Your tool budget is exhausted. Produce your FINAL ANALYSIS now "
+                    "using only the evidence already gathered above. Follow the "
+                    "output format from your role's operating procedures. Mark any "
+                    "unresolved gaps as [UNRESOLVED]. Do NOT emit tool-call markup "
+                    "of any kind (no XML, no DSML, no function-call wrappers) — "
+                    "write plain analysis text."
+                ),
+            })
+            final_instruction_appended = True
+
+        on_event(SimpleEvent("MemberThinking", member.id))
+        response: LLMResponse = await query_llm(
+            model, messages,
+            system=system_prompt,
+            tools=None if no_more_tools else budget_tools,
+            tool_choice="none" if no_more_tools else "auto",
+            timeout=budget.per_call_timeout,
+        )
+
+        if not response.tool_calls:
+            on_event(SimpleEvent("MemberComplete", member.id, response.finish_reason))
+            return MemberTurnResult(
+                content=response.content or "",
+                tool_calls_made=budget.tool_calls_used,
+                finish_reason=response.finish_reason,
+            )
+
+        # Append assistant tool-call message
+        messages.append(_tool_call_message(response.tool_calls, response.reasoning_content))
+
+        # Execute tool calls in parallel
+        results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
+        for tc, result in results:
+            messages.append({
+                "role": "tool", "tool_call_id": tc.id,
+                "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
+            })
+            budget.spend(tc.name, result.cost_units)
 
 
 @dataclass
@@ -69,7 +269,23 @@ class BoardSession:
     stage1_responses: list[MemberResponse] = field(default_factory=list)
     stage2_responses: list[MemberResponse] = field(default_factory=list)
     stage3_synthesis: MemberResponse | None = None
-    secretary_brief: MemberResponse | None = None
+    secretary_briefs: list[MemberResponse] = field(default_factory=list)
+    continuation_count: int = 0
+    selected_council_ids: list[str] = field(default_factory=list)
+
+    @property
+    def secretary_brief(self) -> MemberResponse | None:
+        """Latest Secretary brief — alias for `secretary_briefs[-1]` for back-compat."""
+        return self.secretary_briefs[-1] if self.secretary_briefs else None
+
+    @secretary_brief.setter
+    def secretary_brief(self, value: MemberResponse | None) -> None:
+        """Setter retained for back-compat: appends to `secretary_briefs` if non-None.
+
+        New code should use `secretary_briefs.append(...)` directly.
+        """
+        if value is not None:
+            self.secretary_briefs.append(value)
     total_elapsed: float = 0.0
     metrics: SessionMetrics = field(default_factory=SessionMetrics)
     classification: dict | None = None  # query classification info
@@ -104,6 +320,9 @@ class BoardSession:
             "stage2": [_resp(r) for r in self.stage2_responses],
             "stage3": _resp(self.stage3_synthesis) if self.stage3_synthesis else None,
             "secretary_brief": _resp(self.secretary_brief) if self.secretary_brief else None,
+            "secretary_briefs": [_resp(b) for b in self.secretary_briefs],
+            "continuation_count": self.continuation_count,
+            "selected_council_ids": self.selected_council_ids,
             "decision": self.decision,
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,

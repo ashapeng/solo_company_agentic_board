@@ -8,11 +8,12 @@ Handlers are added one per provider in subsequent tasks.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -27,6 +28,14 @@ FALLBACK_BACKOFF_SECONDS = [1, 2]
 
 
 @dataclass
+class ToolCall:
+    """A single tool/function invocation requested by the model."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
 class LLMResponse:
     """Structured response from an LLM call."""
     content: str
@@ -36,6 +45,8 @@ class LLMResponse:
     latency_seconds: float
     finish_reason: str | None = None
     response_id: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    reasoning_content: str | None = None
 
 
 @dataclass
@@ -66,7 +77,7 @@ class LLMProviderError(Exception):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _full_messages(messages: list[dict[str, str]], system: str | None) -> list[dict[str, str]]:
+def _full_messages(messages: list[dict[str, Any]], system: str | None) -> list[dict[str, Any]]:
     """Build message list with optional system message prepended."""
     if system is None:
         return list(messages)
@@ -161,6 +172,40 @@ def _openai_shape_usage(response: Any) -> tuple[int, int]:
         or -1
     )
     return int(input_tokens), int(output_tokens)
+
+
+def _openai_shape_reasoning_content(response: Any) -> str | None:
+    """Extract reasoning_content from a response (Kimi/DeepSeek thinking mode)."""
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return None
+    msg = _get_attr_or_item(choices[0], "message", {}) or {}
+    rc = _get_attr_or_item(msg, "reasoning_content", None)
+    return str(rc) if rc else None
+
+
+def _openai_shape_tool_calls(response: Any) -> list[ToolCall]:
+    """Parse tool_calls out of an OpenAI-shape chat completion response."""
+    choices = _get_attr_or_item(response, "choices") or []
+    if not choices:
+        return []
+    msg = _get_attr_or_item(choices[0], "message", {}) or {}
+    raw_calls = _get_attr_or_item(msg, "tool_calls", None) or []
+    out: list[ToolCall] = []
+    for raw in raw_calls:
+        fn = _get_attr_or_item(raw, "function", {}) or {}
+        name = _get_attr_or_item(fn, "name", "") or ""
+        args_str = _get_attr_or_item(fn, "arguments", "") or ""
+        try:
+            args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
+        except json.JSONDecodeError:
+            args = {"_raw": args_str}
+        out.append(ToolCall(
+            id=str(_get_attr_or_item(raw, "id", "") or ""),
+            name=name,
+            arguments=args,
+        ))
+    return out
 
 
 def _gemini_text_part(genai_types: Any, text: str) -> Any:
@@ -272,7 +317,7 @@ async def _send_zai(
 
 async def _send_deepseek(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None,
     temperature: float,
@@ -280,6 +325,8 @@ async def _send_deepseek(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Send a request to DeepSeek via the OpenAI-compatible endpoint."""
     try:
@@ -312,6 +359,10 @@ async def _send_deepseek(
                 )
             kwargs["reasoning_effort"] = effort
 
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         t0 = time.monotonic()
@@ -328,6 +379,8 @@ async def _send_deepseek(
                 latency_seconds=latency,
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
+                tool_calls=_openai_shape_tool_calls(response),
+                reasoning_content=_openai_shape_reasoning_content(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
@@ -345,7 +398,7 @@ async def _send_deepseek(
 
 async def _send_kimi(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None,
     temperature: float,
@@ -353,6 +406,8 @@ async def _send_kimi(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Send a request to Moonshot/Kimi via the OpenAI-compatible endpoint."""
     try:
@@ -382,6 +437,10 @@ async def _send_kimi(
     if thinking is not None:
         kwargs["extra_body"] = {"thinking": {"type": "enabled" if thinking else "disabled"}}
 
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice
+
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         t0 = time.monotonic()
@@ -398,6 +457,8 @@ async def _send_kimi(
                 latency_seconds=latency,
                 finish_reason=_openai_shape_finish_reason(response),
                 response_id=_openai_shape_response_id(response),
+                tool_calls=_openai_shape_tool_calls(response),
+                reasoning_content=_openai_shape_reasoning_content(response),
             )
         except Exception as e:  # noqa: BLE001
             if not _is_retryable(e):
@@ -775,6 +836,10 @@ async def _send_openrouter(
 #                       timeout, max_retries, backoff_seconds) -> LLMResponse
 # ---------------------------------------------------------------------------
 
+# Providers whose handlers accept the `tools=` / `tool_choice=` kwargs.
+# Phase 1: Kimi + DeepSeek. Other providers will be wired in Phase 2.
+TOOL_SUPPORTING_PREFIXES: set[str] = {"kimi", "moonshot", "deepseek"}
+
 HandlerType = Callable[..., Awaitable[LLMResponse]]
 _PROVIDERS: dict[str, HandlerType] = {
     "glm": _send_zai,
@@ -844,6 +909,8 @@ async def _dispatch_to_handler(
     timeout: float,
     max_retries: int,
     backoff_seconds: list[int],
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> LLMResponse:
     """Dispatch a single call to the registered handler. Raises if no handler."""
     handler = _PROVIDERS.get(prefix)
@@ -852,9 +919,7 @@ async def _dispatch_to_handler(
             f"unknown provider prefix: {prefix!r} for model {model!r}. "
             f"Known prefixes: {sorted(_PROVIDERS)}"
         )
-    return await handler(
-        model,
-        messages,
+    handler_kwargs = dict(
         system=system,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -862,6 +927,10 @@ async def _dispatch_to_handler(
         max_retries=max_retries,
         backoff_seconds=backoff_seconds,
     )
+    if tools is not None and prefix in TOOL_SUPPORTING_PREFIXES:
+        handler_kwargs["tools"] = tools
+        handler_kwargs["tool_choice"] = tool_choice
+    return await handler(model, messages, **handler_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -870,9 +939,11 @@ async def _dispatch_to_handler(
 
 async def query_llm(
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     system: str | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: str = "auto",
     temperature: float = 0.7,
     max_tokens: int = 8192,        # was 4096 — reasoning models need headroom
     timeout: float = 240.0,        # was 120.0 — deep reasoning takes 60-90s
@@ -901,6 +972,7 @@ async def query_llm(
             timeout=timeout,
             max_retries=PRIMARY_MAX_RETRIES,
             backoff_seconds=PRIMARY_BACKOFF_SECONDS,
+            tools=tools, tool_choice=tool_choice,
         )
     except LLMProviderError as e:
         primary_exc = e
@@ -923,6 +995,7 @@ async def query_llm(
                 timeout=timeout,
                 max_retries=FALLBACK_MAX_RETRIES,
                 backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+                tools=tools, tool_choice=tool_choice,
             )
         except LLMProviderError as e:
             last_fallback_exc = e
@@ -940,6 +1013,7 @@ async def query_llm(
                 timeout=timeout,
                 max_retries=FALLBACK_MAX_RETRIES,
                 backoff_seconds=FALLBACK_BACKOFF_SECONDS,
+                tools=tools, tool_choice=tool_choice,
             )
         except LLMProviderError as e:
             last_fallback_exc = e

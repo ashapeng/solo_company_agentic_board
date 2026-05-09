@@ -1,0 +1,223 @@
+"""Contract tests for /sessions/{sid}/continue and /sessions/{sid}/adjourn."""
+
+import json
+import os
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from starlette.requests import Request
+
+from server.api.routes import board as board_routes
+from server.api.schemas import ContinueRequest
+from server.board.deliberation.orchestrator import BoardSession, MemberResponse
+
+
+def _fake_request(client_ip: str = "127.0.0.1") -> Request:
+    return Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/sessions/test/continue",
+        "headers": [],
+        "client": (client_ip, 9999),
+    })
+
+
+class ContinueEndpointTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = Path("data/sessions").resolve()
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.session_id = "board_99999"
+        self.session_path = self.tmp_dir / f"{self.session_id}.json"
+        # Seed a session in awaiting_chair_decision state.
+        seed = {
+            "session_id": self.session_id,
+            "user_query": "Q1",
+            "stage1": [],
+            "stage2": [],
+            "stage3": None,
+            "secretary_brief": {"member_id": "secretary", "stage": 4, "content": "brief r0", "model": "m", "elapsed_seconds": 0.1},
+            "secretary_briefs": [{"member_id": "secretary", "stage": 4, "content": "brief r0", "model": "m", "elapsed_seconds": 0.1}],
+            "continuation_count": 0,
+            "status": "awaiting_chair_decision",
+            "conversation": {"messages": [{"id": "user_0", "speaker": "user", "content": "Q1"}], "routing_trace": []},
+            "decision": None,
+            "delegation_plan": None,
+            "verification": None,
+            "memory": None,
+            "intake_cards": [],
+            "clarification": {},
+            "structured_output_warnings": [],
+            "evidence_packets": {},
+            "participation": [],
+            "classification": None,
+        }
+        self.session_path.write_text(json.dumps(seed))
+
+    def tearDown(self) -> None:
+        if self.session_path.exists():
+            self.session_path.unlink()
+        board_routes._DELIBERATE_REQUESTS.clear()
+
+    async def test_continue_unknown_session_returns_404(self) -> None:
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.continue_meeting(
+                session_id="board_99404",
+                req=ContinueRequest(user_input="hello"),
+                request=_fake_request(),
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_continue_invalid_session_id_format_returns_400(self) -> None:
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.continue_meeting(
+                session_id="not-a-valid-id",
+                req=ContinueRequest(user_input="hello"),
+                request=_fake_request(),
+            )
+        # _validate_session_id raises 400 for non-conforming IDs.
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_continue_empty_user_input_returns_400(self) -> None:
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.continue_meeting(
+                session_id=self.session_id,
+                req=ContinueRequest(user_input=""),
+                request=_fake_request(),
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_continue_session_not_awaiting_returns_409(self) -> None:
+        # Flip persisted status to running so the endpoint must reject.
+        data = json.loads(self.session_path.read_text())
+        data["status"] = "running"
+        self.session_path.write_text(json.dumps(data))
+
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.continue_meeting(
+                session_id=self.session_id,
+                req=ContinueRequest(user_input="Follow up"),
+                request=_fake_request(),
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    async def test_continue_at_cap_emits_meeting_capped_429(self) -> None:
+        os.environ["AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS"] = "1"
+        try:
+            data = json.loads(self.session_path.read_text())
+            data["continuation_count"] = 1  # already at cap
+            self.session_path.write_text(json.dumps(data))
+
+            from fastapi import HTTPException
+            with self.assertRaises(HTTPException) as ctx:
+                await board_routes.continue_meeting(
+                    session_id=self.session_id,
+                    req=ContinueRequest(user_input="One more"),
+                    request=_fake_request(),
+                )
+            self.assertEqual(ctx.exception.status_code, 429)
+            detail = ctx.exception.detail
+            if isinstance(detail, dict):
+                self.assertEqual(detail.get("event"), "meeting_capped")
+        finally:
+            os.environ.pop("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS", None)
+
+    async def test_continue_restores_selected_council(self) -> None:
+        """Continuation rounds must reuse the council from meeting start."""
+        # Seed session with explicit council selection.
+        data = json.loads(self.session_path.read_text())
+        data["selected_council_ids"] = ["strategist", "architect"]
+        self.session_path.write_text(json.dumps(data))
+
+        captured_council_ids: list[str] = []
+
+        async def fake_discuss(self_inner, *args, **kwargs):
+            captured_council_ids.extend([m.id for m in self_inner.council])
+            # Return the existing_session unchanged.
+            return kwargs.get("existing_session") or args[1] if len(args) > 1 else kwargs.get("existing_session")
+
+        with patch("server.board.deliberation.live.LiveBoardConversation.discuss", new=fake_discuss):
+            response = await board_routes.continue_meeting(
+                session_id=self.session_id,
+                req=ContinueRequest(user_input="Follow up"),
+                request=_fake_request(),
+            )
+            # Consume the SSE generator to trigger the async task.
+            async for _ in response.body_iterator:
+                pass
+
+        self.assertEqual(set(captured_council_ids), {"strategist", "architect"})
+
+
+class AdjournEndpointTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp_dir = Path("data/sessions").resolve()
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.session_id = "board_88888"
+        self.session_path = self.tmp_dir / f"{self.session_id}.json"
+        self.session_path.write_text(json.dumps({
+            "session_id": self.session_id,
+            "user_query": "Q1",
+            "status": "awaiting_chair_decision",
+            "continuation_count": 1,
+            "secretary_brief": {"member_id": "secretary", "stage": 4, "content": "b", "model": "m", "elapsed_seconds": 0.1},
+            "secretary_briefs": [{"member_id": "secretary", "stage": 4, "content": "b", "model": "m", "elapsed_seconds": 0.1}],
+            "conversation": {"messages": [], "routing_trace": []},
+            "stage1": [], "stage2": [], "stage3": None,
+            "decision": None, "delegation_plan": None, "verification": None, "memory": None,
+            "intake_cards": [], "clarification": {}, "structured_output_warnings": [],
+            "evidence_packets": {}, "participation": [], "classification": None,
+        }))
+
+    def tearDown(self) -> None:
+        if self.session_path.exists():
+            self.session_path.unlink()
+
+    async def test_adjourn_unknown_session_returns_404(self) -> None:
+        from fastapi import HTTPException
+        from server.api.schemas import AdjournRequest
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.adjourn_meeting(
+                session_id="board_77404",  # valid format, no on-disk file
+                req=AdjournRequest(),
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    async def test_adjourn_marks_session_adjourned(self) -> None:
+        from server.api.schemas import AdjournRequest
+        result = await board_routes.adjourn_meeting(
+            session_id=self.session_id,
+            req=AdjournRequest(ceo_decision="Ship it."),
+        )
+        self.assertEqual(result["status"], "adjourned")
+        self.assertEqual(result["session_id"], self.session_id)
+
+        # Verify the persisted file reflects the new status.
+        persisted = json.loads(self.session_path.read_text())
+        self.assertEqual(persisted["status"], "adjourned")
+
+    async def test_adjourn_idempotent(self) -> None:
+        from server.api.schemas import AdjournRequest
+        first = await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        second = await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        self.assertEqual(first["status"], "adjourned")
+        self.assertEqual(second["status"], "adjourned")
+
+    async def test_adjourn_rejects_running_session(self) -> None:
+        data = json.loads(self.session_path.read_text())
+        data["status"] = "running"
+        self.session_path.write_text(json.dumps(data))
+
+        from fastapi import HTTPException
+        from server.api.schemas import AdjournRequest
+        with self.assertRaises(HTTPException) as ctx:
+            await board_routes.adjourn_meeting(session_id=self.session_id, req=AdjournRequest())
+        self.assertEqual(ctx.exception.status_code, 409)
+
+
+if __name__ == "__main__":
+    unittest.main()

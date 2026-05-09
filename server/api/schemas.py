@@ -95,3 +95,10 @@ class HarnessReviewRunRequest(BaseModel):
 
 class HarnessReviewApprovalRequest(BaseModel):
     approve: bool = True
+
+
+class ContinueRequest(BaseModel):
+    user_input: str
+
+class AdjournRequest(BaseModel):
+    ceo_decision: str | None = None

@@ -14,6 +14,6 @@ export type {
   Tab,
 } from '../../shared/types';
 
-export { loadMembers, streamDeliberation } from '../../shared/api';
+export { loadMembers, streamDeliberation, streamContinuation } from '../../shared/api';
 export { GovernancePage } from './GovernancePage';
 export { PortfolioPage } from './PortfolioPage';

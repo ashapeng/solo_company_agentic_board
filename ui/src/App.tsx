@@ -7,6 +7,7 @@ import {
   PortfolioPage,
   loadMembers,
   streamDeliberation,
+  streamContinuation,
   type BoardMember,
   type BoardSession,
   type Classification,
@@ -58,6 +59,8 @@ function upsertConversationMessage(
     currentIndex === index ? { ...message, ...patch } : message
   ));
 }
+
+const maxContinuations = Number(import.meta.env.VITE_MAX_CONTINUATIONS ?? 2);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
@@ -204,6 +207,28 @@ export default function App() {
     event.preventDefault();
     const cleanQuery = query.trim();
     if (!cleanQuery || running) return;
+
+    // If a meeting is already at the CEO-decision checkpoint and we have headroom,
+    // route this submit as a follow-up instead of starting a new meeting.
+    if (
+      session?.session_id &&
+      tableStatus.label === 'CEO decision' &&
+      (session.continuation_count ?? 0) < maxContinuations
+    ) {
+      setRunning(true);
+      setError('');
+      setQuery('');
+      try {
+        await sendFollowup(cleanQuery);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Follow-up failed.';
+        setError(message);
+        setTableStatus({ label: 'Error', title: 'Follow-up stopped', detail: message });
+      } finally {
+        setRunning(false);
+      }
+      return;
+    }
 
     setRunning(true);
     setError('');
@@ -422,8 +447,7 @@ export default function App() {
     // ── Secretary Executive Brief (live discussion post-summary) ──────
     if (data.event === 'secretary_starting' && data.member_id) {
       const briefId = data.message_id || `secretary-brief-${data.session_id || Date.now()}`;
-      const isFinal = !!data.is_final;
-      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      const roundIndex = data.round_index ?? 0;
       setActiveStreamMessageId(briefId);
       setConversationMessages((current) => [
         ...current,
@@ -434,20 +458,19 @@ export default function App() {
           member_title: data.member_title || 'Board Secretary',
           speaker: 'agent',
           content: '',
-          role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+          role: 'Secretary',
           created_at: new Date().toISOString(),
         },
       ]);
       setSeatStates((states) => ({
         ...states,
-        [data.member_id!]: { status: 'active', label: isFinal ? 'finalizing brief…' : 'summarizing…' },
+        [data.member_id!]: { status: 'active', label: 'summarizing...' },
       }));
-      pushLiveFeed({ kind: 'speaking', memberId: data.member_id, text: `Secretary preparing ${briefMode.toLowerCase()} executive brief\u2026` });
+      pushLiveFeed({ kind: 'speaking', memberId: data.member_id, text: `Secretary preparing brief for round ${roundIndex}...` });
       return;
     }
 
     if (data.event === 'secretary_delta' && data.message_id) {
-      const isFinal = !!data.is_final;
       setConversationMessages((current) => upsertConversationMessage(current, {
         id: data.message_id!,
         turn_index: -1,
@@ -455,15 +478,14 @@ export default function App() {
         member_title: data.member_title,
         speaker: 'agent',
         content: data.content || '',
-        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        role: 'Secretary',
         simulated_stream: data.simulated_stream,
       }));
       return;
     }
 
     if (data.event === 'secretary_done' && data.message_id) {
-      const isFinal = !!data.is_final;
-      const briefMode = data.brief_mode || (isFinal ? 'FINAL' : 'INTERIM');
+      const roundIndex = data.round_index ?? 0;
       setConversationMessages((current) => upsertConversationMessage(current, {
         id: data.message_id!,
         turn_index: -1,
@@ -473,7 +495,7 @@ export default function App() {
         content: data.content || '',
         model: data.model,
         elapsed_seconds: data.elapsed,
-        role: isFinal ? 'Secretary-Final' : 'Secretary-Interim',
+        role: 'Secretary',
         simulated_stream: false,
       }));
       setActiveStreamMessageId((current) =>
@@ -482,13 +504,13 @@ export default function App() {
       if (data.member_id) {
         setSeatStates((states) => ({
           ...states,
-          [data.member_id!]: { status: 'done', label: `${briefMode} brief ready`, model: data.model },
+          [data.member_id!]: { status: 'done', label: 'brief ready', model: data.model },
         }));
       }
       pushLiveFeed({
         kind: 'done',
         memberId: data.member_id,
-        text: `${data.member_title || 'Secretary'} completed executive brief`,
+        text: `${data.member_title || 'Secretary'} completed brief for round ${roundIndex}`,
       });
       return;
     }
@@ -496,6 +518,15 @@ export default function App() {
     if (data.event === 'secretary_failed') {
       setActiveStreamMessageId(null);
       pushLiveFeed({ kind: 'failed', text: `Secretary brief failed: ${data.error || 'unknown error'}` });
+      return;
+    }
+
+    if (data.event === 'meeting_capped') {
+      pushLiveFeed({
+        kind: 'failed',
+        text: `Continuation cap reached (${data.continuation_count}/${data.max_continuations}). Start a new meeting to continue.`,
+      });
+      setTableStatus({ label: 'CEO decision', title: 'Cap reached — start new meeting to continue', detail: '' });
       return;
     }
 
@@ -699,6 +730,19 @@ export default function App() {
     }
   }
 
+  async function sendFollowup(text: string) {
+    const sessionId = session?.session_id;
+    if (!sessionId) return;
+    setActiveStreamMessageId(null);
+    try {
+      await streamContinuation(sessionId, text, { onEvent: handleStreamEvent });
+      loadMetricsSummary().then(setMetricsSummary).catch(() => undefined);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Follow-up failed.';
+      pushLiveFeed({ kind: 'failed', text: `Follow-up rejected: ${message}` });
+    }
+  }
+
   function mergeDelegatedTask(task: DelegatedTask) {
     setSession((current) => {
       if (!current?.delegation_plan) return current;
@@ -807,6 +851,14 @@ export default function App() {
                 activePhase={activePhase}
                 conversationMessages={conversationMessages}
                 activeStreamMessageId={activeStreamMessageId}
+                awaitingFollowup={
+                  tableStatus.label === 'CEO decision' &&
+                  (session?.continuation_count ?? 0) < maxContinuations
+                }
+                capReached={
+                  tableStatus.label === 'CEO decision' &&
+                  (session?.continuation_count ?? 0) >= maxContinuations
+                }
               />
             )}
             {activeTab === 'performance' && (

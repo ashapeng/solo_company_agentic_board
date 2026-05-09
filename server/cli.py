@@ -564,7 +564,104 @@ def cli():
         action="store_true",
         help="Also run Stage 4 verification during replay",
     )
+    parser.add_argument(
+        "--depth", choices=["fast", "standard", "deep"], default=None,
+        help="Force depth for all members (overrides chair's routing).",
+    )
+    parser.add_argument(
+        "--live-research", action="store_true",
+        help="Use the new live_research script (chair intake + agentic members).",
+    )
+    parser.add_argument(
+        "--intake-skip", action="store_true",
+        help="Skip chair intake; use DEFAULT_ROUTING.",
+    )
     args = parser.parse_args()
+
+    if args.live_research:
+        from server.board.deliberation.live import run_live_research
+        from server.board.deliberation.intake import ChairOverrides
+        from server.board.deliberation.followup import FollowupBuffer, parse_followup_line
+
+        members_filter = None
+        if args.members:
+            members_filter = [m.strip() for m in args.members.split(",") if m.strip()]
+
+        overrides = ChairOverrides(
+            depth=args.depth,
+            members_filter=members_filter,
+            intake=not args.intake_skip,
+        )
+
+        async def _ask_user(question: str, why: str) -> str:
+            print(f"\n[CHAIR ASKS] {question}\n  (why: {why})")
+            if not sys.stdin.isatty():
+                print("  (no tty — returning [NO_USER_RESPONSE])")
+                return "[NO_USER_RESPONSE]"
+            try:
+                return input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return "[NO_USER_RESPONSE]"
+
+        overrides.ask_user = _ask_user
+
+        def _print_event(ev):
+            kind = ev.get("event", str(ev)) if isinstance(ev, dict) else getattr(ev, "kind", str(ev))
+            print(f"  · {kind}")
+
+        async def _stdin_followup_reader(buf: FollowupBuffer) -> None:
+            loop = asyncio.get_running_loop()
+            while True:
+                try:
+                    line = await loop.run_in_executor(None, sys.stdin.readline)
+                except (EOFError, OSError):
+                    return
+                if not line:
+                    await asyncio.sleep(0.1)
+                    continue
+                f = parse_followup_line(line)
+                if f is None:
+                    continue
+                if f.target is None:
+                    print(f"  · followup ignored (no target prefix): {f.raw[:60]}")
+                    continue
+                await buf.add(f)
+                print(f"  · followup queued for {f.target}: {f.text[:60]}")
+
+        query = args.query or ""
+
+        async def _run_with_followups():
+            buf = FollowupBuffer() if sys.stdin.isatty() else None
+            reader_task = (
+                asyncio.create_task(_stdin_followup_reader(buf))
+                if buf is not None else None
+            )
+            print("\n[Hint] Type 'member: text' (e.g., 'strategist: search more on X') to inject follow-ups.")
+            print("[Hint] Press Ctrl-D to stop accepting follow-ups.\n")
+            try:
+                return await run_live_research(
+                    query=query, user_overrides=overrides,
+                    on_event=_print_event,
+                    followup_buffer=buf,
+                )
+            finally:
+                if reader_task is not None:
+                    reader_task.cancel()
+                    try:
+                        await reader_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+        result = asyncio.run(_run_with_followups())
+
+        print("\n=== Routing ===")
+        print(f"  decision_type: {result.routing.decision_type}")
+        print(f"  members: {[(m.member_id, m.mode) for m in result.routing.members]}")
+        for mid, mr in result.member_responses.items():
+            print(f"\n=== {mid} ===\n{mr.content}\n")
+        print("\n=== Secretary Brief ===")
+        print(result.secretary_brief)
+        return
 
     if args.replay:
         from pathlib import Path as _ReplayPath

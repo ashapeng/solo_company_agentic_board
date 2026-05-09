@@ -227,6 +227,7 @@ class LiveBoardConversation:
         self.on_event = on_event
         self.max_turns = max_turns or int(os.getenv("AGENTIC_BOARD_LIVE_MAX_TURNS", "5"))
         self.max_continuations = _positive_int_env("AGENTIC_BOARD_LIVE_MAX_CONTINUATIONS") or 2
+        self._current_round = 0
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self.on_event:
@@ -241,12 +242,44 @@ class LiveBoardConversation:
         verify: bool = False,  # kept for endpoint symmetry; live verification is deferred
         session_id: str | None = None,
         clarification_answers: dict[str, Any] | None = None,  # reserved for parity
+        existing_session: BoardSession | None = None,
     ) -> BoardSession:
         del verify, clarification_answers
-        session_id = session_id or f"board_{int(time.time())}"
-        session = BoardSession(session_id=session_id, user_query=user_query)
-        session.metrics = self.metrics
-        session.status = "running"
+
+        if existing_session is not None:
+            session = existing_session
+            session_id = session.session_id
+            # Cap check before doing any work.
+            if session.continuation_count >= self.max_continuations:
+                self._emit({
+                    "event": "meeting_capped",
+                    "session_id": session_id,
+                    "continuation_count": session.continuation_count,
+                    "max_continuations": self.max_continuations,
+                    "message": "Continuation cap reached. Adjourn to finalize.",
+                })
+                return session
+            session.continuation_count += 1
+            session.status = "running"
+            self._current_round = session.continuation_count
+            # Append the new CEO message to the conversation.
+            session.conversation["messages"].append({
+                "id": f"user_{len(session.conversation['messages'])}",
+                "turn_index": len(session.conversation["messages"]),
+                "member_id": self.chairperson.id,
+                "member_title": "CEO / Chairperson",
+                "role": "CEO",
+                "speaker": "user",
+                "content": user_query,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        else:
+            session_id = session_id or f"board_{int(time.time())}"
+            session = BoardSession(session_id=session_id, user_query=user_query)
+            session.metrics = self.metrics
+            session.status = "running"
+            self._current_round = 0
+        self.metrics = session.metrics
         t0 = time.monotonic()
         response_language = detect_response_language(user_query)
 
@@ -277,67 +310,72 @@ class LiveBoardConversation:
 
         query_type = None
         complexity = None
-        if member_ids:
-            selected = set(member_ids)
-            self.council = [
-                member for member in self.all_members
-                if member.id in selected and member.id != self.chairperson.id
-            ]
-            mode_reason = "Selected by manual scope."
-        elif not skip_classify:
-            from .classifier import classify_query
+        if existing_session is None:
+            if member_ids:
+                selected = set(member_ids)
+                self.council = [
+                    member for member in self.all_members
+                    if member.id in selected and member.id != self.chairperson.id
+                ]
+                mode_reason = "Selected by manual scope."
+            elif not skip_classify:
+                from .classifier import classify_query
 
-            classification = await classify_query(user_query)
-            query_type = classification.query_type
-            complexity = classification.complexity
-            selected = set(classification.relevant_member_ids)
-            self.council = [
-                member for member in self.all_members
-                if member.id in selected and member.id != self.chairperson.id
-            ]
-            session.classification = {
-                "query_type": classification.query_type,
-                "complexity": classification.complexity,
-                "relevant_member_ids": classification.relevant_member_ids,
-                "reasoning": classification.reasoning,
-                "required_capabilities": classification.required_capabilities or [],
-                "unavailable_capabilities": classification.unavailable_capabilities or [],
-                "stage_profile": classification.stage_profile,
-                "role_gap_memo": classification.role_gap_memo,
-            }
-            mode_reason = "Selected by capability routing."
+                classification = await classify_query(user_query)
+                query_type = classification.query_type
+                complexity = classification.complexity
+                selected = set(classification.relevant_member_ids)
+                self.council = [
+                    member for member in self.all_members
+                    if member.id in selected and member.id != self.chairperson.id
+                ]
+                session.classification = {
+                    "query_type": classification.query_type,
+                    "complexity": classification.complexity,
+                    "relevant_member_ids": classification.relevant_member_ids,
+                    "reasoning": classification.reasoning,
+                    "required_capabilities": classification.required_capabilities or [],
+                    "unavailable_capabilities": classification.unavailable_capabilities or [],
+                    "stage_profile": classification.stage_profile,
+                    "role_gap_memo": classification.role_gap_memo,
+                }
+                mode_reason = "Selected by capability routing."
+            else:
+                mode_reason = "Selected by full-board mode."
+
+            if not self.council:
+                self.council = []
+
+            self.model_assignments = _assign_models(
+                [*self.council, self.chairperson],
+                query_type=query_type,
+                config=get_config(),
+            )
+            session.participation = _build_participation_decisions(
+                self.all_members,
+                self.council,
+                chairman_id=self.chairperson.id,
+                classification=session.classification,
+                mode_reason=mode_reason,
+            )
+            session.selected_council_ids = [m.id for m in self.council]
         else:
-            mode_reason = "Selected by full-board mode."
+            mode_reason = "Reusing council from meeting start (continuation)."
 
-        if not self.council:
-            self.council = []
-
-        self.model_assignments = _assign_models(
-            [*self.council, self.chairperson],
-            query_type=query_type,
-            config=get_config(),
-        )
-        session.participation = _build_participation_decisions(
-            self.all_members,
-            self.council,
-            chairman_id=self.chairperson.id,
-            classification=session.classification,
-            mode_reason=mode_reason,
-        )
-
-        session.conversation = {
-            "messages": [{
-                "id": "user_0",
-                "turn_index": 0,
-                "member_id": self.chairperson.id,
-                "member_title": "CEO / Chairperson",
-                "role": "CEO",
-                "speaker": "user",
-                "content": user_query,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }],
-            "routing_trace": [],
-        }
+        if existing_session is None:
+            session.conversation = {
+                "messages": [{
+                    "id": "user_0",
+                    "turn_index": 0,
+                    "member_id": self.chairperson.id,
+                    "member_title": "CEO / Chairperson",
+                    "role": "CEO",
+                    "speaker": "user",
+                    "content": user_query,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }],
+                "routing_trace": [],
+            }
 
         self._emit({
             "event": "council_selected",
@@ -425,21 +463,6 @@ class LiveBoardConversation:
             messages.append(message)
             session.conversation["messages"].append(message.to_dict())
 
-            # ── Per-turn Secretary Brief ──────────────────────────────
-            # After each council member finishes speaking, the Secretary
-            # produces an incremental executive brief so the CEO can follow
-            # the discussion in real time without reading raw transcripts.
-            await self._produce_live_secretary_brief(
-                session=session,
-                user_query=user_query,
-                messages=messages,
-                response_language=response_language,
-                session_id=session_id,
-                turn_index=turn_index,
-                last_member=member,
-                is_final=False,
-            )
-
             used_member_ids.add(member.id)
             decision = route_next_speaker(
                 self.council,
@@ -463,9 +486,7 @@ class LiveBoardConversation:
                 messages=messages,
                 response_language=response_language,
                 session_id=session_id,
-                turn_index=len(messages),
-                last_member=None,
-                is_final=True,
+                round_index=self._current_round,
             )
 
         # Only emit chair_decision_required AFTER secretary has briefed.
@@ -734,16 +755,9 @@ class LiveBoardConversation:
         messages: list[ConversationMessage],
         response_language: str,
         session_id: str,
-        turn_index: int = 0,
-        last_member=None,
-        is_final: bool = False,
+        round_index: int,
     ) -> None:
-        """Summarise the live discussion via the Secretary agent.
-
-        Called after **each** council member speaks (``is_final=False``) for
-        incremental briefs, and once more at discussion end (``is_final=True``)
-        for the comprehensive final executive brief.
-        """
+        """Summarise the live discussion via the Secretary agent (one call per round)."""
         from ..config import get_members_by_id
         from ..llm import LLMStreamChunk, query_llm_stream
         from ..metrics import CallMetrics
@@ -757,42 +771,56 @@ class LiveBoardConversation:
         # Build transcript from all messages spoken so far
         transcript = _format_full_transcript(messages)
 
-        brief_mode = "FINAL" if is_final else f"INTERIM (after {last_member.title if last_member else f'turn #{turn_index}'})"
+        message_id = f"{session_id}_secretary_brief_r{round_index}"
 
         self._emit({
             "event": "secretary_starting",
             "session_id": session_id,
+            "message_id": message_id,
             "member_id": secretary.id,
             "member_title": secretary.title,
-            "turn_index": turn_index,
-            "brief_mode": brief_mode,
-            "is_final": is_final,
+            "round_index": round_index,
         })
 
         started = time.monotonic()
-        model = self.model_assignments.get(secretary.id, self.chairman_model)
+        # Pin the secretary to a non-reasoning model. Both kimi/k2.6 (chair) and
+        # deepseek-v4-pro (council) combine reasoning + output into one
+        # max_tokens budget; on the secretary's prompt they burn the entire
+        # budget on internal thinking and emit zero visible content
+        # (finish_reason=length, output_tokens=0). qwen3.6-max-preview is
+        # non-thinking by default and produces structured bullet output
+        # reliably (~77s, finish_reason=stop in production runs).
+        # Override via AGENTIC_BOARD_LIVE_SECRETARY_MODEL if a future config
+        # needs a different choice.
+        model = os.getenv("AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview")
         max_tokens = _resolve_live_turn_max_tokens(
             query_type=None,
             complexity=None,
         )
-        # Give the secretary more room for structured output
-        max_tokens = max(max_tokens, 3200)
+        # Belt-and-suspenders: 6000 covers a worst-case ~80-line bullet brief
+        # plus headroom for any provider that silently leaks reasoning tokens
+        # into the output budget. The brief itself is ~960 tokens of bullets;
+        # remaining ~5000 tokens absorb any reasoning the model insists on.
+        max_tokens = max(max_tokens, 6000)
 
-        system = _live_system_prompt(
-            secretary,
-            user_query=user_query,
+        # Use a MINIMAL system prompt for the live brief. The full secretary.md
+        # member prompt (~130 lines) combined with a long transcript triggers
+        # heavy reasoning on K2.6 / DeepSeek that consumes the entire token
+        # budget without emitting visible content. The user-prompt template
+        # already specifies the four-section format, attribution rules, and
+        # hard caps — that's enough for the model.
+        system = (
+            "You are the Board Secretary producing concise executive briefs "
+            "for the CEO. Follow the user message instructions exactly. Output "
+            "only the requested section headers and bullets — no preamble, no "
+            "closing remarks, no reasoning trace."
         )
 
         prompt = format_live_secretary_brief(
             user_query=user_query,
             transcript=transcript,
-            brief_mode=brief_mode,
-            is_final=is_final,
+            round_index=round_index,
         )
-
-        # Unique message_id per turn (final overrides previous)
-        suffix = "final" if is_final else f"t{turn_index}"
-        message_id = f"{session_id}_secretary_brief_{suffix}"
 
         brief_content = ""
         final_chunk: LLMStreamChunk | None = None
@@ -818,7 +846,7 @@ class LiveBoardConversation:
                     "message_id": message_id,
                     "member_id": secretary.id,
                     "member_title": secretary.title,
-                    "turn_index": turn_index,
+                    "round_index": round_index,
                     "delta": chunk.delta,
                     "content": brief_content,
                     "simulated_stream": chunk.simulated_stream,
@@ -829,7 +857,7 @@ class LiveBoardConversation:
                 "event": "secretary_failed",
                 "session_id": session_id,
                 "member_id": secretary.id,
-                "turn_index": turn_index,
+                "round_index": round_index,
                 "error": str(exc),
             })
             return
@@ -844,25 +872,21 @@ class LiveBoardConversation:
             "message_id": message_id,
             "member_id": secretary.id,
             "member_title": secretary.title,
-            "turn_index": turn_index,
+            "round_index": round_index,
             "content": brief_content,
             "model": final_model,
             "elapsed": elapsed,
             "finish_reason": finish_reason,
-            "is_final": is_final,
-            "brief_mode": brief_mode,
         })
 
-        # Persist only the final brief on the session; interim ones are live-only
-        if is_final:
-            from .orchestrator import MemberResponse
-            session.secretary_brief = MemberResponse(
-                member_id=secretary.id,
-                stage=4,
-                content=brief_content,
-                model=final_model,
-                elapsed_seconds=elapsed,
-            )
+        from .orchestrator import MemberResponse
+        session.secretary_briefs.append(MemberResponse(
+            member_id=secretary.id,
+            stage=4,
+            content=brief_content,
+            model=final_model,
+            elapsed_seconds=elapsed,
+        ))
         self.metrics.record(CallMetrics(
             member_id=secretary.id,
             stage=4,
@@ -1033,3 +1057,258 @@ def _format_full_transcript(messages: list[ConversationMessage]) -> str:
     for msg in messages:
         lines.append(f"**{msg.member_title}**: {msg.content}")
     return "\n\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# live_research script — Phase 1 implementation
+# ---------------------------------------------------------------------------
+
+import asyncio as _aio
+from dataclasses import dataclass as _dc, field as _field
+
+from ..config import get_council_models
+from ..llm import query_llm
+from ..tools import TOOLS, Tool
+from .intake import (
+    ChairOverrides, MemberAssignment, RoutingDecision, run_chair_intake,
+)
+from .orchestrator import (
+    MemberTurnResult, ToolBudget, agentic_member_turn,
+)
+
+
+UPGRADED_MEMBERS = {"strategist", "researcher", "product", "critic",
+                     "architect", "builder"}
+PHASE1_TOOLS_FOR_MEMBERS = ["web_search", "fetch_url", "open_browser",
+                             "ask_user_clarifying_question", "validate_claim"]
+
+
+@_dc
+class LiveResearchResult:
+    routing: RoutingDecision
+    member_responses: dict[str, MemberTurnResult] = _field(default_factory=dict)
+    secretary_brief: str = ""
+
+
+def _phase1_mode_override(assignments: list[MemberAssignment]) -> list[MemberAssignment]:
+    """Force any member NOT in UPGRADED_MEMBERS to mode=fast (no tools).
+    Phase 2: 6 council members are upgraded; chairperson runs intake separately,
+    secretary runs the brief separately."""
+    out: list[MemberAssignment] = []
+    for a in assignments:
+        if a.member_id in UPGRADED_MEMBERS:
+            out.append(a)
+        else:
+            out.append(MemberAssignment(
+                member_id=a.member_id, mode="fast",
+                focus=a.focus, priority=a.priority,
+            ))
+    return out
+
+
+def _select_member_model(member_id: str, council_models: list[str]) -> str:
+    """Round-robin council models by member id; deterministic for tests."""
+    if not council_models:
+        return get_chairman_model()
+    members = ["strategist", "product", "researcher", "critic",
+               "architect", "builder"]
+    try:
+        idx = members.index(member_id)
+    except ValueError:
+        idx = 0
+    return council_models[idx % len(council_models)]
+
+
+def _budget_descriptor(budget: ToolBudget) -> str:
+    return (f"{budget.tool_calls_max} tool calls, "
+            f"{budget.web_search_max} web searches, "
+            f"{budget.open_browser_max} browser opens, "
+            f"{budget.wall_seconds_max}s wall budget")
+
+
+def _user_message_for_member(query: str, focus: str, budget: ToolBudget) -> str:
+    return (f"User query: {query}\n\n"
+            f"Your focus: {focus}\n\n"
+            f"Your tool budget: {_budget_descriptor(budget)}.\n\n"
+            "Produce your Stage 1 analysis per your role's operating procedures.")
+
+
+async def run_live_research(
+    *,
+    query: str,
+    user_overrides: ChairOverrides | None = None,
+    on_event=None,
+    followup_buffer=None,
+) -> LiveResearchResult:
+    """Phase 1 live_research script: intake -> first round -> secretary brief.
+
+    followup_buffer: optional FollowupBuffer instance. When provided, the
+    function drains it between rounds and re-invokes targeted members with
+    a deep budget + the new focus. Loop is bounded to max_followup_rounds=10.
+    """
+    from types import SimpleNamespace
+    overrides = user_overrides or ChairOverrides()
+    on_event = on_event or (lambda e: None)
+    session = SimpleNamespace(
+        session_id=None,
+        ask_user=getattr(overrides, "ask_user", None),
+    )
+
+    routing = await run_chair_intake(
+        raw_query=query,
+        user_overrides=overrides,
+        session=session,
+        on_event=on_event,
+        chair_model=get_chairman_model(),
+    )
+    routing_with_phase1 = RoutingDecision(
+        interpreted_query=routing.interpreted_query,
+        decision_type=routing.decision_type,
+        complexity=routing.complexity,
+        importance=routing.importance,
+        rationale=routing.rationale,
+        members=_phase1_mode_override(routing.members),
+        script=routing.script,
+        deep_research_dossier=routing.deep_research_dossier,
+    )
+
+    members_by_id = get_members_by_id()
+    council = get_council_models()
+    available_tools = [TOOLS[n] for n in PHASE1_TOOLS_FOR_MEMBERS if n in TOOLS]
+
+    async def _run_one(asg: MemberAssignment):
+        member = members_by_id.get(asg.member_id)
+        if member is None:
+            return asg.member_id, None
+        budget = ToolBudget.for_mode(asg.mode, member_role="member")
+        tools_for_member = available_tools if asg.mode != "fast" else []
+        model = _select_member_model(asg.member_id, council)
+        result = await agentic_member_turn(
+            member=member,
+            model=model,
+            system_prompt=member.system_prompt,
+            initial_user_message=_user_message_for_member(
+                routing_with_phase1.interpreted_query, asg.focus, budget),
+            tools=tools_for_member,
+            budget=budget,
+            session=session,
+            stage=1,
+            on_event=on_event,
+        )
+        return asg.member_id, result
+
+    pairs = await _aio.gather(*[_run_one(a) for a in routing_with_phase1.members])
+    responses = {mid: r for mid, r in pairs if r is not None}
+
+    def _build_transcript(resp_dict: dict) -> str:
+        lines = []
+        for mid, r in resp_dict.items():
+            member = members_by_id.get(mid)
+            title = member.title if member else mid
+            lines.append(f"**{title}**: {r.content}")
+        return "\n\n".join(lines)
+
+    secretary_system = (
+        "You are the Board Secretary. Consolidate the council's Stage 1 outputs "
+        "into a precise executive brief.\n\n"
+        "Output sections, in order, omitting any that would be empty:\n"
+        "## Agreements\n"
+        "## Conflicts\n"
+        "## Open Questions\n"
+        "## Decision Needed From CEO\n"
+        "## Sources\n\n"
+        "Rules:\n"
+        "- Bullet points, terse, one claim per line.\n"
+        "- Attribute every claim with the member's title in square brackets at the end, "
+        "e.g., '[Customer Researcher]'.\n"
+        "- For ## Sources: extract every distinct source citation that members wrote inline "
+        "as `[source: <title>, <url>, retrieved <date>]`. Number them, dedupe by URL, and "
+        "list which members cited each one. Format: '1. <Title> — <URL> (retrieved <date>; "
+        "cited by: <Member Title>, <Member Title>)'. If no members cited any sources, OMIT "
+        "this section entirely.\n"
+        "- Do NOT invent claims, sources, or attributions not present in the input.\n"
+        "- Do NOT add commentary, conclusions, or recommendations of your own — only "
+        "consolidate what the council provided."
+    )
+    # Pin to a non-reasoning model (same pattern as _produce_live_secretary_brief).
+    # kimi/kimi-k2.6 (chair) burns its entire token budget on internal reasoning
+    # and emits empty content; qwen3.6-max-preview is non-thinking by default.
+    secretary_model = os.getenv(
+        "AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview"
+    )
+
+    async def _generate_brief(round_index: int) -> str:
+        transcript = _build_transcript(responses)
+        secretary_prompt = format_live_secretary_brief(
+            user_query=routing_with_phase1.interpreted_query,
+            transcript=transcript,
+            round_index=round_index,
+        )
+        brief_response = await query_llm(
+            secretary_model,
+            [{"role": "user", "content": secretary_prompt}],
+            system=secretary_system,
+            max_tokens=2000,
+            timeout=120.0,
+        )
+        return brief_response.content or "[Secretary brief unavailable]"
+
+    secretary_brief = await _generate_brief(round_index=0)
+
+    # ── Follow-up loop ────────────────────────────────────────────────────────
+    # Drain the buffer between rounds; re-invoke targeted members with deep
+    # budget and updated focus. Loop is bounded to prevent runaway execution.
+    if followup_buffer is not None:
+        from .followup import FollowupBuffer
+        from .orchestrator import SimpleEvent
+        max_followup_rounds = 10
+        rounds = 0
+        while rounds < max_followup_rounds:
+            rounds += 1
+            pending = await followup_buffer.snapshot()
+            if not pending:
+                break
+            for f in pending:
+                if f.target is None:
+                    on_event(SimpleEvent("FollowupSkipped", "no_target", f.raw))
+                    continue
+                if f.target not in UPGRADED_MEMBERS:
+                    on_event(SimpleEvent("FollowupSkipped", "unknown_member", f.target))
+                    continue
+                member = members_by_id.get(f.target)
+                if member is None:
+                    on_event(SimpleEvent("FollowupSkipped", "missing_member", f.target))
+                    continue
+                on_event(SimpleEvent("MemberRevising", f.target, f.text))
+                prev_content = (
+                    responses[f.target].content if f.target in responses else ""
+                )[:4000]
+                cont_msg = (
+                    f"Continue your earlier analysis with this new focus from the user:\n"
+                    f"\n{f.text}\n\n"
+                    f"Your earlier analysis:\n{prev_content}\n\n"
+                    f"Add new findings or revisions; reference your prior conclusions "
+                    f"where unchanged. Your tool budget for this revision: deep."
+                )
+                new_budget = ToolBudget.for_mode("deep", member_role="member")
+                new_result = await agentic_member_turn(
+                    member=member,
+                    model=_select_member_model(f.target, council),
+                    system_prompt=member.system_prompt,
+                    initial_user_message=cont_msg,
+                    tools=available_tools,
+                    budget=new_budget,
+                    session=session,
+                    stage=1,
+                    on_event=on_event,
+                )
+                responses[f.target] = new_result
+                on_event(SimpleEvent("MemberRevised", f.target, new_result.tool_calls_made))
+            # Regenerate secretary brief after this follow-up round
+            secretary_brief = await _generate_brief(round_index=rounds)
+
+    return LiveResearchResult(
+        routing=routing_with_phase1,
+        member_responses=responses,
+        secretary_brief=secretary_brief,
+    )

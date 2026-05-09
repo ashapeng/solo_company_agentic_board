@@ -71,40 +71,45 @@ class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             elapsed_seconds=0.1,
         )
 
-        with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
-            with patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])):
-                with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=first_synthesis)):
-                    with patch("server.board.deliberation.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
-                        with patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_query:
-                            with patch.object(BoardSession, "save", return_value=Path("data/sessions/board_verify.json")):
-                                mock_verify.side_effect = [
-                                    VerificationResult(
-                                        score=5,
-                                        passed=False,
-                                        deficiencies=["missing next steps"],
-                                        suggestions=["add concrete steps"],
-                                    ),
-                                    VerificationResult(
-                                        score=8,
-                                        passed=True,
-                                        deficiencies=[],
-                                        suggestions=[],
-                                    ),
-                                ]
-                                mock_query.return_value = LLMResponse(
-                                    content="### Executive Summary\nRevised with next steps.\n\n### SOTB Update\n- None.",
-                                    model="chair",
-                                    input_tokens=10,
-                                    output_tokens=10,
-                                    latency_seconds=0.1,
-                                )
+        with (
+            patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])),
+            patch.object(orchestrator, "stage2", new=AsyncMock(return_value=[])),
+            patch.object(orchestrator, "stage3", new=AsyncMock(return_value=first_synthesis)),
+            patch.object(orchestrator, "stage4_secretary_brief", new=AsyncMock(return_value=None)),
+            patch("server.board.deliberation.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify,
+            patch("server.board.deliberation.orchestrator.query_llm", new_callable=AsyncMock) as mock_query,
+            patch.object(BoardSession, "save", return_value=Path("data/sessions/board_verify.json")),
+            patch("server.board.deliberation.orchestrator._record_to_ledger"),
+            patch("server.board.deliberation.orchestrator.record_delegation_plan"),
+        ):
+            mock_verify.side_effect = [
+                VerificationResult(
+                    score=5,
+                    passed=False,
+                    deficiencies=["missing next steps"],
+                    suggestions=["add concrete steps"],
+                ),
+                VerificationResult(
+                    score=8,
+                    passed=True,
+                    deficiencies=[],
+                    suggestions=[],
+                ),
+            ]
+            mock_query.return_value = LLMResponse(
+                content="### Executive Summary\nRevised with next steps.\n\n### SOTB Update\n- None.",
+                model="chair",
+                input_tokens=10,
+                output_tokens=10,
+                latency_seconds=0.1,
+            )
 
-                                session = await orchestrator.deliberate(
-                                    "Should we pivot?",
-                                    skip_classify=True,
-                                    verify=True,
-                                    session_id="board_verify",
-                                )
+            session = await orchestrator.deliberate(
+                "Should we pivot?",
+                skip_classify=True,
+                verify=True,
+                session_id="board_verify",
+            )
 
         self.assertEqual(2, mock_verify.await_count)
         self.assertEqual(1, mock_query.await_count)

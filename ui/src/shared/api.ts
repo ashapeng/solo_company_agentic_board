@@ -111,6 +111,49 @@ export async function streamDeliberation(
   }
 }
 
+export async function streamContinuation(
+  sessionId: string,
+  userInput: string,
+  { onEvent }: { onEvent: (event: StreamEvent) => void },
+) {
+  const response = await fetch(`${API}/sessions/${encodeURIComponent(sessionId)}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_input: userInput }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Server error: ${response.status} - ${err}`);
+  }
+  if (!response.body) {
+    throw new Error('Server did not return a stream.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) continue;
+      try {
+        onEvent(JSON.parse(trimmed.slice(6)) as BoardSession & StreamEvent);
+      } catch {
+        // Ignore malformed partials and keepalives.
+      }
+    }
+  }
+}
+
 // ─── Routing signal (Phase A-lite) ─────────────────────────────────────────
 
 export type RoutingSignalSource = "manual_add" | "missing_voice_flag";

@@ -39,6 +39,8 @@ from .routes.harness import (
 from .routes.memory import get_sotb, review_sotb, update_sotb
 from .routes.system import metrics_summary, root
 from .schemas import (
+    AdjournRequest,
+    ContinueRequest,
     EvidencePacketRequest,
     FeedbackRequest,
     HarnessReviewApprovalRequest,
@@ -65,8 +67,10 @@ async def feedback(session_id: str, req: FeedbackRequest):
 
 
 __all__ = [
+    "AdjournRequest",
     "BoardDeliberationError",
     "BoardOrchestrator",
+    "ContinueRequest",
     "EvidencePacketRequest",
     "FeedbackRequest",
     "HarnessReviewApprovalRequest",
