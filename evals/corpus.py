@@ -6,9 +6,9 @@ per line. See docs/superpowers/specs/2026-05-15-board-hardening-design.md §4.2.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 CATEGORIES: tuple[str, ...] = (
     "hallucination_planted",
@@ -19,7 +19,6 @@ CATEGORIES: tuple[str, ...] = (
     "clean_baseline",
 )
 
-Tier = Literal["light", "standard", "heavy"]
 _VALID_TIERS = ("light", "standard", "heavy")
 
 _REQUIRED_FIELDS = ("id", "category", "query", "tier", "planted", "expected_outcome")

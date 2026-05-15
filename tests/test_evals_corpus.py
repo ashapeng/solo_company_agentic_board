@@ -61,7 +61,7 @@ def test_load_category_returns_prompts(tmp_path):
     assert prompts[0].expected_outcome == {"clarification_required": True}
 
 
-def test_load_all_dedupes_and_orders_by_category(tmp_path):
+def test_load_all_orders_by_category(tmp_path):
     corpus_dir = tmp_path / "corpus"
     _write_jsonl(
         corpus_dir / "ambiguous_query.jsonl",
@@ -95,7 +95,7 @@ def test_load_all_dedupes_and_orders_by_category(tmp_path):
     assert [p.id for p in prompts] == ["ambig-001", "clean-001"]
 
 
-def test_rejects_unknown_category(tmp_path):
+def test_load_all_ignores_unknown_category_files(tmp_path):
     corpus_dir = tmp_path / "corpus"
     _write_jsonl(
         corpus_dir / "nonsense.jsonl",
