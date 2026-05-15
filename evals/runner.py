@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"run_id: {run_id}")
 
     if not args.no_report:
-        from evals.reports import render_report
+        from evals.reporting import render_report
         diff_run_id = None
         if args.diff_against:
             diff_run_id = find_run_by_label(args.diff_against, db_path=args.db)

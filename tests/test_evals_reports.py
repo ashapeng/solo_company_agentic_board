@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from evals.ledger import create_run, init_db, record_signal
-from evals.reports import render_report
+from evals.reporting import render_report
 
 
 def _populate(db, run_id: str, category_counts: dict[str, tuple[int, int]]):
