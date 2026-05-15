@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 board = "server.cli:cli"
+evals = "evals.runner:main"
 
 [build-system]
 requires = ["hatchling"]
