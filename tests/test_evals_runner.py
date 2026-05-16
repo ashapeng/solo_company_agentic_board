@@ -124,3 +124,62 @@ async def test_run_corpus_records_error_when_deliberate_raises(tmp_path):
     assert rows[0]["passed"] == 0
     assert "provider failed" in (rows[0]["error"] or "")
     assert rows[0]["raw_session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_corpus_survives_unexpected_provider_error(tmp_path):
+    """A provider 4xx/5xx (or any non-BoardDeliberationError) on one prompt
+    must not kill the whole baseline — it should be recorded and the run
+    continues."""
+    db = tmp_path / "eval.db"
+    init_db(db)
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+
+    bad = EvalPrompt(
+        id="hall-001", category="hallucination_planted",
+        query="?", tier="heavy",
+        planted={"kind": "x", "expected_signal": "y", "ground_truth_note": "z"},
+        expected_outcome={"verifier_passed": False, "deficiency_contains": []},
+    )
+    good = EvalPrompt(
+        id="clean-001", category="clean_baseline",
+        query="?", tier="heavy",
+        planted={"kind": "n/a", "expected_signal": "no_signal", "ground_truth_note": "z"},
+        expected_outcome={"verifier_passed": True, "contradiction_surfaced": False},
+    )
+
+    good_session = BoardSession(
+        session_id="board_eval_clean_ok", user_query="?",
+        stage3_synthesis=MemberResponse(
+            member_id="chairperson", stage=3, content="ok",
+            model="m", elapsed_seconds=1.0,
+        ),
+        metrics=SessionMetrics(),
+        verification={"score": 9, "passed": True, "deficiencies": []},
+        total_elapsed=1.0,
+    )
+    # First prompt raises a generic Exception (e.g., openai.BadRequestError);
+    # second prompt returns normally.
+    mock_deliberate = AsyncMock(side_effect=[
+        RuntimeError("openai.BadRequestError: position 1 user must not be empty"),
+        good_session,
+    ])
+
+    with patch("evals.runner.BoardOrchestrator") as MockOrch:
+        MockOrch.return_value.deliberate = mock_deliberate
+        run_id = await run_corpus(
+            [bad, good], tier="heavy", label="resilience-run", config_version=0,
+            db_path=db, sessions_dir=sessions_dir,
+        )
+
+    rows = get_signals_for_run(run_id, db_path=db)
+    assert len(rows) == 2
+    by_prompt = {r["prompt_id"]: r for r in rows}
+    # Bad prompt: error recorded, not crash
+    assert by_prompt["hall-001"]["passed"] == 0
+    assert "RuntimeError" in (by_prompt["hall-001"]["error"] or "")
+    assert by_prompt["hall-001"]["raw_session_id"] is None
+    # Good prompt: ran normally despite the prior failure
+    assert by_prompt["clean-001"]["passed"] == 1
+    assert by_prompt["clean-001"]["raw_session_id"] == "board_eval_clean_ok"

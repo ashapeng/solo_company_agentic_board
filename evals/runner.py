@@ -64,6 +64,11 @@ async def _run_one_prompt(
     except BoardDeliberationError as e:
         logger.warning("deliberate failed for %s: %s", prompt.id, e)
         return ({}, None, str(e))
+    except Exception as e:
+        # Any other deliberation error (provider 4xx/5xx, network, parsing,
+        # etc.) records as a failed prompt rather than killing the whole run.
+        logger.exception("deliberate raised %s for %s", type(e).__name__, prompt.id)
+        return ({}, None, f"{type(e).__name__}: {e}")
 
     try:
         session.save(directory=str(sessions_dir))

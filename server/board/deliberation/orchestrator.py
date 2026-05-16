@@ -1513,8 +1513,10 @@ class BoardOrchestrator:
             logger.info("Verification score: %d/10 (passed: %s)", result.score, result.passed)
             session.verification = verification_to_dict(result)
 
-            # If failed, try one revision
-            if not result.passed:
+            # If failed, try one revision (skip if synthesis is empty —
+            # nothing to revise, and providers reject empty user messages).
+            prior_content = (session.stage3_synthesis.content or "").strip()
+            if not result.passed and prior_content:
                 logger.info("Verification failed. Requesting chairman revision...")
                 revision_prompt = (
                     f"Your previous synthesis scored {result.score}/10. "
@@ -1527,7 +1529,7 @@ class BoardOrchestrator:
                 revision_resp = await query_llm(
                     self.chairman_model,
                     messages=[
-                        {"role": "user", "content": session.stage3_synthesis.content},
+                        {"role": "assistant", "content": prior_content},
                         {"role": "user", "content": revision_prompt},
                     ],
                     system=self.chairman.system_prompt,
