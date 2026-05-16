@@ -302,8 +302,10 @@ async def verify_synthesis(
     pass_rate = supported / total if total else 0.0
     passed = contradicted == 0 and pass_rate >= pass_threshold
 
-    # Spec §3.5: synthesize backward-compat `score` as int 0..10
-    score = int(pass_rate * 10) if total > 0 else 5
+    # Spec §3.5: synthesize backward-compat `score` as int 0..10.
+    # `total > 0` is guaranteed here: we only reach this point when `cited`
+    # is non-empty (guarded above) and `per_claim` is built 1:1 from `cited`.
+    score = int(pass_rate * 10)
 
     # Step 5: per-claim deficiencies + surface uncited load-bearing claims as a warning
     deficiencies: list[str] = []
@@ -338,4 +340,41 @@ async def verify_synthesis(
         contradicted_count=contradicted,
         unverified_count=unverified,
         supported_count=supported,
+    )
+
+
+def build_revision_prompt(result: VerificationResult) -> str:
+    """Build the chair revision prompt from a verification result.
+
+    For BlindedVerificationResult with per_claim, use the per-claim format
+    from spec §5.2.4. Otherwise fall back to the legacy generic format.
+    """
+    if isinstance(result, BlindedVerificationResult) and result.per_claim:
+        failed = [r for r in result.per_claim if r["verdict"] != "SUPPORTED"]
+        if not failed:
+            # paranoid guard — shouldn't happen since we only call this when passed=False
+            return _legacy_revision_prompt(result)
+        lines = ["Your synthesis was verified claim-by-claim. The following claims failed:", ""]
+        for r in failed:
+            refs = ", ".join(r["evidence_refs"]) if r["evidence_refs"] else "(none)"
+            lines.append(f"  - {r['verdict']} - \"{r['claim_text']}\"")
+            lines.append(f"    Rationale: {r['rationale']}")
+            lines.append(f"    Cited evidence: {refs}")
+            lines.append("")
+        lines.extend([
+            "You must EITHER drop these claims, OR provide a new citation that supports",
+            "them. Do not rephrase. Do not assert them again without new evidence.",
+            "Re-emit the full synthesis.",
+        ])
+        return "\n".join(lines)
+    return _legacy_revision_prompt(result)
+
+
+def _legacy_revision_prompt(result: VerificationResult) -> str:
+    return (
+        f"Your previous synthesis scored {result.score}/10. "
+        f"Deficiencies found:\n"
+        + "\n".join(f"- {d}" for d in result.deficiencies)
+        + "\n\nPlease revise your synthesis to address these issues. "
+        "Keep the same Board Decision format."
     )

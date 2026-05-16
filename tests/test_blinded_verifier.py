@@ -203,3 +203,54 @@ async def test_blinded_verifier_unparseable_verdict_recorded_as_unverified():
         )
     assert result.unverified_count == 1
     assert result.per_claim[0]["verdict"] == "UNVERIFIED"
+
+
+from server.board.deliberation.verification import (
+    build_revision_prompt,
+)
+
+
+def test_build_revision_prompt_per_claim_format():
+    """When per_claim results are present, the revision prompt names each
+    failing claim with its verdict, rationale, and evidence."""
+    result = BlindedVerificationResult(
+        score=3, passed=False,
+        deficiencies=[], suggestions=[],
+        per_claim=[
+            {"claim_id": "a", "claim_text": "EV grew 30%",
+             "verdict": "CONTRADICTED",
+             "rationale": "source says 19%", "evidence_refs": ["https://reuters.com/x"]},
+            {"claim_id": "b", "claim_text": "Mistral MAU is 5M",
+             "verdict": "UNVERIFIED",
+             "rationale": "source off-topic", "evidence_refs": ["https://blog.example/y"]},
+            {"claim_id": "c", "claim_text": "Y is true",
+             "verdict": "SUPPORTED",
+             "rationale": "confirmed", "evidence_refs": ["https://wsj.com/z"]},
+        ],
+        supported_count=1, contradicted_count=1, unverified_count=1,
+    )
+
+    prompt = build_revision_prompt(result)
+
+    assert "claim-by-claim" in prompt
+    assert "CONTRADICTED" in prompt
+    assert "EV grew 30%" in prompt
+    assert "UNVERIFIED" in prompt
+    assert "Mistral MAU is 5M" in prompt
+    # The SUPPORTED claim must NOT appear (only failures)
+    assert "Y is true" not in prompt
+    assert "Do not rephrase" in prompt
+
+
+def test_build_revision_prompt_legacy_fallback_format():
+    """For a non-blinded VerificationResult (checklist fallback), the legacy
+    format is used."""
+    from server.board.deliberation.verification import VerificationResult
+    result = VerificationResult(
+        score=4, passed=False,
+        deficiencies=["needs more evidence", "executive summary missing"],
+    )
+    prompt = build_revision_prompt(result)
+    assert "scored 4/10" in prompt
+    assert "needs more evidence" in prompt
+    assert "executive summary missing" in prompt

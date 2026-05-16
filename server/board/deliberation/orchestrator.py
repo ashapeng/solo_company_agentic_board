@@ -1508,6 +1508,7 @@ class BoardOrchestrator:
                 stage2_compacted=compacted_s2_text,
                 user_query=effective_query,
                 query_type=query_type,
+                session=session,
             )
 
             logger.info("Verification score: %d/10 (passed: %s)", result.score, result.passed)
@@ -1517,14 +1518,9 @@ class BoardOrchestrator:
             # nothing to revise, and providers reject empty user messages).
             prior_content = (session.stage3_synthesis.content or "").strip()
             if not result.passed and prior_content:
+                from .verification import build_revision_prompt
                 logger.info("Verification failed. Requesting chairman revision...")
-                revision_prompt = (
-                    f"Your previous synthesis scored {result.score}/10. "
-                    f"Deficiencies found:\n"
-                    + "\n".join(f"- {d}" for d in result.deficiencies)
-                    + "\n\nPlease revise your synthesis to address these issues. "
-                    "Keep the same Board Decision format."
-                )
+                revision_prompt = build_revision_prompt(result)
 
                 revision_resp = await query_llm(
                     self.chairman_model,
@@ -1551,6 +1547,7 @@ class BoardOrchestrator:
                     stage2_compacted=compacted_s2_text,
                     user_query=effective_query,
                     query_type=query_type,
+                    session=session,
                 )
                 logger.info("Revision score: %d/10 (passed: %s)", result.score, result.passed)
                 session.verification = verification_to_dict(result)
