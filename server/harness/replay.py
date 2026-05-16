@@ -154,6 +154,7 @@ async def _rerun_stage3_and_verify(
                 stage2_compacted=compacted_text,
                 user_query=query,
                 query_type=query_type,
+                session=None,
             )
             result["verification_score"] = v.score
             result["verification_passed"] = v.passed
