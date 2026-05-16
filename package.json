@@ -1,0 +1,28 @@
+{
+  "name": "solo_company_agentic_board",
+  "version": "1.0.0",
+  "description": "A council of world-expert AI agents that deliberate as a company board of directors.",
+  "main": "generate_presentation.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ashapeng/solo_company_agentic_board.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ashapeng/solo_company_agentic_board/issues"
+  },
+  "homepage": "https://github.com/ashapeng/solo_company_agentic_board#readme",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}
