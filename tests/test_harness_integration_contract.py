@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -324,6 +325,48 @@ class DriftRecommendationTest(unittest.TestCase):
 
         categories = {r["category"] for r in review.get("recommendations", [])}
         self.assertIn("drift", categories)
+
+
+def test_harness_config_hardening_defaults(tmp_path, monkeypatch):
+    """hardening block ships with P1 defaults; load preserves them on empty JSON."""
+    from server.harness.config import HarnessConfig, get_config, load_config
+
+    cfg = HarnessConfig()
+    assert isinstance(cfg.hardening, dict)
+    assert cfg.hardening["atomizer_model"] == "qwen/qwen3.6-max-preview"
+    assert cfg.hardening["blinded_verifier_pass_threshold"] == 0.80
+    assert cfg.hardening["blinded_verifier_evidence_max_chars"] == 4000
+
+
+def test_harness_config_hardening_overrides_from_json(tmp_path):
+    """Custom hardening values in harness_config.json override defaults."""
+    from server.harness.config import load_config
+
+    path = tmp_path / "harness_config.json"
+    path.write_text(json.dumps({
+        "stage1_max_tokens": 1200,
+        "stage2_max_tokens": 800,
+        "stage3_max_tokens": 4000,
+        "stage4_max_tokens": 3000,
+        "revision_max_tokens": 2500,
+        "min_stage1_responses": 3,
+        "min_stage2_responses": 2,
+        "verification_threshold": 7.0,
+        "max_revision_attempts": 1,
+        "complexity_multipliers": {"simple": 0.6, "moderate": 1.0, "complex": 1.5},
+        "per_query_type": {},
+        "hardening": {
+            "atomizer_model": "qwen/qwen3.6-max-preview",
+            "blinded_verifier_pass_threshold": 0.7,
+            "blinded_verifier_evidence_max_chars": 6000,
+        },
+        "version": 5,
+        "last_modified": "2026-05-16T00:00:00+00:00",
+    }))
+
+    cfg = load_config(path)
+    assert cfg.hardening["blinded_verifier_pass_threshold"] == 0.7
+    assert cfg.hardening["blinded_verifier_evidence_max_chars"] == 6000
 
 
 if __name__ == "__main__":

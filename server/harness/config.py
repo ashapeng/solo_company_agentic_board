@@ -59,6 +59,13 @@ class HarnessConfig:
     # Per-query-type overrides (Phase B+ tuner slot)
     per_query_type: dict = field(default_factory=dict)
 
+    # Board hardening (P1+)
+    hardening: dict = field(default_factory=lambda: {
+        "atomizer_model": "qwen/qwen3.6-max-preview",
+        "blinded_verifier_pass_threshold": 0.80,
+        "blinded_verifier_evidence_max_chars": 4000,
+    })
+
     # Version tracking
     version: int = 1
     last_modified: str = ""

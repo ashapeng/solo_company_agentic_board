@@ -14,6 +14,11 @@
     "complex": 1.5
   },
   "per_query_type": {},
+  "hardening": {
+    "atomizer_model": "qwen/qwen3.6-max-preview",
+    "blinded_verifier_pass_threshold": 0.8,
+    "blinded_verifier_evidence_max_chars": 4000
+  },
   "version": 2,
-  "last_modified": "2026-05-09T03:35:19.758858+00:00"
+  "last_modified": "2026-05-16T21:37:32.197433+00:00"
 }
