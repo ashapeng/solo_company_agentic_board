@@ -267,3 +267,33 @@ def test_source_quality_trap_checker_fails_when_verdict_still_supported():
         ],
     )
     assert check_signal_for_prompt(prompt, signals) is False
+
+
+def test_board_session_tool_call_results_defaults_empty():
+    """New BoardSession ships with tool_call_results == []."""
+    session = BoardSession(session_id="board_test", user_query="x")
+    assert session.tool_call_results == []
+
+
+def test_board_session_to_dict_includes_tool_call_results_roundtrip():
+    """When tool_call_results carries entries, they survive to_dict()."""
+    entry = {
+        "member_id": "strategist",
+        "stage": 1,
+        "tool_name": "validate_claim",
+        "tool_call_id": "tc_1",
+        "arguments": {"claim": "X is 8%"},
+        "summary": "validate_claim: UNVERIFIED",
+        "content_for_model": "VERDICT: UNVERIFIED ...",
+        "verdict": "UNVERIFIED",
+        "error": None,
+        "elapsed_seconds": 1.23,
+        "timestamp": "2026-05-17T00:00:00+00:00",
+    }
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        tool_call_results=[entry],
+    )
+    d = session.to_dict()
+    assert "tool_call_results" in d
+    assert d["tool_call_results"] == [entry]

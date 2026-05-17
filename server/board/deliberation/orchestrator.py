@@ -389,6 +389,11 @@ class BoardSession:
     # ContradictionFinding.to_dict() dicts. Populated only when verify=True
     # and ≥2 members responded at Stage 1.
     contradictions: list = field(default_factory=list)
+    # Per-tool-call audit trail (separate from contradictions/atomized_claims).
+    # Populated by `agentic_member_turn` for every tool call. Each entry is a
+    # plain dict — see `_make_tool_call_record` for shape. Consumed by
+    # `evals/signals.py::extract_signals` to populate validate_claim_verdicts.
+    tool_call_results: list[dict] = field(default_factory=list)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -424,6 +429,7 @@ class BoardSession:
             "evidence_packets": self.evidence_packets,
             "atomized_claims": self.atomized_claims,
             "contradictions": self.contradictions,
+            "tool_call_results": self.tool_call_results,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
