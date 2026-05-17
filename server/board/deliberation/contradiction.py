@@ -257,8 +257,10 @@ async def detect_contradictions(
       3. Run the LLM judge on each candidate in parallel. Only
          `CONTRADICTORY` verdicts become ContradictionFindings.
 
-    Returns the findings in input order. Never raises on judge failure — a
-    flaky pair is dropped silently (logged at WARNING by `_judge_pair`).
+    Returns the findings in candidate-evaluation order — input combinations
+    order when the cap doesn't fire, score-sorted order when it does. Never
+    raises on judge failure: a flaky pair is dropped silently (logged at
+    WARNING by `_judge_pair`).
     """
     # Flatten (member_id, claim) so we can iterate combinations cleanly.
     flat: list[tuple[str, dict]] = []
@@ -298,10 +300,16 @@ async def detect_contradictions(
         (claim_a, claim_b), verdict = item
         if verdict["verdict"] != "CONTRADICTORY":
             continue
+        # _parse_judge_response returns "none" (not "") when SEVERITY is missing;
+        # "none" is truthy so we can't rely on `or "minor"`. A CONTRADICTORY
+        # verdict must carry one of the three documented severities.
+        severity = verdict["severity"]
+        if severity not in ("load_bearing", "material", "minor"):
+            severity = "minor"
         findings.append(ContradictionFinding(
             topic=verdict["topic"] or "(no topic)",
             claim_a=claim_a,
             claim_b=claim_b,
-            severity=verdict["severity"] or "minor",
+            severity=severity,
         ))
     return findings

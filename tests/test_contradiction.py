@@ -203,6 +203,29 @@ async def test_detect_contradictions_returns_only_contradictory_verdicts():
 
 
 @pytest.mark.asyncio
+async def test_detect_contradictions_defaults_invalid_severity_to_minor():
+    """A CONTRADICTORY verdict where the LLM omits a usable SEVERITY value
+    must still emit a finding with one of the three documented severities
+    (load_bearing | material | minor). Without the explicit fallback the
+    parser's "none" sentinel would slip through (truthy string)."""
+    atomized = {
+        "strategist": [_claim("strategist", "EV growth was 19%")],
+        "critic":     [_claim("critic",     "EV growth was 16%")],
+    }
+    # SEVERITY field omitted entirely → _parse_judge_response returns "none".
+    judge_response = "VERDICT: CONTRADICTORY\nTOPIC: EV growth"
+    with patch(
+        "server.board.deliberation.contradiction.query_llm",
+        new=AsyncMock(return_value=_llm(judge_response)),
+    ):
+        findings = await detect_contradictions(
+            atomized, judge_model="m", max_pairs=12,
+        )
+    assert len(findings) == 1
+    assert findings[0].severity == "minor"
+
+
+@pytest.mark.asyncio
 async def test_detect_contradictions_drops_consistent_verdicts():
     """Judge says CONSISTENT → no finding emitted."""
     atomized = {
