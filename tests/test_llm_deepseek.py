@@ -119,6 +119,10 @@ async def test_deepseek_v4_pro_omits_temperature(monkeypatch):
 
 async def test_deepseek_v4_flash_passes_temperature(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+    # conftest.py loads .env, which may set DEEPSEEK_REASONING_EFFORT=low for
+    # the production board. This test asserts the kwarg is absent when no
+    # effort is requested, so isolate it from the ambient env.
+    monkeypatch.delenv("DEEPSEEK_REASONING_EFFORT", raising=False)
     fake_openai = SimpleNamespace(OpenAI=_FakeOpenAI)
     with patch.dict("sys.modules", {"openai": fake_openai}):
         await llm.query_llm(
