@@ -378,7 +378,9 @@ async def agentic_member_turn(
         messages.append(_tool_call_message(response.tool_calls, response.reasoning_content))
 
         # Execute tool calls in parallel
+        t_call_start = time.monotonic()
         results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
+        call_elapsed = time.monotonic() - t_call_start
         for tc, result in results:
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
@@ -407,6 +409,19 @@ async def agentic_member_turn(
                             "summary": (result.summary or "")[:200],
                         },
                     )
+
+            # Tool-call persistence (unblocker for source_quality_trap eval).
+            # Guarded so existing SimpleNamespace-based tests still pass.
+            if hasattr(session, "tool_call_results"):
+                session.tool_call_results.append(
+                    _make_tool_call_record(
+                        member=member,
+                        stage=stage,
+                        tool_call=tc,
+                        tool_result=result,
+                        elapsed_seconds=call_elapsed,
+                    )
+                )
 
 
 @dataclass
