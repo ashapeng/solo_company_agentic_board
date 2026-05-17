@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from server.board.source_authority import passes_authority_threshold
+from server.harness.config import get_config
 
 ToolHandler = Callable[..., Awaitable["ToolResult"]]
 
@@ -557,11 +558,15 @@ async def _handle_validate_claim(
         )
 
     # Step 2: build judge prompt
+    # Top-N evidence shown to the judge AND scored by the source-authority check
+    # below; keep the two slices in lockstep so the downgrade always evaluates
+    # exactly what the judge saw.
+    top_n = 5
     evidence_text = "\n".join(
         f"- {r.get('title', '(no title)')}: "
         f"{(r.get('snippet') or r.get('description') or '')[:300]} "
         f"({r.get('url', '')})"
-        for r in results[:5]
+        for r in results[:top_n]
     )
     judge_prompt = (
         f"Claim to verify:\n{claim}\n\n"
@@ -622,9 +627,8 @@ async def _handle_validate_claim(
     # the judge — no extra calls.
     downgrade_note = ""
     if verdict == "SUPPORTED":
-        ref_urls = [r.get("url", "") for r in results[:5] if r.get("url")]
-        from server.harness.config import get_config as _get_cfg
-        overrides = (_get_cfg().hardening or {}).get("source_authority_overrides") or {}
+        ref_urls = [r["url"] for r in results[:top_n] if r.get("url")]
+        overrides = (get_config().hardening or {}).get("source_authority_overrides") or {}
         passes, rationale = passes_authority_threshold(ref_urls, overrides=overrides)
         if not passes:
             verdict = "UNVERIFIED"
