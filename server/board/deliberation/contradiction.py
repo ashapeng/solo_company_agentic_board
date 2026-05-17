@@ -39,7 +39,7 @@ _ENTITY_STOPWORDS: set[str] = {
     "more", "most", "less", "least", "many", "much", "some", "all", "any",
     "their", "they", "them", "than", "then", "also", "between", "among",
     "did", "does", "doing", "done", "could", "should", "would", "may",
-    "might", "must", "can", "must",
+    "might", "must", "can",
 }
 
 
@@ -66,10 +66,7 @@ class ContradictionFinding:
 
 # ─── Topic clustering (pure, deterministic) ─────────────────────────────────
 
-_NUM_RE = re.compile(
-    r"\$?(\d+(?:\.\d+)?)\s*([KMBT%]?)",
-    re.IGNORECASE,
-)
+_NUM_RE = re.compile(r"\$?(\d+(?:\.\d+)?)\s*([KMBTkmbt%]?)")
 _UNIT_MULTIPLIERS = {"": 1, "k": 1_000, "m": 1_000_000, "b": 1_000_000_000, "t": 1_000_000_000_000}
 
 
