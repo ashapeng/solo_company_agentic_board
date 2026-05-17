@@ -136,6 +136,57 @@ def _tool_call_message(tcs: list[ToolCall], reasoning_content: str | None = None
     return msg
 
 
+# ─── P3b: Tool-error revision loop (spec §7.2) ──────────────────────────────
+
+# Verbatim from spec §7.2.2. Filled with {tool_name}, {contradicted_claim},
+# {rationale} by `_build_revision_forcing_message`.
+REVISION_FORCING_PROMPT = (
+    "⚠ FORCED REVISION — A tool you called returned CONTRADICTED for a claim "
+    "you made or relied on:\n"
+    "\n"
+    "  Tool:           {tool_name}\n"
+    "  Contradicted:   \"{contradicted_claim}\"\n"
+    "  Rationale:      {rationale}\n"
+    "\n"
+    "You MUST do one of the following before continuing:\n"
+    "  (a) Drop this claim from your analysis entirely.\n"
+    "  (b) Provide a new citation that supports the claim, AND call validate_claim\n"
+    "      again to confirm.\n"
+    "\n"
+    "Do not re-assert the contradicted claim without new evidence."
+)
+
+
+def _build_revision_forcing_message(
+    tool_call: "ToolCall",
+    tool_result: "ToolResult",
+) -> dict[str, str]:
+    """Format one user-role message that forces a member to revise after a
+    CONTRADICTED tool result (spec §7.2.1, §7.2.2).
+
+    The `Contradicted:` field carries the tool result's `summary` (which
+    already names the tool and verdict). The `Rationale:` field carries the
+    first 500 chars of `content_for_model` — for `validate_claim` this
+    includes the truncated claim text, the judge's rationale, and the
+    KEY_SOURCES line, which is enough for the model to decide whether to
+    drop the claim or re-validate it.
+
+    No `parse_claim_from_summary` helper is needed (see plan refinement R3):
+    the spec mentions one abstractly, but in practice the claim text already
+    appears in `content_for_model` and threading a separate field through
+    every tool's ToolResult would be API churn for one tool.
+    """
+    rationale = (tool_result.content_for_model or "")[:500]
+    return {
+        "role": "user",
+        "content": REVISION_FORCING_PROMPT.format(
+            tool_name=tool_call.name,
+            contradicted_claim=tool_result.summary or "",
+            rationale=rationale,
+        ),
+    }
+
+
 class SimpleEvent:
     """Lightweight event for the on_event stream during Phase 1.
     Phase 2 replaces this with the proper Event hierarchy in live.py."""
@@ -165,6 +216,13 @@ async def agentic_member_turn(
         the final analysis), OR
       - wall-clock budget is exceeded.
     """
+    # P3b: per-member-per-stage forced-revision counter and cap (spec section 7.2.3).
+    # Read once at turn entry -- avoids mid-loop behavior changes from a
+    # concurrent harness tuner edit.
+    _hardening = (get_config().hardening or {})
+    forced_revision_cap = int(_hardening.get("max_forced_revisions_per_member", 2))
+    forced_revisions_used = 0
+
     on_event(SimpleEvent("MemberStart", member.id, stage))
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": initial_user_message}
@@ -252,6 +310,28 @@ async def agentic_member_turn(
                 "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
             })
             budget.spend(tc.name, result.cost_units)
+
+            # P3b: forced revision on CONTRADICTED tool results (spec section 7.2.1).
+            # Each CONTRADICTED return consumes one slot up to the cap; beyond
+            # the cap we log a "stuck member" warning (Refinement R5) and let
+            # the loop continue without injecting another forced turn.
+            if result.triggers_revision:
+                if forced_revisions_used < forced_revision_cap:
+                    messages.append(_build_revision_forcing_message(tc, result))
+                    forced_revisions_used += 1
+                else:
+                    logger.warning(
+                        "P3b: forced-revision cap reached for stuck member; "
+                        "skipping injection",
+                        extra={
+                            "member_id": member.id,
+                            "stage": stage,
+                            "forced_revisions_used": forced_revisions_used,
+                            "forced_revision_cap": forced_revision_cap,
+                            "tool_name": tc.name,
+                            "summary": (result.summary or "")[:200],
+                        },
+                    )
 
 
 @dataclass

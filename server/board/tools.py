@@ -29,6 +29,16 @@ class ToolResult:
     artifact_id: str | None = None
     error: str | None = None
 
+    @property
+    def triggers_revision(self) -> bool:
+        """True iff this result should trigger the P3b forced-revision loop
+        (spec §7.2.1). Pins the contract for tool authors: place the literal
+        token ``CONTRADICTED`` somewhere in ``summary`` and the orchestrator
+        will inject a forced revision turn after this result lands in the
+        member's message history. Case-sensitive substring match on
+        ``summary`` only — never ``content_for_model``."""
+        return "CONTRADICTED" in (self.summary or "")
+
 
 @dataclass
 class Tool:
