@@ -154,3 +154,79 @@ def _score_pair_overlap(claim_a: dict, claim_b: dict) -> float:
                 numeric_hits += 1
     # Weight: each shared entity = 2pts; each numeric overlap = 1pt.
     return float(entities_shared * 2 + numeric_hits)
+
+
+# ─── LLM judge (per candidate pair) ─────────────────────────────────────────
+
+from server.board.llm import query_llm  # noqa: E402  (deferred to keep the pure half import-free)
+
+
+CONTRADICTION_JUDGE_PROMPT = """Two board members made claims about the same topic. Are they contradictory?
+
+MEMBER A's claim:
+{claim_a_text}
+Evidence cited: {claim_a_refs}
+
+MEMBER B's claim:
+{claim_b_text}
+Evidence cited: {claim_b_refs}
+
+Verdict rules:
+  CONTRADICTORY  - A and B cannot both be true
+  CONSISTENT     - A and B can both be true (different aspects, compatible numbers)
+  UNRELATED      - A and B are about different things; no contradiction
+
+If CONTRADICTORY, also rate severity:
+  load_bearing - if either claim is central to a recommendation
+  material     - meaningful disagreement
+  minor        - phrasing difference, not substantive
+
+Respond exactly:
+VERDICT: <CONTRADICTORY|CONSISTENT|UNRELATED>
+SEVERITY: <load_bearing|material|minor|none>
+TOPIC: <short topic phrase>"""
+
+
+_VERDICT_RE = re.compile(r"VERDICT:\s*(CONTRADICTORY|CONSISTENT|UNRELATED)", re.IGNORECASE)
+_SEVERITY_RE = re.compile(r"SEVERITY:\s*(load_bearing|material|minor|none)", re.IGNORECASE)
+_TOPIC_RE = re.compile(r"TOPIC:\s*(.+)", re.IGNORECASE)
+
+
+def _parse_judge_response(raw: str) -> tuple[str, str, str]:
+    """Return (verdict, severity, topic). Defaults to CONSISTENT/none/'' when
+    the model didn't follow the format — never raises."""
+    if not raw:
+        return ("CONSISTENT", "none", "")
+    m_v = _VERDICT_RE.search(raw)
+    verdict = m_v.group(1).upper() if m_v else "CONSISTENT"
+    m_s = _SEVERITY_RE.search(raw)
+    severity = m_s.group(1).lower() if m_s else "none"
+    m_t = _TOPIC_RE.search(raw)
+    topic = m_t.group(1).strip() if m_t else ""
+    return (verdict, severity, topic)
+
+
+async def _judge_pair(claim_a: dict, claim_b: dict, *, model: str) -> dict[str, str]:
+    """Run the blinded judge LLM on one candidate pair. Returns
+    {verdict, severity, topic}. Errors are downgraded to CONSISTENT so a
+    flaky judge can't manufacture noise."""
+    prompt = CONTRADICTION_JUDGE_PROMPT.format(
+        claim_a_text=str(claim_a.get("text", "")),
+        claim_a_refs=", ".join(claim_a.get("evidence_refs") or ["[UNVERIFIED]"]),
+        claim_b_text=str(claim_b.get("text", "")),
+        claim_b_refs=", ".join(claim_b.get("evidence_refs") or ["[UNVERIFIED]"]),
+    )
+    try:
+        resp = await query_llm(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=200,
+            timeout=120.0,
+            fallback=True,
+        )
+        verdict, severity, topic = _parse_judge_response(resp.content or "")
+    except Exception as e:
+        logger.warning("contradiction judge failed for one pair: %s", e)
+        verdict, severity, topic = ("CONSISTENT", "none", "")
+    return {"verdict": verdict, "severity": severity, "topic": topic}

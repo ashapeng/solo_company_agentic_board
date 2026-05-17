@@ -1,15 +1,28 @@
 """Cross-member contradiction detector tests (spec §6)."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from server.board.deliberation.contradiction import (
+    CONTRADICTION_JUDGE_PROMPT,
     ContradictionFinding,
     _extract_entities,
     _extract_numbers,
+    _judge_pair,
+    _parse_judge_response,
     _score_pair_overlap,
     _topics_overlap,
 )
+from server.board.llm import LLMResponse
+
+
+def _llm(text: str) -> LLMResponse:
+    return LLMResponse(
+        content=text, model="qwen/qwen3.6-max-preview",
+        input_tokens=10, output_tokens=20, latency_seconds=0.1,
+    )
 
 
 def _claim(member_id: str, text: str, kind: str = "numeric",
@@ -99,3 +112,67 @@ def test_score_pair_overlap_orders_pairs_by_evidence_density():
         _claim("b", "CATL grew 22% in Q4 2025"),
     )
     assert _score_pair_overlap(*strong) > _score_pair_overlap(*weak)
+
+
+def test_judge_prompt_includes_required_substrings():
+    """The verbatim prompt from spec §6.3 must include all rule keywords so
+    downstream models behave consistently."""
+    assert "CONTRADICTORY" in CONTRADICTION_JUDGE_PROMPT
+    assert "CONSISTENT" in CONTRADICTION_JUDGE_PROMPT
+    assert "UNRELATED" in CONTRADICTION_JUDGE_PROMPT
+    assert "load_bearing" in CONTRADICTION_JUDGE_PROMPT
+    assert "VERDICT:" in CONTRADICTION_JUDGE_PROMPT
+    assert "TOPIC:" in CONTRADICTION_JUDGE_PROMPT
+
+
+def test_parse_judge_response_extracts_three_fields():
+    raw = "VERDICT: CONTRADICTORY\nSEVERITY: material\nTOPIC: EV battery growth"
+    verdict, severity, topic = _parse_judge_response(raw)
+    assert verdict == "CONTRADICTORY"
+    assert severity == "material"
+    assert topic == "EV battery growth"
+
+
+def test_parse_judge_response_defaults_to_consistent_on_unparseable():
+    """Safe default — unparseable output is treated as not-a-contradiction,
+    so the finding list never contains noise."""
+    verdict, severity, topic = _parse_judge_response("garbage with no verdict line")
+    assert verdict == "CONSISTENT"
+    assert severity == "none"
+    assert topic == ""
+
+
+def test_parse_judge_response_lowercases_severity_and_uppercases_verdict():
+    """Tolerate model case variation."""
+    raw = "verdict: contradictory\nseverity: LOAD_BEARING\ntopic: x"
+    verdict, severity, topic = _parse_judge_response(raw)
+    assert verdict == "CONTRADICTORY"
+    assert severity == "load_bearing"
+
+
+@pytest.mark.asyncio
+async def test_judge_pair_returns_verdict_dict():
+    a = _claim("strategist", "EV growth was 19%")
+    b = _claim("critic", "EV growth was 10%")
+    response = "VERDICT: CONTRADICTORY\nSEVERITY: material\nTOPIC: EV growth"
+    with patch(
+        "server.board.deliberation.contradiction.query_llm",
+        new=AsyncMock(return_value=_llm(response)),
+    ):
+        result = await _judge_pair(a, b, model="qwen/qwen3.6-max-preview")
+    assert result["verdict"] == "CONTRADICTORY"
+    assert result["severity"] == "material"
+    assert result["topic"] == "EV growth"
+
+
+@pytest.mark.asyncio
+async def test_judge_pair_falls_back_to_consistent_on_llm_failure():
+    """A flaky judge call must not block detection — treat as not-contradicted."""
+    a = _claim("a", "X")
+    b = _claim("b", "Y")
+    with patch(
+        "server.board.deliberation.contradiction.query_llm",
+        new=AsyncMock(side_effect=RuntimeError("provider down")),
+    ):
+        result = await _judge_pair(a, b, model="qwen/qwen3.6-max-preview")
+    assert result["verdict"] == "CONSISTENT"
