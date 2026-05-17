@@ -16,9 +16,11 @@ Qualitative claims are excluded from contradiction detection entirely
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from itertools import combinations as _combinations
 from typing import Any
 
 from server.board.llm import query_llm
@@ -233,3 +235,73 @@ async def _judge_pair(claim_a: dict, claim_b: dict, *, model: str) -> dict[str, 
         logger.warning("contradiction judge failed for one pair: %s", e)
         verdict, severity, topic = ("CONSISTENT", "none", "")
     return {"verdict": verdict, "severity": severity, "topic": topic}
+
+
+# ─── Orchestrator ───────────────────────────────────────────────────────────
+
+
+async def detect_contradictions(
+    atomized_claims: dict[str, list[dict]],
+    *,
+    judge_model: str,
+    max_pairs: int = 12,
+) -> list[ContradictionFinding]:
+    """Find cross-member contradictions per spec §6.2.
+
+    Two-step:
+      1. Cluster all cross-member load-bearing claim pairs by topic overlap
+         (entity match or numeric ±20%). Same-member pairs and qualitative
+         claims are excluded. Pairs are deterministically ordered.
+      2. If clustering yields more than `max_pairs` candidates, keep the
+         top-N by `_score_pair_overlap` (more shared signal wins).
+      3. Run the LLM judge on each candidate in parallel. Only
+         `CONTRADICTORY` verdicts become ContradictionFindings.
+
+    Returns the findings in input order. Never raises on judge failure — a
+    flaky pair is dropped silently (logged at WARNING by `_judge_pair`).
+    """
+    # Flatten (member_id, claim) so we can iterate combinations cleanly.
+    flat: list[tuple[str, dict]] = []
+    for member_id, claims in (atomized_claims or {}).items():
+        for c in claims or []:
+            flat.append((str(member_id), c))
+
+    candidates: list[tuple[dict, dict]] = []
+    for (m_a, c_a), (m_b, c_b) in _combinations(flat, 2):
+        if m_a == m_b:
+            continue
+        if not _topics_overlap(c_a, c_b):
+            continue
+        candidates.append((c_a, c_b))
+
+    if len(candidates) > max_pairs:
+        candidates.sort(key=lambda pair: _score_pair_overlap(*pair), reverse=True)
+        candidates = candidates[:max_pairs]
+
+    if not candidates:
+        return []
+
+    async def _judge(pair: tuple[dict, dict]) -> tuple[tuple[dict, dict], dict[str, str]]:
+        verdict = await _judge_pair(pair[0], pair[1], model=judge_model)
+        return pair, verdict
+
+    results = await asyncio.gather(
+        *[_judge(pair) for pair in candidates],
+        return_exceptions=True,
+    )
+
+    findings: list[ContradictionFinding] = []
+    for item in results:
+        if isinstance(item, Exception):
+            logger.warning("contradiction judge raised: %s", item)
+            continue
+        (claim_a, claim_b), verdict = item
+        if verdict["verdict"] != "CONTRADICTORY":
+            continue
+        findings.append(ContradictionFinding(
+            topic=verdict["topic"] or "(no topic)",
+            claim_a=claim_a,
+            claim_b=claim_b,
+            severity=verdict["severity"] or "minor",
+        ))
+    return findings

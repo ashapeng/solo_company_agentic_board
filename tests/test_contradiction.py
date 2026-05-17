@@ -14,6 +14,7 @@ from server.board.deliberation.contradiction import (
     _parse_judge_response,
     _score_pair_overlap,
     _topics_overlap,
+    detect_contradictions,
 )
 from server.board.llm import LLMResponse
 
@@ -178,3 +179,95 @@ async def test_judge_pair_falls_back_to_consistent_on_llm_failure():
     assert result["verdict"] == "CONSISTENT"
     assert result["severity"] == "none"
     assert result["topic"] == ""
+
+
+@pytest.mark.asyncio
+async def test_detect_contradictions_returns_only_contradictory_verdicts():
+    # Numbers within ±20% so topic-overlap fires (the heuristic from Task 2);
+    # judge mock then returns CONTRADICTORY to exercise the finding-emit path.
+    atomized = {
+        "strategist": [_claim("strategist", "EV growth was 19%")],
+        "critic":     [_claim("critic",     "EV growth was 16%")],
+    }
+    judge_response = "VERDICT: CONTRADICTORY\nSEVERITY: material\nTOPIC: EV growth"
+    with patch(
+        "server.board.deliberation.contradiction.query_llm",
+        new=AsyncMock(return_value=_llm(judge_response)),
+    ):
+        findings = await detect_contradictions(
+            atomized, judge_model="qwen/qwen3.6-max-preview", max_pairs=12,
+        )
+    assert len(findings) == 1
+    assert findings[0].severity == "material"
+    assert findings[0].topic == "EV growth"
+
+
+@pytest.mark.asyncio
+async def test_detect_contradictions_drops_consistent_verdicts():
+    """Judge says CONSISTENT → no finding emitted."""
+    atomized = {
+        "a": [_claim("a", "CATL has 30% share")],
+        "b": [_claim("b", "CATL has 32% share")],
+    }
+    with patch(
+        "server.board.deliberation.contradiction.query_llm",
+        new=AsyncMock(return_value=_llm("VERDICT: CONSISTENT\nSEVERITY: none\nTOPIC: CATL")),
+    ):
+        findings = await detect_contradictions(
+            atomized, judge_model="qwen/qwen3.6-max-preview", max_pairs=12,
+        )
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_detect_contradictions_skips_same_member_pairs():
+    """Two claims from the SAME member cannot contradict each other in this
+    context — judge should not be called."""
+    atomized = {
+        "strategist": [
+            _claim("strategist", "CATL grew 12%"),
+            _claim("strategist", "CATL grew 24%"),  # internally inconsistent — ignored
+        ],
+    }
+    judge_mock = AsyncMock()
+    with patch(
+        "server.board.deliberation.contradiction.query_llm", new=judge_mock,
+    ):
+        findings = await detect_contradictions(atomized, judge_model="m", max_pairs=12)
+    assert findings == []
+    judge_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detect_contradictions_skips_non_overlapping_pairs():
+    """Topic-clustering rules out unrelated claims — judge not called."""
+    atomized = {
+        "a": [_claim("a", "Mistral is in Paris", kind="named_entity")],
+        "b": [_claim("b", "Tesla shipped 1.8M units", kind="numeric")],
+    }
+    judge_mock = AsyncMock()
+    with patch(
+        "server.board.deliberation.contradiction.query_llm", new=judge_mock,
+    ):
+        findings = await detect_contradictions(atomized, judge_model="m", max_pairs=12)
+    assert findings == []
+    judge_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detect_contradictions_caps_at_max_pairs():
+    """When candidate pairs exceed max_pairs, only top-N by overlap score
+    get judged. Confirm the judge was called exactly max_pairs times."""
+    # Build 5 members × 1 claim each, all overlapping on the same entity.
+    # That yields C(5,2) = 10 candidate pairs. Cap at 3.
+    atomized = {
+        f"m{i}": [_claim(f"m{i}", f"CATL has {10 + i}% share")]
+        for i in range(5)
+    }
+    judge_mock = AsyncMock(return_value=_llm("VERDICT: CONSISTENT\nSEVERITY: none\nTOPIC: CATL"))
+    with patch(
+        "server.board.deliberation.contradiction.query_llm", new=judge_mock,
+    ):
+        findings = await detect_contradictions(atomized, judge_model="m", max_pairs=3)
+    assert judge_mock.await_count == 3
+    assert findings == []  # all said CONSISTENT
