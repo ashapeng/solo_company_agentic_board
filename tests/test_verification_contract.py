@@ -26,7 +26,13 @@ class VerificationContractTest(unittest.TestCase):
 
 class VerificationAsyncContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_verify_synthesis_parses_plain_json(self):
-        with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_query:
+        # Isolate from .env / VERIFICATION_MODEL — conftest.py loads dotenv for
+        # live tests, which would otherwise overwrite the default this test
+        # asserts on (and break depending on test ordering).
+        with patch(
+            "server.board.deliberation.verification.get_verification_model",
+            return_value="deepseek/deepseek-v4-pro",
+        ), patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_query:
             mock_query.return_value = LLMResponse(
                 content='{"score": 6, "deficiencies": ["too vague"], "suggestions": ["add owner"]}',
                 model="verifier",
