@@ -23,7 +23,12 @@ Do not add extra sections. Stay within the stated limits.
 
 1. Start with the header line: your title, stage number (1), and your confidence level.
 2. Lead your TL;DR with the single most important finding from your domain.
-3. Every bullet in Analysis must include evidence or be flagged as [UNVERIFIED].
+3. Every bullet in Analysis must end with either an http(s) URL (drawn from
+   your web_search tool results — copy the URL exactly) or the literal string
+   `[UNVERIFIED]`. Do NOT use abstract tags like `[DOMAIN_KNOWLEDGE]`,
+   `[INFERENCE]`, or shorthand source names like `[BloombergNEF report]` —
+   the downstream verifier rejects them. Use a real URL or `[UNVERIFIED]`
+   and nothing else.
 4. Risks must have concrete scenarios — no vague speculation.
 5. Your Recommendation must be actionable: who does what, by when, and why.
 6. Be direct. Be specific. No filler.

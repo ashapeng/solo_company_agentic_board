@@ -8,7 +8,12 @@ Every Stage 1 response must follow this structure exactly. Do not add sections.
 - Max 2 bullets, 40 words total. Lead with your highest-value domain finding.
 
 ## Analysis
-- Max 5 bullets. Each: [finding] - [evidence/source tier or [UNVERIFIED]].
+- Max 5 bullets. Each: [finding] - [<url> or [UNVERIFIED]].
+- For numeric, named-entity, or comparative findings, the citation MUST be a
+  real http(s) URL — usually one returned by your web_search tool. Copy the URL
+  exactly. The literal string [UNVERIFIED] is only valid for findings asserted
+  from prior knowledge or inference. Abstract tags like [DOMAIN_KNOWLEDGE] /
+  [INFERENCE] / [BloombergNEF report] are NOT valid citations.
 
 ## Risks
 - Max 3 risks.
