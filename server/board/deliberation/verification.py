@@ -94,7 +94,10 @@ async def verify_synthesis(
             model=get_verification_model(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,  # near-deterministic for evaluation
-            max_tokens=500,
+            # Honor harness_config.stage4_max_tokens (default 3000). Hardcoded 500
+            # was being consumed by reasoning tokens on thinking models, causing
+            # empty content -> JSON parse fail -> indeterminate verdict.
+            max_tokens=get_config().stage4_max_tokens,
             timeout=120.0,  # was 30s; v4-pro / glm-5.1 reasoning can take 60-90s
             fallback=True,
         )
