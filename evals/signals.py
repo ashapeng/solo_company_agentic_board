@@ -25,7 +25,8 @@ class ObservedSignals:
     # Tool-call verdicts — empty at P0 (standard deliberate() makes no tool calls).
     # Populated once P3 persists tool calls to BoardSession.
     validate_claim_verdicts: list[dict] = field(default_factory=list)
-    # Post-P1 signals — always empty at P0 baseline (populated in P1+)
+    # Per-claim blinded verifier results (P1+). Each entry:
+    # {claim_id, claim_text, verdict, rationale, evidence_refs}.
     blinded_verifier_per_claim: list[dict] = field(default_factory=list)
     # Post-P2 signals — always zero at P0 baseline (populated in P2+)
     contradictions_surfaced: int = 0
@@ -102,7 +103,7 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         clarification_questions=questions,
         # Standard deliberate() doesn't call tools — see Architecture note.
         validate_claim_verdicts=[],
-        blinded_verifier_per_claim=[],
+        blinded_verifier_per_claim=list(verification.get("per_claim") or []),
         contradictions_surfaced=0,
         total_cost_usd=float(metrics.total_cost_estimate()) if metrics else 0.0,
         total_latency_seconds=float(session.total_elapsed or 0.0),

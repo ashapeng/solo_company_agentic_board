@@ -30,7 +30,7 @@ def _stage1_response(member_id: str) -> MemberResponse:
 - {member_id} compact finding.
 
 ## Analysis
-- VERBOSE STAGE1 ANALYSIS {member_id} should not reach Stage 2.
+- {member_id} Q4 finding [https://example.com/{member_id}-source].
 
 ## Risks
 - **High**: {member_id} top risk - Probability: H, Impact: H
@@ -73,8 +73,9 @@ class ContextCompactionContractTest(unittest.TestCase):
 
         self.assertIsNot(raw[0], compacted[0])
         self.assertEqual(original_content, raw[0].content)
-        self.assertIn("VERBOSE STAGE1 ANALYSIS alpha", raw[0].content)
-        self.assertNotIn("VERBOSE STAGE1 ANALYSIS alpha", compacted[0].content)
+        self.assertIn("alpha Q4 finding [https://example.com/alpha-source]", raw[0].content)
+        # P1.2: Analysis is now preserved so URL citations propagate to chair.
+        self.assertIn("https://example.com/alpha-source", compacted[0].content)
         self.assertIn("## Top Risk", compacted[0].content)
 
 
@@ -109,7 +110,8 @@ class ContextCompactionAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("## TL;DR", prompt)
             self.assertIn("## Recommendation", prompt)
             self.assertIn("## Top Risk", prompt)
-            self.assertNotIn("VERBOSE STAGE1 ANALYSIS", prompt)
+            # P1.2: Analysis now propagates so peers + chair see URL citations.
+            self.assertIn("https://example.com/", prompt)
 
     async def test_stage3_receives_compacted_stage1_and_stage2_context(self):
         orchestrator = BoardOrchestrator(members=[_member("alpha"), _member("beta")])
@@ -137,12 +139,15 @@ class ContextCompactionAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("chairperson", synthesis.member_id)
         self.assertIn("## TL;DR", prompt)
         self.assertIn("## Top Risk", prompt)
-        self.assertNotIn("VERBOSE STAGE1 ANALYSIS", prompt)
+        # P1.2: Stage 1 Analysis now reaches the chair so URL citations propagate.
+        self.assertIn("https://example.com/alpha-source", prompt)
+        self.assertIn("https://example.com/beta-source", prompt)
         self.assertIn("### Peer Challenges", prompt)
         self.assertIn("alpha peer challenge", prompt)
         self.assertIn("### Updated Position", prompt)
         self.assertIn("beta updated position", prompt)
         self.assertIn("### Ranking", prompt)
+        # Stage 2 Analysis is still stripped (only Stage 1 default changed).
         self.assertNotIn("VERBOSE STAGE2 ANALYSIS", prompt)
 
 

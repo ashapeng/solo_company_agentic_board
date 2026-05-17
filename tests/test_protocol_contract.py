@@ -82,7 +82,7 @@ class ProtocolContractTest(unittest.TestCase):
 - Focus on customer evidence before scaling.
 
 ## Analysis
-- This section should stay out of compacted peer context.
+- Customer growth was 19% in Q4 [https://example.com/q4-report].
 
 ## Risks
 - **High**: Weak customer pull - Probability: H, Impact: H
@@ -99,11 +99,13 @@ class ProtocolContractTest(unittest.TestCase):
         self.assertIn("> Confidence: High", compacted)
         self.assertIn("## TL;DR", compacted)
         self.assertIn("Focus on customer evidence", compacted)
+        self.assertIn("## Analysis", compacted)
+        # P1.2: Analysis is now preserved so URL citations propagate to the chair.
+        self.assertIn("https://example.com/q4-report", compacted)
         self.assertIn("## Recommendation", compacted)
         self.assertIn("Run five customer interviews", compacted)
         self.assertIn("## Top Risk", compacted)
         self.assertIn("Weak customer pull", compacted)
-        self.assertNotIn("This section should stay out", compacted)
 
     def test_stage2_compaction_extracts_contract_sections(self):
         response = MemberResponse(

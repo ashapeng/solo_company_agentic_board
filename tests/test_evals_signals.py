@@ -109,3 +109,44 @@ def test_observed_signals_from_dict_roundtrip():
     )
     rehydrated = ObservedSignals.from_dict(original.to_json())
     assert rehydrated == original
+
+
+def test_extract_signals_populates_blinded_verifier_per_claim():
+    """When session.verification has per_claim entries (BlindedVerificationResult), they
+    surface as ObservedSignals.blinded_verifier_per_claim."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        verification={
+            "score": 3, "passed": False,
+            "deficiencies": ["CONTRADICTED - \"X grew 30%\" - source says 10%"],
+            "suggestions": [],
+            "per_claim": [
+                {"claim_id": "a", "claim_text": "X grew 30%",
+                 "verdict": "CONTRADICTED", "rationale": "source says 10%",
+                 "evidence_refs": ["https://example.com"]},
+                {"claim_id": "b", "claim_text": "Y is in Paris",
+                 "verdict": "SUPPORTED", "rationale": "confirmed",
+                 "evidence_refs": ["https://example.com/p"]},
+            ],
+            "contradicted_count": 1, "unverified_count": 0, "supported_count": 1,
+        },
+    )
+    signals = extract_signals(session)
+    assert len(signals.blinded_verifier_per_claim) == 2
+    assert signals.blinded_verifier_per_claim[0]["verdict"] == "CONTRADICTED"
+    assert "source says 10%" in signals.blinded_verifier_per_claim[0]["rationale"]
+
+
+def test_extract_signals_blinded_per_claim_absent_when_checklist_fallback():
+    """Old checklist verifier sets no per_claim — field stays empty."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        verification={
+            "score": 8, "passed": True, "deficiencies": [], "suggestions": [],
+            # no per_claim key
+        },
+    )
+    signals = extract_signals(session)
+    assert signals.blinded_verifier_per_claim == []

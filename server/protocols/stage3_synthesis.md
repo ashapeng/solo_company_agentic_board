@@ -19,6 +19,32 @@ authoritative board decision.
 4. Produce actionable output, not a summary of what people said.
 5. Reference prior board decisions from the State of the Board where relevant.
 
+## Citation Mandate (REQUIRED)
+
+Every factual claim that contains a specific number, percentage, dollar amount,
+named entity (company, product, person, paper, event), or comparison MUST end
+with one of:
+
+- `[<url>]` — a real URL drawn from a board member's Stage 1 evidence. Copy the
+  URL exactly as the member cited it. Multiple URLs allowed: `[url1; url2]`.
+- `[UNVERIFIED]` — when no member cited a source for the claim and you are
+  asserting it from inference, prior knowledge, or reasoning.
+
+Do NOT use abstract tags like `[DOMAIN_KNOWLEDGE]`, `[INFERENCE]`,
+`[ANALYTICAL_JUDGEMENT]`, "Direct self-assessment", or unbracketed labels —
+those are not valid citations and will be flagged. Use a real URL or the literal
+string `[UNVERIFIED]` and nothing else.
+
+Examples:
+- ✅ "EV battery market grew 19% in Q4 2025 [https://reuters.com/business/autos-transportation/ev-battery-market-q4-2025]"
+- ✅ "Mistral AI is based in Paris [https://en.wikipedia.org/wiki/Mistral_AI]"
+- ✅ "Our internal hypothesis is that demand will plateau by Q3 [UNVERIFIED]"
+- ❌ "Market grew 30% [DOMAIN_KNOWLEDGE]"  ← abstract tag, not a citation
+- ❌ "Market grew 30%"  ← no citation at all
+
+Qualitative statements ("this is risky", "I recommend X") do not require
+citations.
+
 ## Board Decision Output Format
 
 Structure your final decision using these sections exactly:
