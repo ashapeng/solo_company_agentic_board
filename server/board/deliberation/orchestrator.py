@@ -216,6 +216,13 @@ async def agentic_member_turn(
         the final analysis), OR
       - wall-clock budget is exceeded.
     """
+    # P3b: per-member-per-stage forced-revision counter and cap (spec section 7.2.3).
+    # Read once at turn entry -- avoids mid-loop behavior changes from a
+    # concurrent harness tuner edit.
+    _hardening = (get_config().hardening or {})
+    forced_revision_cap = int(_hardening.get("max_forced_revisions_per_member", 2))
+    forced_revisions_used = 0
+
     on_event(SimpleEvent("MemberStart", member.id, stage))
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": initial_user_message}
@@ -303,6 +310,28 @@ async def agentic_member_turn(
                 "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
             })
             budget.spend(tc.name, result.cost_units)
+
+            # P3b: forced revision on CONTRADICTED tool results (spec section 7.2.1).
+            # Each CONTRADICTED return consumes one slot up to the cap; beyond
+            # the cap we log a "stuck member" warning (Refinement R5) and let
+            # the loop continue without injecting another forced turn.
+            if result.triggers_revision:
+                if forced_revisions_used < forced_revision_cap:
+                    messages.append(_build_revision_forcing_message(tc, result))
+                    forced_revisions_used += 1
+                else:
+                    logger.warning(
+                        "P3b: forced-revision cap reached for stuck member; "
+                        "skipping injection",
+                        extra={
+                            "member_id": member.id,
+                            "stage": stage,
+                            "forced_revisions_used": forced_revisions_used,
+                            "forced_revision_cap": forced_revision_cap,
+                            "tool_name": tc.name,
+                            "summary": result.summary,
+                        },
+                    )
 
 
 @dataclass
