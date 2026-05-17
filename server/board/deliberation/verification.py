@@ -173,7 +173,13 @@ _LOAD_BEARING_KINDS = {"numeric", "named_entity", "comparative"}
 
 
 def _is_cited(claim: AtomizedClaim) -> bool:
-    return any(r != "[UNVERIFIED]" for r in claim.evidence_refs)
+    """A claim counts as cited iff at least one evidence_ref is an http(s) URL.
+
+    Abstract tags like [DOMAIN_KNOWLEDGE] / [INFERENCE] / "Direct self-assessment"
+    are NOT citations — they're rejected so the chair can't bypass the blinded
+    verifier with non-URL labels. See stage3_synthesis.md "Citation Mandate".
+    """
+    return any(r.startswith(("http://", "https://")) for r in claim.evidence_refs)
 
 
 def _parse_verdict(raw: str) -> tuple[str, str]:
