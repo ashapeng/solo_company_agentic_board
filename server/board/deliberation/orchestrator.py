@@ -30,7 +30,7 @@ from server.memory.review import propose_memory_update
 from server.memory.sotb import read_sotb
 
 from .atomizer import atomize
-from .contradiction import detect_contradictions
+from .contradiction import ContradictionFinding, detect_contradictions, format_contradictions_block
 from .compaction import (
     compact_stage1_responses,
     compact_stage2_responses,
@@ -962,12 +962,11 @@ class BoardOrchestrator:
         # Build the PEER CONTRADICTIONS block once; it's identical across members.
         peer_contradictions_block = ""
         if contradictions:
-            from .contradiction import ContradictionFinding, format_contradictions_block
             findings = [
                 ContradictionFinding(
                     topic=c.get("topic", ""),
-                    claim_a=c.get("claim_a", {}) or {},
-                    claim_b=c.get("claim_b", {}) or {},
+                    claim_a=c.get("claim_a") or {},
+                    claim_b=c.get("claim_b") or {},
                     severity=c.get("severity", "minor"),
                 )
                 for c in contradictions

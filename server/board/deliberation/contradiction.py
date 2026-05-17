@@ -208,13 +208,17 @@ def _parse_judge_response(raw: str) -> tuple[str, str, str]:
     return (verdict, severity, topic)
 
 
+def _join_refs(refs: Any) -> str:
+    """Render evidence_refs for prompt interpolation. Non-string items get
+    coerced via str() so a degenerate atomizer output can't crash the prompt
+    build with TypeError. Empty/None refs fall back to ``["[UNVERIFIED]"]``."""
+    return ", ".join(str(r) for r in (refs or ["[UNVERIFIED]"]))
+
+
 async def _judge_pair(claim_a: dict, claim_b: dict, *, model: str) -> dict[str, str]:
     """Run the blinded judge LLM on one candidate pair. Returns
     {verdict, severity, topic}. Errors are downgraded to CONSISTENT so a
     flaky judge can't manufacture noise."""
-    def _join_refs(refs: Any) -> str:
-        return ", ".join(str(r) for r in (refs or ["[UNVERIFIED]"]))
-
     prompt = CONTRADICTION_JUDGE_PROMPT.format(
         claim_a_text=str(claim_a.get("text", "")),
         claim_a_refs=_join_refs(claim_a.get("evidence_refs")),
@@ -341,8 +345,8 @@ def format_contradictions_block(findings: list[ContradictionFinding]) -> str:
     ]
     for i, f in enumerate(findings, start=1):
         label = _SEVERITY_LABEL.get(f.severity, f"[{f.severity.upper()}]")
-        a_refs = ", ".join(f.claim_a.get("evidence_refs") or ["[UNVERIFIED]"])
-        b_refs = ", ".join(f.claim_b.get("evidence_refs") or ["[UNVERIFIED]"])
+        a_refs = _join_refs(f.claim_a.get("evidence_refs"))
+        b_refs = _join_refs(f.claim_b.get("evidence_refs"))
         lines.extend([
             f"{i}. {label} Topic: {f.topic}",
             f"   Member A: \"{f.claim_a.get('text', '')}\" (cited: {a_refs})",
