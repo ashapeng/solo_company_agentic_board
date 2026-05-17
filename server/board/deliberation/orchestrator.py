@@ -29,6 +29,7 @@ from server.harness.ledger import record_session as _record_to_ledger
 from server.memory.review import propose_memory_update
 from server.memory.sotb import read_sotb
 
+from .atomizer import atomize
 from .compaction import (
     compact_stage1_responses,
     compact_stage2_responses,
@@ -299,6 +300,10 @@ class BoardSession:
     clarification: dict = field(default_factory=dict)
     structured_output_warnings: list[str] = field(default_factory=list)
     evidence_packets: dict = field(default_factory=dict)
+    # Stage 1 per-member atomization output (spec §5.1.1). Keyed by member_id;
+    # values are lists of AtomizedClaim.to_dict() dicts. Populated only when
+    # verify=True (HEAVY tier convention).
+    atomized_claims: dict = field(default_factory=dict)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -332,6 +337,7 @@ class BoardSession:
             "clarification": self.clarification,
             "structured_output_warnings": self.structured_output_warnings,
             "evidence_packets": self.evidence_packets,
+            "atomized_claims": self.atomized_claims,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
@@ -894,6 +900,35 @@ class BoardOrchestrator:
 
         self._fire(self._on_stage_done, 1, responses)
         return responses
+
+    # ── STAGE 1.5: per-member atomization (spec §5.1.1) ────────────────
+
+    async def _atomize_stage1(
+        self, responses: list[MemberResponse]
+    ) -> dict[str, list[dict]]:
+        """Run the claim atomizer on each member's Stage 1 response in parallel.
+
+        Returns {member_id: [claim_dict, ...]}. Members whose atomization
+        raises are logged and omitted from the result — the pipeline never
+        blocks on atomizer failure (see spec §5.1.5). Each claim dict is the
+        output of AtomizedClaim.to_dict().
+        """
+        async def _one(resp: MemberResponse) -> tuple[str, list[dict]]:
+            claims = await atomize(resp.content, member_id=resp.member_id)
+            return resp.member_id, [c.to_dict() for c in claims]
+
+        results = await asyncio.gather(
+            *[_one(r) for r in responses],
+            return_exceptions=True,
+        )
+        atomized: dict[str, list[dict]] = {}
+        for item in results:
+            if isinstance(item, Exception):
+                logger.warning("Stage 1 atomization failed for one member: %s", item)
+                continue
+            member_id, claim_dicts = item
+            atomized[member_id] = claim_dicts
+        return atomized
 
     # ── STAGE 2: Peer Review ───────────────────────────────────────────
 
@@ -1469,6 +1504,13 @@ class BoardOrchestrator:
             config=get_config(),
         )
         session.structured_output_warnings.extend(_s1_warnings)
+
+        # Stage 1.5: per-member atomization (spec §5.1.1). Gated on verify=True
+        # so this only runs at HEAVY tier. Per-member calls run in parallel.
+        # Failures are non-fatal: a single member's atomizer error is logged
+        # and that member's slot is omitted from atomized_claims.
+        if verify and session.stage1_responses:
+            session.atomized_claims = await self._atomize_stage1(session.stage1_responses)
 
         # Stage 2: Peer review with anonymized responses (parallel)
         session.stage2_responses = await self.stage2(
