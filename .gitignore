@@ -28,6 +28,10 @@ PROJECT_DESCRIPTION.md
 !docs/superpowers/
 !docs/superpowers/plans/
 !docs/superpowers/specs/
+
+# Local-only plan drafts kept out of the repo by user preference
+docs/superpowers/plans/2026-05-16-atomizer-blinded-verifier-p1.md
+docs/superpowers/plans/2026-05-17-contradiction-detector-p2.md
 .worktrees/
 .superpowers/
 .playwright-cli/
