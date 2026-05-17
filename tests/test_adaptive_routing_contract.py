@@ -115,6 +115,78 @@ class AdaptiveRoutingAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("threat_modeling", classification.unavailable_capabilities)
         self.assertIn("role-gap review", classification.role_gap_memo)
 
+    async def test_classifier_augments_when_focused_selection_below_min_members(self):
+        """At pre_pmf, decision_type 'finance' has no active capability owners
+        (financial_analysis/pricing/runway), so capability-matching picks only
+        chairperson + secretary (2 members), below min_stage1_responses=3.
+        Stage 1 would then fail the 'min responses' gate. The classifier must
+        augment the focused selection up to the configured minimum so the
+        deliberation has enough perspectives."""
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = LLMResponse(
+                content=(
+                    "decision_type: finance\n"
+                    "complexity: complex\n"
+                    "capabilities: default\n"
+                    "reasoning: Pricing strategy question."
+                ),
+                model="classifier",
+                input_tokens=1,
+                output_tokens=1,
+                latency_seconds=0.1,
+            )
+
+            classification = await classify_query("How should we price the pro tier?", min_members=3)
+
+        self.assertEqual("finance", classification.query_type)
+        self.assertGreaterEqual(len(classification.relevant_member_ids), 3)
+        self.assertIn("chairperson", classification.relevant_member_ids)
+        # Augmentation note surfaces in role_gap_memo so callers can see what happened.
+        self.assertIn("Augmented", classification.role_gap_memo or "")
+
+    async def test_classifier_does_not_augment_when_focused_selection_meets_min_members(self):
+        """Strategic routing already selects 5+ members — no augmentation note."""
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = LLMResponse(
+                content=(
+                    "decision_type: strategic\n"
+                    "complexity: complex\n"
+                    "capabilities: default\n"
+                    "reasoning: Market entry."
+                ),
+                model="classifier",
+                input_tokens=1,
+                output_tokens=1,
+                latency_seconds=0.1,
+            )
+
+            classification = await classify_query("Should we enter the EU market?", min_members=3)
+
+        self.assertEqual("strategic", classification.query_type)
+        self.assertGreaterEqual(len(classification.relevant_member_ids), 5)
+        self.assertNotIn("Augmented", classification.role_gap_memo or "")
+
+    async def test_classifier_min_members_kwarg_overrides_default(self):
+        """min_members=2 keeps the narrow finance selection unchanged (chair+secretary)."""
+        with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = LLMResponse(
+                content=(
+                    "decision_type: finance\n"
+                    "complexity: simple\n"
+                    "capabilities: default\n"
+                    "reasoning: Quick pricing check."
+                ),
+                model="classifier",
+                input_tokens=1,
+                output_tokens=1,
+                latency_seconds=0.1,
+            )
+
+            classification = await classify_query("Pricing check", min_members=2)
+
+        self.assertEqual(2, len(classification.relevant_member_ids))
+        self.assertNotIn("Augmented", classification.role_gap_memo or "")
+
     async def test_classifier_failure_falls_back_to_full_board(self):
         with patch("server.board.deliberation.classifier.query_llm", new_callable=AsyncMock) as mock_query:
             with patch("server.board.deliberation.classifier.logger.warning"):

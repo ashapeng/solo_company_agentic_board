@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from ..config import get_classifier_model
 from ..llm import query_llm
 from ..roster import (
+    active_member_ids,
     decision_capabilities,
     get_stage_profile,
     load_roster,
     select_members_for_capabilities,
     select_members_for_decision_type,
 )
+from server.harness.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,20 @@ Known capabilities:
 If uncertain, choose "full-board"."""
 
 
-async def classify_query(query: str) -> QueryClassification:
-    """Classify a query and select relevant board members."""
+async def classify_query(
+    query: str,
+    *,
+    min_members: int | None = None,
+) -> QueryClassification:
+    """Classify a query and select relevant board members.
+
+    `min_members` is the floor for the number of selected board members. When
+    the capability-based selection falls below it (typical for finance/legal/
+    operational queries at pre_pmf, where most decision-type capabilities map
+    to shelved members), additional active members are appended so Stage 1
+    has enough perspectives to satisfy the harness's min-responses gate.
+    Defaults to `HarnessConfig.min_stage1_responses`.
+    """
     roster = load_roster()
     valid_decision_types = list(roster.get("decision_types", {}).keys())
     valid_capabilities = sorted({
@@ -108,15 +122,35 @@ async def classify_query(query: str) -> QueryClassification:
             roster=roster,
         )
 
+        floor = min_members if min_members is not None else get_config().min_stage1_responses
+        member_ids = selection.member_ids
+        role_gap_memo = selection.role_gap_memo
+        if len(member_ids) < floor:
+            active = active_member_ids(stage_profile=selection.stage_profile, roster=roster)
+            augmented = list(member_ids)
+            for mid in active:
+                if mid not in augmented:
+                    augmented.append(mid)
+                if len(augmented) >= floor:
+                    break
+            member_ids = augmented
+            note = (
+                f"Augmented focused selection from {len(selection.member_ids)} "
+                f"to {len(member_ids)} member(s) to meet min_members={floor} "
+                f"(decision_type '{query_type}' has limited active-capability coverage "
+                f"at stage '{selection.stage_profile}')."
+            )
+            role_gap_memo = f"{role_gap_memo}\n\n{note}" if role_gap_memo else note
+
         return QueryClassification(
             query_type=query_type,
             complexity=complexity,
-            relevant_member_ids=selection.member_ids,
+            relevant_member_ids=member_ids,
             reasoning=reasoning,
             required_capabilities=selection.required_capabilities,
             unavailable_capabilities=selection.unavailable_capabilities,
             stage_profile=selection.stage_profile,
-            role_gap_memo=selection.role_gap_memo,
+            role_gap_memo=role_gap_memo,
         )
     except Exception as e:
         logger.warning("Query classification failed: %s. Falling back to full-board.", e)
