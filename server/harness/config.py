@@ -62,7 +62,7 @@ class HarnessConfig:
 
     # Board hardening (P1+)
     hardening: dict = field(default_factory=lambda: {
-        "atomizer_model": "qwen/qwen3.6-max-preview",
+        "atomizer_model": "qwen/qwen3.6-plus-2026-04-02",
         "blinded_verifier_pass_threshold": 0.80,
         "blinded_verifier_evidence_max_chars": 4000,
     })

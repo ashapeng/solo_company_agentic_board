@@ -133,7 +133,7 @@ Owns security risk.
 
             self.assertEqual("kimi/kimi-k2.6", get_chairman_model())
             self.assertEqual(
-                ["deepseek/deepseek-v4-pro", "glm/glm-5.1", "qwen/qwen3.6-max-preview"],
+                ["deepseek/deepseek-v4-pro", "glm/glm-4.7", "qwen/qwen3.6-plus-2026-04-02"],
                 get_council_models(),
             )
             self.assertEqual("gemini/gemini-2.5-flash", get_classifier_model())

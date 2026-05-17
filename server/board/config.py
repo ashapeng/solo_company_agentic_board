@@ -11,10 +11,13 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------------------
 
 DEFAULT_CHAIRMAN_MODEL = "kimi/kimi-k2.6"
+# Council slots prefer free-credit-eligible model IDs. The dated qwen plus
+# snapshot and glm-4.7 carry full DashScope/Z.AI free quotas as of 2026-05-17;
+# qwen3.6-max-preview and glm-5.1 are paid and used to drain quota fastest.
 DEFAULT_COUNCIL_MODELS = [
     "deepseek/deepseek-v4-pro",
-    "glm/glm-5.1",
-    "qwen/qwen3.6-max-preview",
+    "glm/glm-4.7",
+    "qwen/qwen3.6-plus-2026-04-02",
 ]
 DEFAULT_CLASSIFIER_MODEL = "gemini/gemini-2.5-flash"
 DEFAULT_VERIFICATION_MODEL = "deepseek/deepseek-v4-pro"

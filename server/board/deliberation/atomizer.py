@@ -172,7 +172,7 @@ async def atomize(
         return cache[cache_key]
 
     prompt = build_atomizer_prompt(text, role_hint=role_hint)
-    model = get_config().hardening.get("atomizer_model", "qwen/qwen3.6-max-preview")
+    model = get_config().hardening.get("atomizer_model", "qwen/qwen3.6-plus-2026-04-02")
 
     try:
         resp = await query_llm(

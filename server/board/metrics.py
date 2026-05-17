@@ -66,6 +66,7 @@ COST_RATES: dict[str, tuple[float, float]] = {
     "glm/glm-5.1":                 (1.40, 4.40),
     "glm/glm-5":                   (0.50, 2.08),
     "glm/glm-4.7-flash":           (0.0, 0.0),     # free
+    "glm/glm-4.7":                 (0.0, 0.0),     # free
     # --- Kimi / Moonshot ---
     "kimi/kimi-k2.5":             (0.60, 2.50),
     "kimi/kimi-k2.6":             (0.95, 4.00),    # was (0.60, 2.50) — guidebook §3e
@@ -122,6 +123,52 @@ class SessionMetrics:
         """Return all call metrics for a given stage."""
         return [c for c in self.calls if c.stage == stage]
 
+    def by_provider(self) -> dict[str, dict]:
+        """Group calls by provider prefix and roll up calls, tokens, and cost.
+
+        Provider tag follows `harness.config_provider.provider_of`: 'kimi',
+        'deepseek', 'glm', 'zai', 'qwen', 'gemini', 'openrouter', etc. Returned
+        dict is ordered by descending USD spend so the most expensive provider
+        surfaces first in the audit view.
+        """
+        from server.harness.config_provider import provider_of
+
+        rollup: dict[str, dict] = {}
+        for c in self.calls:
+            tag = provider_of(c.model)
+            row = rollup.setdefault(
+                tag,
+                {
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost_estimate_usd": 0.0,
+                    "models": set(),
+                },
+            )
+            row["calls"] += 1
+            row["input_tokens"] += max(c.input_tokens, 0)
+            row["output_tokens"] += max(c.output_tokens, 0)
+            row["cost_estimate_usd"] += _estimate_cost(
+                c.model, c.input_tokens, c.output_tokens
+            )
+            row["models"].add(c.model)
+
+        ordered = sorted(
+            rollup.items(), key=lambda kv: kv[1]["cost_estimate_usd"], reverse=True
+        )
+        return {
+            tag: {
+                "calls": row["calls"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "tokens": row["input_tokens"] + row["output_tokens"],
+                "cost_estimate_usd": round(row["cost_estimate_usd"], 4),
+                "models": sorted(row["models"]),
+            }
+            for tag, row in ordered
+        }
+
     def summary(self) -> dict:
         """Return a summary dictionary of session metrics."""
         return {
@@ -152,4 +199,5 @@ class SessionMetrics:
                 for stage in (1, 2, 3)
                 if (stage_calls := self.by_stage(stage))
             },
+            "by_provider": self.by_provider(),
         }

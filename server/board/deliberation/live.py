@@ -787,12 +787,12 @@ class LiveBoardConversation:
         # deepseek-v4-pro (council) combine reasoning + output into one
         # max_tokens budget; on the secretary's prompt they burn the entire
         # budget on internal thinking and emit zero visible content
-        # (finish_reason=length, output_tokens=0). qwen3.6-max-preview is
-        # non-thinking by default and produces structured bullet output
-        # reliably (~77s, finish_reason=stop in production runs).
+        # (finish_reason=length, output_tokens=0). qwen3.6-plus is non-thinking
+        # by default and produces structured bullet output reliably; the dated
+        # snapshot also carries free DashScope credits.
         # Override via AGENTIC_BOARD_LIVE_SECRETARY_MODEL if a future config
         # needs a different choice.
-        model = os.getenv("AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview")
+        model = os.getenv("AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-plus-2026-04-02")
         max_tokens = _resolve_live_turn_max_tokens(
             query_type=None,
             complexity=None,
@@ -1232,9 +1232,10 @@ async def run_live_research(
     )
     # Pin to a non-reasoning model (same pattern as _produce_live_secretary_brief).
     # kimi/kimi-k2.6 (chair) burns its entire token budget on internal reasoning
-    # and emits empty content; qwen3.6-max-preview is non-thinking by default.
+    # and emits empty content; qwen3.6-plus is non-thinking by default and the
+    # dated snapshot carries free DashScope credits.
     secretary_model = os.getenv(
-        "AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-max-preview"
+        "AGENTIC_BOARD_LIVE_SECRETARY_MODEL", "qwen/qwen3.6-plus-2026-04-02"
     )
 
     async def _generate_brief(round_index: int) -> str:

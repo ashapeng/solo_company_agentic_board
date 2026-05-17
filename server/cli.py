@@ -131,6 +131,26 @@ def show_budget(session: BoardSession):
     total_cost = metrics.total_cost_estimate()
     console.print(f"  [bold]Total: {total_tokens:,} tokens (${total_cost:.2f}) in {session.total_elapsed}s[/bold]")
 
+    provider_rollup = metrics.by_provider()
+    if provider_rollup:
+        table = Table(title="Cost Audit — by Provider", show_lines=False)
+        table.add_column("Provider", style="cyan")
+        table.add_column("Calls", justify="right")
+        table.add_column("In tok", justify="right")
+        table.add_column("Out tok", justify="right")
+        table.add_column("USD", justify="right", style="yellow")
+        table.add_column("Models", style="dim")
+        for tag, row in provider_rollup.items():
+            table.add_row(
+                tag,
+                str(row["calls"]),
+                f"{row['input_tokens']:,}",
+                f"{row['output_tokens']:,}",
+                f"${row['cost_estimate_usd']:.4f}",
+                ", ".join(row["models"]),
+            )
+        console.print(table)
+
 
 def show_session(session: BoardSession, *, budget: bool = False):
     console.print()

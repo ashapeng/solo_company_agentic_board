@@ -333,7 +333,7 @@ def test_harness_config_hardening_defaults(tmp_path, monkeypatch):
 
     cfg = HarnessConfig()
     assert isinstance(cfg.hardening, dict)
-    assert cfg.hardening["atomizer_model"] == "qwen/qwen3.6-max-preview"
+    assert cfg.hardening["atomizer_model"] == "qwen/qwen3.6-plus-2026-04-02"
     assert cfg.hardening["blinded_verifier_pass_threshold"] == 0.80
     assert cfg.hardening["blinded_verifier_evidence_max_chars"] == 4000
 
