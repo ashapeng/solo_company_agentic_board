@@ -11,7 +11,7 @@ Tier rule (spec §7.1.2):
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Literal
+from typing import Literal
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
