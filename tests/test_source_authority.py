@@ -156,3 +156,108 @@ def test_tier_for_url_ignores_override_with_invalid_tier():
 def test_tier_for_url_empty_overrides_uses_default_map():
     assert tier_for_url("https://reuters.com/x", overrides={}) == "major_news"
     assert tier_for_url("https://reuters.com/x", overrides=None) == "major_news"
+
+
+from server.board.source_authority import passes_authority_threshold
+
+
+# ─── threshold rule branches (spec §7.1.2) ──────────────────────────────────
+
+def test_threshold_pass_one_academic():
+    """Single academic source satisfies the rule."""
+    passes, rationale = passes_authority_threshold(["https://arxiv.org/abs/x"])
+    assert passes is True
+    assert "academic" in rationale.lower()
+
+
+def test_threshold_pass_two_major_news():
+    passes, rationale = passes_authority_threshold([
+        "https://reuters.com/a", "https://bloomberg.com/b",
+    ])
+    assert passes is True
+    assert "major_news" in rationale or "major news" in rationale.lower()
+
+
+def test_threshold_fail_one_major_news():
+    """One major_news source is NOT enough — rule requires ≥2."""
+    passes, rationale = passes_authority_threshold(["https://reuters.com/a"])
+    assert passes is False
+    # rationale describes what's missing
+    assert "academic" in rationale.lower() or "major_news" in rationale or "established_blog" in rationale
+
+
+def test_threshold_pass_three_established_blogs():
+    passes, rationale = passes_authority_threshold([
+        "https://techcrunch.com/a",
+        "https://theverge.com/b",
+        "https://arstechnica.com/c",
+    ])
+    assert passes is True
+
+
+def test_threshold_fail_two_established_blogs():
+    """Two established_blog sources is NOT enough — rule requires ≥3."""
+    passes, rationale = passes_authority_threshold([
+        "https://techcrunch.com/a", "https://theverge.com/b",
+    ])
+    assert passes is False
+
+
+def test_threshold_fail_only_unknown_sources():
+    """Tier-2 SEO blogs alone never qualify."""
+    passes, rationale = passes_authority_threshold([
+        "https://random-seo-blog.example/a",
+        "https://another-seo-blog.example/b",
+        "https://yet-another-seo-blog.example/c",
+    ])
+    assert passes is False
+    assert "unknown" in rationale.lower() or "low-authority" in rationale.lower() or "insufficient" in rationale.lower()
+
+
+def test_threshold_fail_empty_refs():
+    passes, rationale = passes_authority_threshold([])
+    assert passes is False
+
+
+def test_threshold_fail_only_unverified_literal():
+    """`[UNVERIFIED]` and other abstract tags never count as authoritative."""
+    passes, rationale = passes_authority_threshold(["[UNVERIFIED]", "[UNVERIFIED]"])
+    assert passes is False
+
+
+def test_threshold_mixed_tiers_picks_strongest_satisfied_rule():
+    """One academic alone is enough — additional unknown refs don't hurt."""
+    passes, rationale = passes_authority_threshold([
+        "https://arxiv.org/abs/x",
+        "https://random-blog.example/y",
+    ])
+    assert passes is True
+
+
+def test_threshold_pass_one_academic_plus_one_major_news():
+    """Either-or rule: ≥1 academic alone suffices."""
+    passes, _ = passes_authority_threshold([
+        "https://nature.com/article", "https://wsj.com/article",
+    ])
+    assert passes is True
+
+
+def test_threshold_uses_overrides_kwarg():
+    """Operator-supplied overrides feed through into tier classification."""
+    overrides = {"industry-report.example": "academic"}
+    passes, rationale = passes_authority_threshold(
+        ["https://industry-report.example/2026"],
+        overrides=overrides,
+    )
+    assert passes is True
+
+
+def test_threshold_rationale_describes_counts():
+    """Rationale should mention what was actually found so a user can
+    debug why a claim got downgraded."""
+    _, rationale = passes_authority_threshold([
+        "https://reuters.com/a",
+        "https://random-blog.example/b",
+    ])
+    # We saw 1 major_news and 1 unknown — rationale should reflect that.
+    assert "1" in rationale  # at least one count appears

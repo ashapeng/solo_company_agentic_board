@@ -11,7 +11,7 @@ Tier rule (spec §7.1.2):
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Iterable, Literal
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -134,3 +134,47 @@ def tier_for_url(
         return best_tier if best_tier in _VALID_TIERS else "unknown"
 
     return "unknown"
+
+
+def passes_authority_threshold(
+    refs: Iterable[str],
+    *,
+    overrides: dict[str, str] | None = None,
+) -> tuple[bool, str]:
+    """Evaluate a list of evidence refs against the new SUPPORTED rule
+    (spec §7.1.2):
+
+        SUPPORTED requires ≥1 academic OR ≥2 major_news OR ≥3 established_blog.
+
+    Returns ``(passes, rationale)``. ``rationale`` is a human-readable string
+    explaining the verdict — used verbatim in the downgrade message so
+    operators can see why a claim's authority was rejected.
+
+    Non-URL refs (the `[UNVERIFIED]` literal, abstract tags) classify as
+    `unknown` and contribute nothing toward the threshold.
+    """
+    counts: dict[str, int] = {
+        "academic": 0,
+        "major_news": 0,
+        "established_blog": 0,
+        "unknown": 0,
+    }
+    for ref in refs or []:
+        tier = tier_for_url(ref, overrides=overrides)
+        counts[tier] = counts.get(tier, 0) + 1
+
+    if counts["academic"] >= 1:
+        return (True, f"satisfied by {counts['academic']} academic source(s)")
+    if counts["major_news"] >= 2:
+        return (True, f"satisfied by {counts['major_news']} major_news source(s)")
+    if counts["established_blog"] >= 3:
+        return (
+            True,
+            f"satisfied by {counts['established_blog']} established_blog source(s)",
+        )
+
+    # Fail — explain what we saw and what would have passed.
+    found_parts = [f"{counts[t]} {t}" for t in ("academic", "major_news", "established_blog", "unknown") if counts[t]]
+    found_desc = ", ".join(found_parts) if found_parts else "no sources"
+    needed = "need ≥1 academic OR ≥2 major_news OR ≥3 established_blog"
+    return (False, f"found {found_desc}; {needed}")
