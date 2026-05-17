@@ -329,7 +329,7 @@ async def agentic_member_turn(
                             "forced_revisions_used": forced_revisions_used,
                             "forced_revision_cap": forced_revision_cap,
                             "tool_name": tc.name,
-                            "summary": result.summary,
+                            "summary": (result.summary or "")[:200],
                         },
                     )
 

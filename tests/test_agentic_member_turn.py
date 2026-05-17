@@ -296,6 +296,11 @@ async def test_contradicted_tool_result_injects_forced_revision_turn(monkeypatch
     assert "validate_claim" in body
     assert "validate_claim: CONTRADICTED" in body
     assert "YC blog says 244" in body
+    # Ordering contract: the tool result must land BEFORE its forced-revision
+    # turn so the model first sees the verdict, then the directive.
+    tool_msgs = [m for m in second_call_msgs if m.get("role") == "tool"]
+    assert tool_msgs, "expected the tool result to be in the second call's messages"
+    assert second_call_msgs.index(forced_turns[0]) > second_call_msgs.index(tool_msgs[-1])
 
 
 async def test_supported_tool_result_does_not_inject_forced_revision(monkeypatch):
