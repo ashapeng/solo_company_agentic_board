@@ -343,3 +343,67 @@ async def test_validate_claim_evidence_wrapped_in_evidence_tags(monkeypatch):
     prompt = captured_prompts[0]
     assert "<evidence>" in prompt and "</evidence>" in prompt
     assert "untrusted" in prompt.lower() or "ignore" in prompt.lower()
+
+
+# ── ToolResult.triggers_revision (P3b spec §7.2.1) ──────────────────────────
+
+def test_tool_result_triggers_revision_on_validate_claim_contradicted():
+    """The canonical case: validate_claim with verdict CONTRADICTED."""
+    from server.board.tools import ToolResult
+    r = ToolResult(
+        content_for_model="validate_claim('x'): VERDICT: CONTRADICTED…",
+        summary="validate_claim: CONTRADICTED",
+        cost_units=2.0,
+    )
+    assert r.triggers_revision is True
+
+
+def test_tool_result_triggers_revision_substring_match_is_tool_agnostic():
+    """Trigger fires for ANY tool whose summary contains the literal 'CONTRADICTED'.
+    Documents the contract for future tool authors (spec §7.2.1)."""
+    from server.board.tools import ToolResult
+    r = ToolResult(
+        content_for_model="future_tool result body",
+        summary="future_tool: CONTRADICTED (2/3 sources)",
+        cost_units=1.0,
+    )
+    assert r.triggers_revision is True
+
+
+def test_tool_result_does_not_trigger_on_supported_or_unverified():
+    from server.board.tools import ToolResult
+    for summary in (
+        "validate_claim: SUPPORTED",
+        "validate_claim: UNVERIFIED",
+        "validate_claim: UNVERIFIED (no search results)",
+        "web_search 'x' → 5 results",
+        "fetched https://example.com (1234 chars)",
+        "",
+    ):
+        r = ToolResult(content_for_model="", summary=summary, cost_units=0.0)
+        assert r.triggers_revision is False, f"unexpected trigger on summary={summary!r}"
+
+
+def test_tool_result_triggers_revision_is_case_sensitive():
+    """Lowercase 'contradicted' does NOT trigger. Pin the contract — future
+    tools must emit the exact token to opt in."""
+    from server.board.tools import ToolResult
+    r = ToolResult(
+        content_for_model="x",
+        summary="validate_claim: contradicted",
+        cost_units=0.0,
+    )
+    assert r.triggers_revision is False
+
+
+def test_tool_result_triggers_revision_ignores_content_for_model():
+    """Only `summary` is inspected. `content_for_model` containing the word
+    doesn't trip the trigger — otherwise a SUPPORTED verdict that quoted
+    CONTRADICTED in its rationale would falsely fire."""
+    from server.board.tools import ToolResult
+    r = ToolResult(
+        content_for_model="The evidence does not say CONTRADICTED anywhere relevant.",
+        summary="validate_claim: SUPPORTED",
+        cost_units=2.0,
+    )
+    assert r.triggers_revision is False
