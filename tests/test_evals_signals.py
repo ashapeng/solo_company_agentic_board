@@ -150,3 +150,38 @@ def test_extract_signals_blinded_per_claim_absent_when_checklist_fallback():
     )
     signals = extract_signals(session)
     assert signals.blinded_verifier_per_claim == []
+
+
+def test_extract_signals_counts_synthesis_unverified_tags():
+    """[UNVERIFIED] markers in the chair synthesis are counted so the eval can
+    tell when the chair appropriately deferred rather than fabricated."""
+    session = BoardSession(
+        session_id="board_test", user_query="2026 MAU?",
+        metrics=SessionMetrics(),
+        verification={"score": 7, "passed": True, "deficiencies": [], "suggestions": []},
+        stage3_synthesis=MemberResponse(
+            member_id="chairperson", stage=3,
+            content=(
+                "## Board Decision\n"
+                "- Anthropic doesn't disclose MAU [UNVERIFIED].\n"
+                "- 2026 estimates vary widely [UNVERIFIED].\n"
+                "- Action: defer until Q3 data lands [UNVERIFIED].\n"
+            ),
+            model="kimi", elapsed_seconds=0.1,
+        ),
+    )
+    signals = extract_signals(session)
+    assert signals.synthesis_unverified_count == 3
+
+
+def test_extract_signals_counts_zero_unverified_when_no_synthesis():
+    """No stage3 → 0 unverified markers (no crash)."""
+    session = BoardSession(session_id="board_test", user_query="x", metrics=SessionMetrics())
+    signals = extract_signals(session)
+    assert signals.synthesis_unverified_count == 0
+
+
+def test_observed_signals_roundtrip_includes_unverified_count():
+    original = ObservedSignals(verifier_passed=True, synthesis_unverified_count=5)
+    rehydrated = ObservedSignals.from_dict(original.to_json())
+    assert rehydrated.synthesis_unverified_count == 5
