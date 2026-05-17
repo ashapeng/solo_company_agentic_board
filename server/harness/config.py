@@ -68,6 +68,8 @@ class HarnessConfig:
         # P2: contradiction detector
         "contradiction_judge_model": None,   # None → fall back to atomizer_model
         "contradiction_max_pairs": 12,
+        # P3a: per-domain source-tier overrides; {"host": "academic|major_news|established_blog"}
+        "source_authority_overrides": {},
     })
 
     # Version tracking
