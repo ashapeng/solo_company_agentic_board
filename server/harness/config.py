@@ -19,6 +19,7 @@ _STAGE_TOKEN_FIELDS = {
 DEFAULT_STAGE1_COMPACTION_SECTIONS = [
     "confidence",
     "tldr",
+    "analysis",
     "recommendation",
     "top_risk",
 ]
