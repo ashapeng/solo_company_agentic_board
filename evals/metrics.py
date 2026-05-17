@@ -33,9 +33,18 @@ class RunDiff:
 
 # ── per-category checkers ────────────────────────────────────────────────
 
+_APPROPRIATELY_DEFERRED_THRESHOLD = 3
+
+
 def _check_hallucination(prompt: EvalPrompt, signals: ObservedSignals) -> bool:
     if signals.verifier_passed is None:
         return False
+    # Appropriately-deferred path (P1.2+): the chair refused to fabricate and
+    # explicitly tagged multiple claims [UNVERIFIED]. The verifier may pass the
+    # well-formed deferral, but the prompt's expectation ("don't hallucinate")
+    # is satisfied — credit the run.
+    if signals.synthesis_unverified_count >= _APPROPRIATELY_DEFERRED_THRESHOLD:
+        return True
     if signals.verifier_passed:
         return False
     needles = [s.lower() for s in prompt.expected_outcome.get("deficiency_contains", [])]

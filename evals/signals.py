@@ -30,6 +30,12 @@ class ObservedSignals:
     blinded_verifier_per_claim: list[dict] = field(default_factory=list)
     # Post-P2 signals — always zero at P0 baseline (populated in P2+)
     contradictions_surfaced: int = 0
+    # Count of `[UNVERIFIED]` markers in the chair synthesis (P1.2+). Used by
+    # the hallucination_planted checker to credit "appropriately deferred"
+    # behavior: when the chair refuses to fabricate and tags claims [UNVERIFIED]
+    # instead, the verifier may pass the well-formed deferral but the eval
+    # should still treat that as a success.
+    synthesis_unverified_count: int = 0
     # Cost + latency
     total_cost_usd: float = 0.0
     total_latency_seconds: float = 0.0
@@ -45,6 +51,7 @@ class ObservedSignals:
             "validate_claim_verdicts": list(self.validate_claim_verdicts),
             "blinded_verifier_per_claim": list(self.blinded_verifier_per_claim),
             "contradictions_surfaced": self.contradictions_surfaced,
+            "synthesis_unverified_count": self.synthesis_unverified_count,
             "total_cost_usd": self.total_cost_usd,
             "total_latency_seconds": self.total_latency_seconds,
             "total_tokens": self.total_tokens,
@@ -61,6 +68,7 @@ class ObservedSignals:
             validate_claim_verdicts=list(d.get("validate_claim_verdicts") or []),
             blinded_verifier_per_claim=list(d.get("blinded_verifier_per_claim") or []),
             contradictions_surfaced=int(d.get("contradictions_surfaced", 0)),
+            synthesis_unverified_count=int(d.get("synthesis_unverified_count", 0)),
             total_cost_usd=float(d.get("total_cost_usd", 0.0)),
             total_latency_seconds=float(d.get("total_latency_seconds", 0.0)),
             total_tokens=int(d.get("total_tokens", 0)),
@@ -95,6 +103,10 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         except AttributeError:
             total_tokens = 0
 
+    stage3 = getattr(session, "stage3_synthesis", None)
+    synthesis_text = getattr(stage3, "content", "") or ""
+    synthesis_unverified_count = synthesis_text.count("[UNVERIFIED]")
+
     return ObservedSignals(
         verifier_passed=verifier_passed,
         verifier_score=verification.get("score") if verification else None,
@@ -105,6 +117,7 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         validate_claim_verdicts=[],
         blinded_verifier_per_claim=list(verification.get("per_claim") or []),
         contradictions_surfaced=0,
+        synthesis_unverified_count=synthesis_unverified_count,
         total_cost_usd=float(metrics.total_cost_estimate()) if metrics else 0.0,
         total_latency_seconds=float(session.total_elapsed or 0.0),
         total_tokens=total_tokens,

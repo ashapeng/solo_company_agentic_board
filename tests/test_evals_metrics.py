@@ -47,6 +47,35 @@ def test_hallucination_check_fails_when_verifier_not_run():
     assert check_signal_for_prompt(p, signals) is False
 
 
+def test_hallucination_check_passes_when_chair_appropriately_deferred():
+    """When the chair refuses to fabricate and explicitly tags multiple claims
+    [UNVERIFIED], the verifier may pass the synthesis (it's well-formed) — but
+    the eval should still credit the chair for *not* hallucinating. The
+    appropriately-deferred signal is synthesis_unverified_count >= 3."""
+    p = _prompt("hallucination_planted",
+                {"verifier_passed": False, "deficiency_contains": ["growth rate"]})
+    signals = ObservedSignals(
+        verifier_passed=True,            # checklist scored the deferral well-formed
+        verifier_score=8,
+        verifier_deficiencies=[],
+        synthesis_unverified_count=5,    # chair flagged 5 load-bearing claims [UNVERIFIED]
+    )
+    assert check_signal_for_prompt(p, signals) is True
+
+
+def test_hallucination_check_does_not_count_sparse_unverified_as_deferral():
+    """A single stray [UNVERIFIED] is not enough — chair could still have made
+    other fabricated claims that the verifier missed."""
+    p = _prompt("hallucination_planted",
+                {"verifier_passed": False, "deficiency_contains": ["growth rate"]})
+    signals = ObservedSignals(
+        verifier_passed=True,
+        verifier_score=8,
+        synthesis_unverified_count=1,    # below threshold
+    )
+    assert check_signal_for_prompt(p, signals) is False
+
+
 def test_cross_member_conflict_check():
     p = _prompt("cross_member_conflict", {"contradiction_surfaced": True})
     fail_signals = ObservedSignals(contradictions_surfaced=0)  # P0 baseline
