@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from server.board.llm import query_llm
+
 logger = logging.getLogger(__name__)
 
 
@@ -158,8 +160,6 @@ def _score_pair_overlap(claim_a: dict, claim_b: dict) -> float:
 
 # ─── LLM judge (per candidate pair) ─────────────────────────────────────────
 
-from server.board.llm import query_llm  # noqa: E402  (deferred to keep the pure half import-free)
-
 
 CONTRADICTION_JUDGE_PROMPT = """Two board members made claims about the same topic. Are they contradictory?
 
@@ -210,11 +210,14 @@ async def _judge_pair(claim_a: dict, claim_b: dict, *, model: str) -> dict[str, 
     """Run the blinded judge LLM on one candidate pair. Returns
     {verdict, severity, topic}. Errors are downgraded to CONSISTENT so a
     flaky judge can't manufacture noise."""
+    def _join_refs(refs: Any) -> str:
+        return ", ".join(str(r) for r in (refs or ["[UNVERIFIED]"]))
+
     prompt = CONTRADICTION_JUDGE_PROMPT.format(
         claim_a_text=str(claim_a.get("text", "")),
-        claim_a_refs=", ".join(claim_a.get("evidence_refs") or ["[UNVERIFIED]"]),
+        claim_a_refs=_join_refs(claim_a.get("evidence_refs")),
         claim_b_text=str(claim_b.get("text", "")),
-        claim_b_refs=", ".join(claim_b.get("evidence_refs") or ["[UNVERIFIED]"]),
+        claim_b_refs=_join_refs(claim_b.get("evidence_refs")),
     )
     try:
         resp = await query_llm(

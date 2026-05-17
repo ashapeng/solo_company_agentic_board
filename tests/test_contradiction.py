@@ -176,3 +176,5 @@ async def test_judge_pair_falls_back_to_consistent_on_llm_failure():
     ):
         result = await _judge_pair(a, b, model="qwen/qwen3.6-max-preview")
     assert result["verdict"] == "CONSISTENT"
+    assert result["severity"] == "none"
+    assert result["topic"] == ""
