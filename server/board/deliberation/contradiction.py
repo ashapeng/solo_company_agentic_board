@@ -313,3 +313,44 @@ async def detect_contradictions(
             severity=severity,
         ))
     return findings
+
+
+# ─── Stage 2 prompt block renderer (spec §6.4) ──────────────────────────────
+
+
+_SEVERITY_LABEL = {
+    "load_bearing": "[LOAD-BEARING]",
+    "material":     "[MATERIAL]",
+    "minor":        "[MINOR]",
+}
+
+
+def format_contradictions_block(findings: list[ContradictionFinding]) -> str:
+    """Render the PEER CONTRADICTIONS block per spec §6.4. Empty string when
+    no findings, so callers can drop a literal `{{peer_contradictions}}`
+    placeholder cleanly."""
+    if not findings:
+        return ""
+    lines: list[str] = [
+        "───────────────────────────────────────",
+        "PEER CONTRADICTIONS DETECTED:",
+        "───────────────────────────────────────",
+        "",
+        "The following claims from your peers conflict. Address them in your delta:",
+        "",
+    ]
+    for i, f in enumerate(findings, start=1):
+        label = _SEVERITY_LABEL.get(f.severity, f"[{f.severity.upper()}]")
+        a_refs = ", ".join(f.claim_a.get("evidence_refs") or ["[UNVERIFIED]"])
+        b_refs = ", ".join(f.claim_b.get("evidence_refs") or ["[UNVERIFIED]"])
+        lines.extend([
+            f"{i}. {label} Topic: {f.topic}",
+            f"   Member A: \"{f.claim_a.get('text', '')}\" (cited: {a_refs})",
+            f"   Member B: \"{f.claim_b.get('text', '')}\" (cited: {b_refs})",
+            "",
+        ])
+    lines.extend([
+        "If a contradiction touches your Stage 1 position, you MUST take a side or",
+        "explicitly note that you cannot resolve it.",
+    ])
+    return "\n".join(lines)

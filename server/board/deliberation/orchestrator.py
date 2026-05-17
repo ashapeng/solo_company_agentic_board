@@ -945,6 +945,7 @@ class BoardOrchestrator:
         *,
         query_type: str | None = None,
         complexity: str | None = None,
+        contradictions: list[dict] | None = None,
     ) -> list[MemberResponse]:
         self._fire(self._on_stage_start, 2, "Peer Review & Challenge")
         self._token_budget_query_type = query_type
@@ -958,6 +959,21 @@ class BoardOrchestrator:
         # Compact Stage 1 responses before passing to peer review
         compacted_s1 = compact_stage1_responses(stage1_responses, query_type=query_type)
 
+        # Build the PEER CONTRADICTIONS block once; it's identical across members.
+        peer_contradictions_block = ""
+        if contradictions:
+            from .contradiction import ContradictionFinding, format_contradictions_block
+            findings = [
+                ContradictionFinding(
+                    topic=c.get("topic", ""),
+                    claim_a=c.get("claim_a", {}) or {},
+                    claim_b=c.get("claim_b", {}) or {},
+                    severity=c.get("severity", "minor"),
+                )
+                for c in contradictions
+            ]
+            peer_contradictions_block = format_contradictions_block(findings)
+
         tasks = []
         for member in self.council:
             anonymized = _anonymize_responses(compacted_s1, exclude_member_id=member.id)
@@ -967,6 +983,7 @@ class BoardOrchestrator:
                 user_query=user_query,
                 anonymized_responses=anonymized,
                 stage2_behavior=stage2_extra,
+                peer_contradictions=peer_contradictions_block,
             )
             tasks.append(self._query_member(member, prompt, stage=2))
 
@@ -1540,6 +1557,7 @@ class BoardOrchestrator:
             session.stage1_responses,
             query_type=query_type,
             complexity=complexity,
+            contradictions=session.contradictions,
         )
 
         # Record Stage 2 JSON parse warnings

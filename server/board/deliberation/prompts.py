@@ -121,6 +121,7 @@ def format_stage2(
     user_query: str,
     anonymized_responses: str,
     stage2_behavior: str,
+    peer_contradictions: str = "",
 ) -> str:
     """Build the Stage 2 user prompt for a council member."""
     template = _load_or_fallback("stage2_peer_review", _FALLBACK_STAGE2)
@@ -132,6 +133,7 @@ def format_stage2(
         .replace("{{stage2_behavior}}", stage2_behavior)
         .replace("{{user_query}}", user_query)
         .replace("{{anonymized_responses}}", anonymized_responses)
+        .replace("{{peer_contradictions}}", peer_contradictions)
         + STAGE2_JSON_SUFFIX
     )
 
@@ -229,6 +231,8 @@ ORIGINAL REQUEST:
 ANONYMIZED BOARD RESPONSES (Stage 1):
 ───────────────────────────────────────
 {anonymized_responses}
+
+{peer_contradictions}
 
 ───────────────────────────────────────
 YOUR UPDATED ANALYSIS:
@@ -342,7 +346,16 @@ Rank up to 3 peer responses by value to the final decision.
 """
 
 _FALLBACK_STAGE1 = STAGE1_WRAPPER.replace("{system_prompt}", "{{system_prompt}}").replace("{role}", "{{role}}").replace("{output_format}", "{{output_format}}").replace("{user_query}", "{{user_query}}")
-_FALLBACK_STAGE2 = STAGE2_WRAPPER.replace("{system_prompt}", "{{system_prompt}}").replace("{role}", "{{role}}").replace("{output_format}", "{{output_format}}").replace("{user_query}", "{{user_query}}").replace("{anonymized_responses}", "{{anonymized_responses}}").replace("{stage2_addendum}", "{{stage2_behavior}}")
+_FALLBACK_STAGE2 = (
+    STAGE2_WRAPPER
+    .replace("{system_prompt}", "{{system_prompt}}")
+    .replace("{role}", "{{role}}")
+    .replace("{output_format}", "{{output_format}}")
+    .replace("{user_query}", "{{user_query}}")
+    .replace("{anonymized_responses}", "{{anonymized_responses}}")
+    .replace("{stage2_addendum}", "{{stage2_behavior}}")
+    .replace("{peer_contradictions}", "{{peer_contradictions}}")
+)
 _FALLBACK_STAGE3 = STAGE3_SYNTHESIS.replace("{chairman_system_prompt}", "{{chairman_system_prompt}}").replace("{user_query}", "{{user_query}}").replace("{stage1_responses}", "{{stage1_responses}}").replace("{stage2_responses}", "{{stage2_responses}}")
 
 
