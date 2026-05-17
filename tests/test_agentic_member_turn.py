@@ -492,3 +492,58 @@ async def test_forced_revision_cap_configurable(monkeypatch):
         if m.get("role") == "user" and "FORCED REVISION" in (m.get("content") or "")
     ]
     assert len(forced_turns) == 1
+
+
+# ─── Tool-call persistence helpers ──────────────────────────────────────────
+
+from server.board.deliberation.orchestrator import _parse_tool_verdict
+
+
+def test_parse_tool_verdict_supported():
+    content = "validate_claim('x'):\nVERDICT: SUPPORTED\nRATIONALE: confirmed."
+    assert _parse_tool_verdict("validate_claim", content) == "SUPPORTED"
+
+
+def test_parse_tool_verdict_contradicted():
+    content = "validate_claim('x'):\nVERDICT: CONTRADICTED\nRATIONALE: refuted."
+    assert _parse_tool_verdict("validate_claim", content) == "CONTRADICTED"
+
+
+def test_parse_tool_verdict_unverified():
+    content = "validate_claim('x'):\nVERDICT: UNVERIFIED\nRATIONALE: thin."
+    assert _parse_tool_verdict("validate_claim", content) == "UNVERIFIED"
+
+
+def test_parse_tool_verdict_returns_literal_judge_verdict_even_when_downgrade_appended():
+    """The P3a downgrade appends `[SOURCE-AUTHORITY DOWNGRADE]` to the body.
+    The verdict line itself still says SUPPORTED (the judge's word). The
+    canonical post-downgrade verdict lives on ToolResult.summary; the record
+    builder (`_make_tool_call_record`) reads both and prefers the summary."""
+    content = (
+        "validate_claim('x'):\nVERDICT: SUPPORTED\nRATIONALE: ok\n"
+        "\n[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority. "
+        "Verdict downgraded to UNVERIFIED."
+    )
+    assert _parse_tool_verdict("validate_claim", content) == "SUPPORTED"
+
+
+def test_parse_tool_verdict_returns_none_when_no_verdict_line():
+    """No 'VERDICT:' substring → None (caller stores None on the record)."""
+    assert _parse_tool_verdict("validate_claim", "some other text") is None
+    assert _parse_tool_verdict("validate_claim", "") is None
+
+
+def test_parse_tool_verdict_returns_none_for_non_validate_claim_tool():
+    """web_search, fetch_url, etc. don't emit verdicts. Parser returns None."""
+    assert _parse_tool_verdict("web_search", "VERDICT: SUPPORTED") is None
+    assert _parse_tool_verdict("fetch_url", "VERDICT: CONTRADICTED") is None
+    assert _parse_tool_verdict("open_browser", "anything") is None
+    assert _parse_tool_verdict("ask_user_clarifying_question", "anything") is None
+
+
+def test_parse_tool_verdict_is_case_insensitive():
+    """Mirror _handle_validate_claim's convention (which also .upper()s before
+    substring match) so the persisted record's verdict never disagrees with
+    the tool's own parsing path."""
+    assert _parse_tool_verdict("validate_claim", "verdict: supported") == "SUPPORTED"
+    assert _parse_tool_verdict("validate_claim", "Verdict: ContraDicted") == "CONTRADICTED"

@@ -136,6 +136,35 @@ def _tool_call_message(tcs: list[ToolCall], reasoning_content: str | None = None
     return msg
 
 
+def _parse_tool_verdict(tool_name: str, content_for_model: str) -> str | None:
+    """Extract the literal ``VERDICT: <X>`` value from a tool result's
+    ``content_for_model`` for tools that emit one.
+
+    Currently only ``validate_claim`` is in scope. For every other tool name
+    this returns ``None``. The parser is case-insensitive to mirror the
+    existing convention in ``_handle_validate_claim`` (which also uppercases
+    before substring match). The P3a downgrade in ``_handle_validate_claim``
+    appends a ``[SOURCE-AUTHORITY DOWNGRADE]`` note *after* the verdict line
+    but does NOT rewrite it; the post-downgrade verdict is carried in
+    ``ToolResult.summary`` ("validate_claim: <X>") and the record builder
+    reads both — see ``_make_tool_call_record``.
+
+    Returns the verdict string (e.g. ``"SUPPORTED"``, ``"CONTRADICTED"``,
+    ``"UNVERIFIED"``) when found; ``None`` otherwise. Never raises.
+    """
+    if tool_name != "validate_claim":
+        return None
+    text = content_for_model or ""
+    upper = text.upper()
+    if "VERDICT: SUPPORTED" in upper or "VERDICT:SUPPORTED" in upper:
+        return "SUPPORTED"
+    if "VERDICT: CONTRADICTED" in upper or "VERDICT:CONTRADICTED" in upper:
+        return "CONTRADICTED"
+    if "VERDICT: UNVERIFIED" in upper or "VERDICT:UNVERIFIED" in upper:
+        return "UNVERIFIED"
+    return None
+
+
 # ─── P3b: Tool-error revision loop (spec §7.2) ──────────────────────────────
 
 # Verbatim from spec §7.2.2. Filled with {tool_name}, {contradicted_claim},
