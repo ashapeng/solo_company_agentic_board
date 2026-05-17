@@ -369,5 +369,44 @@ def test_harness_config_hardening_overrides_from_json(tmp_path):
     assert cfg.hardening["blinded_verifier_evidence_max_chars"] == 6000
 
 
+def test_harness_config_contradiction_defaults():
+    """P2 ships contradiction keys in the hardening block with documented defaults."""
+    from server.harness.config import HarnessConfig
+
+    cfg = HarnessConfig()
+    # judge_model None means "fall back to atomizer_model at read time"
+    assert cfg.hardening["contradiction_judge_model"] is None
+    assert cfg.hardening["contradiction_max_pairs"] == 12
+
+
+def test_harness_config_contradiction_overrides_from_json(tmp_path):
+    """Custom contradiction values in harness_config.json round-trip through load."""
+    from server.harness.config import load_config
+
+    path = tmp_path / "harness_config.json"
+    path.write_text(json.dumps({
+        "stage1_max_tokens": 1200, "stage2_max_tokens": 800,
+        "stage3_max_tokens": 4000, "stage4_max_tokens": 3000,
+        "revision_max_tokens": 2500,
+        "min_stage1_responses": 3, "min_stage2_responses": 2,
+        "verification_threshold": 7.0, "max_revision_attempts": 1,
+        "complexity_multipliers": {"simple": 0.6, "moderate": 1.0, "complex": 1.5},
+        "per_query_type": {},
+        "hardening": {
+            "atomizer_model": "qwen/qwen3.6-max-preview",
+            "blinded_verifier_pass_threshold": 0.80,
+            "blinded_verifier_evidence_max_chars": 4000,
+            "contradiction_judge_model": "qwen/qwen3.6-max-preview",
+            "contradiction_max_pairs": 8,
+        },
+        "version": 3,
+        "last_modified": "2026-05-17T00:00:00+00:00",
+    }))
+
+    cfg = load_config(path)
+    assert cfg.hardening["contradiction_judge_model"] == "qwen/qwen3.6-max-preview"
+    assert cfg.hardening["contradiction_max_pairs"] == 8
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -185,3 +185,27 @@ def test_observed_signals_roundtrip_includes_unverified_count():
     original = ObservedSignals(verifier_passed=True, synthesis_unverified_count=5)
     rehydrated = ObservedSignals.from_dict(original.to_json())
     assert rehydrated.synthesis_unverified_count == 5
+
+
+def test_extract_signals_populates_contradictions_surfaced():
+    """When session.contradictions has entries (P2 detector fired), the eval
+    signal counts them so cross_member_conflict checker can pass."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        contradictions=[
+            {"topic": "EV growth", "claim_a": {"member_id": "a"},
+             "claim_b": {"member_id": "b"}, "severity": "material"},
+            {"topic": "MAU", "claim_a": {"member_id": "c"},
+             "claim_b": {"member_id": "d"}, "severity": "load_bearing"},
+        ],
+    )
+    signals = extract_signals(session)
+    assert signals.contradictions_surfaced == 2
+
+
+def test_extract_signals_contradictions_zero_when_field_absent():
+    """No contradictions on session → count stays 0 (no crash)."""
+    session = BoardSession(session_id="board_test", user_query="x", metrics=SessionMetrics())
+    signals = extract_signals(session)
+    assert signals.contradictions_surfaced == 0

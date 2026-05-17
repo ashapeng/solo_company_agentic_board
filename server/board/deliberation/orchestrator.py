@@ -30,6 +30,7 @@ from server.memory.review import propose_memory_update
 from server.memory.sotb import read_sotb
 
 from .atomizer import atomize
+from .contradiction import ContradictionFinding, detect_contradictions, format_contradictions_block
 from .compaction import (
     compact_stage1_responses,
     compact_stage2_responses,
@@ -304,6 +305,10 @@ class BoardSession:
     # values are lists of AtomizedClaim.to_dict() dicts. Populated only when
     # verify=True (HEAVY tier convention).
     atomized_claims: dict = field(default_factory=dict)
+    # Cross-member contradiction findings (spec §6). List of
+    # ContradictionFinding.to_dict() dicts. Populated only when verify=True
+    # and ≥2 members responded at Stage 1.
+    contradictions: list = field(default_factory=list)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -338,6 +343,7 @@ class BoardSession:
             "structured_output_warnings": self.structured_output_warnings,
             "evidence_packets": self.evidence_packets,
             "atomized_claims": self.atomized_claims,
+            "contradictions": self.contradictions,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
@@ -939,6 +945,7 @@ class BoardOrchestrator:
         *,
         query_type: str | None = None,
         complexity: str | None = None,
+        contradictions: list[dict] | None = None,
     ) -> list[MemberResponse]:
         self._fire(self._on_stage_start, 2, "Peer Review & Challenge")
         self._token_budget_query_type = query_type
@@ -952,6 +959,20 @@ class BoardOrchestrator:
         # Compact Stage 1 responses before passing to peer review
         compacted_s1 = compact_stage1_responses(stage1_responses, query_type=query_type)
 
+        # Build the PEER CONTRADICTIONS block once; it's identical across members.
+        peer_contradictions_block = ""
+        if contradictions:
+            findings = [
+                ContradictionFinding(
+                    topic=c.get("topic", ""),
+                    claim_a=c.get("claim_a") or {},
+                    claim_b=c.get("claim_b") or {},
+                    severity=c.get("severity", "minor"),
+                )
+                for c in contradictions
+            ]
+            peer_contradictions_block = format_contradictions_block(findings)
+
         tasks = []
         for member in self.council:
             anonymized = _anonymize_responses(compacted_s1, exclude_member_id=member.id)
@@ -961,6 +982,7 @@ class BoardOrchestrator:
                 user_query=user_query,
                 anonymized_responses=anonymized,
                 stage2_behavior=stage2_extra,
+                peer_contradictions=peer_contradictions_block,
             )
             tasks.append(self._query_member(member, prompt, stage=2))
 
@@ -1512,12 +1534,29 @@ class BoardOrchestrator:
         if verify and session.stage1_responses:
             session.atomized_claims = await self._atomize_stage1(session.stage1_responses)
 
+        # Stage 1.6: cross-member contradiction detection (spec §6). Needs ≥2
+        # members because pairs are cross-member; HEAVY-only via verify=True.
+        if verify and len(session.atomized_claims) >= 2:
+            cfg = get_config()
+            judge_model = (
+                cfg.hardening.get("contradiction_judge_model")
+                or cfg.hardening.get("atomizer_model", "qwen/qwen3.6-max-preview")
+            )
+            max_pairs = int(cfg.hardening.get("contradiction_max_pairs", 12))
+            findings = await detect_contradictions(
+                session.atomized_claims,
+                judge_model=judge_model,
+                max_pairs=max_pairs,
+            )
+            session.contradictions = [f.to_dict() for f in findings]
+
         # Stage 2: Peer review with anonymized responses (parallel)
         session.stage2_responses = await self.stage2(
             effective_query,
             session.stage1_responses,
             query_type=query_type,
             complexity=complexity,
+            contradictions=session.contradictions,
         )
 
         # Record Stage 2 JSON parse warnings

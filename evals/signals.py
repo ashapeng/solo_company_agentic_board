@@ -28,7 +28,8 @@ class ObservedSignals:
     # Per-claim blinded verifier results (P1+). Each entry:
     # {claim_id, claim_text, verdict, rationale, evidence_refs}.
     blinded_verifier_per_claim: list[dict] = field(default_factory=list)
-    # Post-P2 signals — always zero at P0 baseline (populated in P2+)
+    # Cross-member contradictions surfaced by the P2 detector (count of
+    # entries in session.contradictions). Was always 0 pre-P2.
     contradictions_surfaced: int = 0
     # Count of `[UNVERIFIED]` markers in the chair synthesis (P1.2+). Used by
     # the hallucination_planted checker to credit "appropriately deferred"
@@ -116,7 +117,7 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         # Standard deliberate() doesn't call tools — see Architecture note.
         validate_claim_verdicts=[],
         blinded_verifier_per_claim=list(verification.get("per_claim") or []),
-        contradictions_surfaced=0,
+        contradictions_surfaced=len(getattr(session, "contradictions", None) or []),
         synthesis_unverified_count=synthesis_unverified_count,
         total_cost_usd=float(metrics.total_cost_estimate()) if metrics else 0.0,
         total_latency_seconds=float(session.total_elapsed or 0.0),

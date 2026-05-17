@@ -40,5 +40,7 @@ ANONYMIZED BOARD RESPONSES (Stage 1):
 
 {{anonymized_responses}}
 
+{{peer_contradictions}}
+
 ───────────────────────────────────────
 YOUR UPDATED ANALYSIS:
