@@ -408,5 +408,49 @@ def test_harness_config_contradiction_overrides_from_json(tmp_path):
     assert cfg.hardening["contradiction_max_pairs"] == 8
 
 
+def test_harness_config_source_authority_overrides_default_empty():
+    """P3a ships an empty source_authority_overrides dict in the hardening block."""
+    from server.harness.config import HarnessConfig
+
+    cfg = HarnessConfig()
+    assert cfg.hardening["source_authority_overrides"] == {}
+
+
+def test_harness_config_source_authority_overrides_roundtrip(tmp_path):
+    """Custom overrides in harness_config.json round-trip through load."""
+    import json
+    from server.harness.config import load_config
+
+    path = tmp_path / "harness_config.json"
+    path.write_text(json.dumps({
+        "stage1_max_tokens": 1200, "stage2_max_tokens": 800,
+        "stage3_max_tokens": 4000, "stage4_max_tokens": 3000,
+        "revision_max_tokens": 2500,
+        "min_stage1_responses": 3, "min_stage2_responses": 2,
+        "verification_threshold": 7.0, "max_revision_attempts": 1,
+        "complexity_multipliers": {"simple": 0.6, "moderate": 1.0, "complex": 1.5},
+        "per_query_type": {},
+        "hardening": {
+            "atomizer_model": "qwen/qwen3.6-plus-2026-04-02",
+            "blinded_verifier_pass_threshold": 0.80,
+            "blinded_verifier_evidence_max_chars": 4000,
+            "contradiction_judge_model": None,
+            "contradiction_max_pairs": 12,
+            "source_authority_overrides": {
+                "myindustry.example": "major_news",
+                "*.gov.uk": "academic",
+            },
+        },
+        "version": 3,
+        "last_modified": "2026-05-17T00:00:00+00:00",
+    }))
+
+    cfg = load_config(path)
+    assert cfg.hardening["source_authority_overrides"] == {
+        "myindustry.example": "major_news",
+        "*.gov.uk": "academic",
+    }
+
+
 if __name__ == "__main__":
     unittest.main()

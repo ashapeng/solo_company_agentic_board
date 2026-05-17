@@ -15,12 +15,13 @@
   },
   "per_query_type": {},
   "hardening": {
-    "atomizer_model": "qwen/qwen3.6-max-preview",
+    "atomizer_model": "qwen/qwen3.6-plus-2026-04-02",
     "blinded_verifier_pass_threshold": 0.8,
     "blinded_verifier_evidence_max_chars": 4000,
     "contradiction_judge_model": null,
-    "contradiction_max_pairs": 12
+    "contradiction_max_pairs": 12,
+    "source_authority_overrides": {}
   },
   "version": 2,
-  "last_modified": "2026-05-16T21:37:32.197433+00:00"
+  "last_modified": "2026-05-17T18:06:54.717483+00:00"
 }
