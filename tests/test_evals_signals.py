@@ -209,3 +209,61 @@ def test_extract_signals_contradictions_zero_when_field_absent():
     session = BoardSession(session_id="board_test", user_query="x", metrics=SessionMetrics())
     signals = extract_signals(session)
     assert signals.contradictions_surfaced == 0
+
+
+def test_source_quality_trap_checker_passes_when_verdict_downgraded():
+    """End-to-end signal flow: when validate_claim returned a downgraded
+    UNVERIFIED verdict for the trap claim, _check_source_quality_trap passes.
+
+    This is the unit-level exercise of the path P3a unlocks. The orchestrator
+    does not yet persist tool-call verdicts onto the session (separate
+    workstream), so a live eval still records 0 here. This test ensures the
+    checker correctly credits a downgraded verdict whenever those verdicts
+    DO land on the signal."""
+    from evals.corpus import EvalPrompt
+    from evals.metrics import check_signal_for_prompt
+    from evals.signals import ObservedSignals
+
+    prompt = EvalPrompt(
+        id="source-001",
+        category="source_quality_trap",
+        query="What's the conversion rate for AI demos?",
+        tier="heavy",
+        planted={"kind": "numeric"},
+        expected_outcome={"claim_substring": "conversion rate", "validate_claim_verdict_not_supported": True},
+    )
+
+    signals = ObservedSignals(
+        validate_claim_verdicts=[
+            {
+                "claim": "average conversion rate from AI demo signup to paid is 8%",
+                "verdict": "UNVERIFIED",
+                "rationale": "insufficient source authority — found 3 unknown; need ≥1 academic OR ≥2 major_news OR ≥3 established_blog",
+            },
+        ],
+    )
+
+    assert check_signal_for_prompt(prompt, signals) is True
+
+
+def test_source_quality_trap_checker_fails_when_verdict_still_supported():
+    """Sanity: if the downgrade did NOT happen and the verdict stays SUPPORTED,
+    the checker correctly reports a failure."""
+    from evals.corpus import EvalPrompt
+    from evals.metrics import check_signal_for_prompt
+    from evals.signals import ObservedSignals
+
+    prompt = EvalPrompt(
+        id="source-001",
+        category="source_quality_trap",
+        query="x",
+        tier="heavy",
+        planted={"kind": "numeric"},
+        expected_outcome={"claim_substring": "conversion rate", "validate_claim_verdict_not_supported": True},
+    )
+    signals = ObservedSignals(
+        validate_claim_verdicts=[
+            {"claim": "conversion rate is 8%", "verdict": "SUPPORTED", "rationale": "ok"},
+        ],
+    )
+    assert check_signal_for_prompt(prompt, signals) is False
