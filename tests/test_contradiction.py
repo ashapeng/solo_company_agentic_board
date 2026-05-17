@@ -40,7 +40,7 @@ def test_contradiction_finding_to_dict_roundtrip():
 def test_extract_numbers_pulls_percentages_dollars_and_plain_counts():
     assert 19.0 in _extract_numbers("EV growth was 19% in Q4")
     assert 5_000_000.0 in _extract_numbers("Mistral MAU is 5M")
-    assert 50.0 in _extract_numbers("revenue was $50K")
+    assert 50_000.0 in _extract_numbers("revenue was $50K")
     # Years and dates should NOT count as quantities — too noisy
     nums = _extract_numbers("2026 forecast")
     assert 2026.0 not in nums

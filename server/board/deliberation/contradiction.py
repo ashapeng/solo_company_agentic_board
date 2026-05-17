@@ -67,7 +67,7 @@ class ContradictionFinding:
 # ─── Topic clustering (pure, deterministic) ─────────────────────────────────
 
 _NUM_RE = re.compile(
-    r"(\$?)(\d+(?:\.\d+)?)\s*([KMBT%]?)",
+    r"\$?(\d+(?:\.\d+)?)\s*([KMBT%]?)",
     re.IGNORECASE,
 )
 _UNIT_MULTIPLIERS = {"": 1, "k": 1_000, "m": 1_000_000, "b": 1_000_000_000, "t": 1_000_000_000_000}
@@ -75,25 +75,18 @@ _UNIT_MULTIPLIERS = {"": 1, "k": 1_000, "m": 1_000_000, "b": 1_000_000_000, "t":
 
 def _extract_numbers(text: str) -> list[float]:
     """Pull quantities out of a claim. Year-like 4-digit standalone numbers
-    are excluded (too noisy). Dollar-prefixed numbers are emitted as the
-    raw value (so ``$50K`` matches a bare ``50`` reference)."""
+    are excluded (too noisy)."""
     out: list[float] = []
     for match in _NUM_RE.finditer(text or ""):
-        dollar, raw, unit = match.group(1), match.group(2), (match.group(3) or "").lower()
+        raw, unit = match.group(1), (match.group(2) or "").lower()
         try:
             value = float(raw)
         except ValueError:
             continue
         if unit == "%":
-            # percentages stored as plain numbers (19 not 0.19)
             out.append(value)
             continue
-        # year filter: standalone 4-digit numbers in 1900-2100 range
-        if unit == "" and not dollar and 1900 <= value <= 2100 and "." not in raw:
-            continue
-        if dollar:
-            # $50K → 50.0 (unit suffix ignored when explicit currency prefix)
-            out.append(value)
+        if unit == "" and 1900 <= value <= 2100 and "." not in raw:
             continue
         out.append(value * _UNIT_MULTIPLIERS.get(unit, 1))
     return out
