@@ -547,3 +547,93 @@ def test_parse_tool_verdict_is_case_insensitive():
     the tool's own parsing path."""
     assert _parse_tool_verdict("validate_claim", "verdict: supported") == "SUPPORTED"
     assert _parse_tool_verdict("validate_claim", "Verdict: ContraDicted") == "CONTRADICTED"
+
+
+from server.board.deliberation.orchestrator import _make_tool_call_record
+
+
+def test_make_tool_call_record_full_shape_for_validate_claim():
+    """The record shape pins the contract for downstream consumers
+    (evals/signals.py reads these keys by name)."""
+    member = _make_member("strategist")
+    tc = llm.ToolCall(
+        id="tc_42",
+        name="validate_claim",
+        arguments={"claim": "average AI demo→paid conversion is 8%"},
+    )
+    result = tools.ToolResult(
+        content_for_model=(
+            "validate_claim('average AI demo→paid conversion is 8%'):\n"
+            "VERDICT: UNVERIFIED\nRATIONALE: thin sources."
+        ),
+        summary="validate_claim: UNVERIFIED",
+        cost_units=2.0,
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=1.42)
+    assert rec["member_id"] == "strategist"
+    assert rec["stage"] == 1
+    assert rec["tool_name"] == "validate_claim"
+    assert rec["tool_call_id"] == "tc_42"
+    assert rec["arguments"] == {"claim": "average AI demo→paid conversion is 8%"}
+    assert rec["summary"] == "validate_claim: UNVERIFIED"
+    assert rec["content_for_model"].startswith("validate_claim(")
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["error"] is None
+    assert rec["elapsed_seconds"] == 1.42
+    assert "T" in rec["timestamp"]
+    assert rec["timestamp"].endswith("+00:00")
+
+
+def test_make_tool_call_record_uses_summary_verdict_when_downgrade_present():
+    """When P3a downgrades SUPPORTED → UNVERIFIED, the body keeps the
+    judge's literal 'VERDICT: SUPPORTED' line but the summary reflects the
+    canonical post-downgrade verdict. The record's `verdict` field MUST
+    match the summary (downstream consumer reads this as the verdict)."""
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="validate_claim",
+                      arguments={"claim": "trap claim"})
+    result = tools.ToolResult(
+        content_for_model=(
+            "validate_claim('trap claim'):\nVERDICT: SUPPORTED\nRATIONALE: ok\n"
+            "\n[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority. "
+            "Verdict downgraded to UNVERIFIED."
+        ),
+        summary="validate_claim: UNVERIFIED",
+        cost_units=2.0,
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.5)
+    assert rec["verdict"] == "UNVERIFIED"
+
+
+def test_make_tool_call_record_verdict_none_for_non_validate_claim():
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="web_search",
+                      arguments={"query": "x"})
+    result = tools.ToolResult(
+        content_for_model="web_search('x') results:\n1. Foo\n2. Bar",
+        summary="web_search 'x' → 2 results",
+        cost_units=1.0,
+    )
+    rec = _make_tool_call_record(member, stage=2, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.3)
+    assert rec["tool_name"] == "web_search"
+    assert rec["verdict"] is None
+    assert rec["arguments"] == {"query": "x"}
+
+
+def test_make_tool_call_record_propagates_error_field():
+    """When the tool returned an error, the record's error field carries it."""
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="fetch_url",
+                      arguments={"url": "https://blocked.example/x"})
+    result = tools.ToolResult(
+        content_for_model="fetch_url: blocked URL",
+        summary="fetch_url blocked",
+        cost_units=0.0,
+        error="blocked URL (SSRF guard)",
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.01)
+    assert rec["error"] == "blocked URL (SSRF guard)"

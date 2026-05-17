@@ -165,6 +165,52 @@ def _parse_tool_verdict(tool_name: str, content_for_model: str) -> str | None:
     return None
 
 
+def _make_tool_call_record(
+    member: "BoardMember",
+    stage: int,
+    tool_call: "ToolCall",
+    tool_result: "ToolResult",
+    elapsed_seconds: float,
+) -> dict:
+    """Build a plain-dict audit record for one tool call. Appended to
+    ``BoardSession.tool_call_results`` by ``agentic_member_turn``.
+
+    Shape (pinned — downstream consumers read keys by name):
+      member_id, stage, tool_name, tool_call_id, arguments, summary,
+      content_for_model, verdict, error, elapsed_seconds, timestamp.
+
+    Verdict resolution:
+      - For ``validate_claim``: prefer the canonical post-downgrade verdict
+        from ``tool_result.summary`` (e.g. ``"validate_claim: UNVERIFIED"``
+        after P3a's downgrade). Falls back to parsing
+        ``content_for_model`` if the summary is malformed.
+      - For every other tool: ``None``.
+    """
+    verdict: str | None = None
+    if tool_call.name == "validate_claim":
+        summary = (tool_result.summary or "").strip()
+        if summary.startswith("validate_claim: "):
+            candidate = summary[len("validate_claim: "):].strip().upper()
+            if candidate in ("SUPPORTED", "CONTRADICTED", "UNVERIFIED"):
+                verdict = candidate
+        if verdict is None:
+            verdict = _parse_tool_verdict(tool_call.name, tool_result.content_for_model)
+
+    return {
+        "member_id": member.id,
+        "stage": stage,
+        "tool_name": tool_call.name,
+        "tool_call_id": tool_call.id,
+        "arguments": dict(tool_call.arguments or {}),
+        "summary": tool_result.summary or "",
+        "content_for_model": tool_result.content_for_model or "",
+        "verdict": verdict,
+        "error": tool_result.error,
+        "elapsed_seconds": float(elapsed_seconds),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ─── P3b: Tool-error revision loop (spec §7.2) ──────────────────────────────
 
 # Verbatim from spec §7.2.2. Filled with {tool_name}, {contradicted_claim},
