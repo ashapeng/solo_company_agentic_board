@@ -452,5 +452,44 @@ def test_harness_config_source_authority_overrides_roundtrip(tmp_path):
     }
 
 
+def test_harness_config_max_forced_revisions_default():
+    """P3b ships max_forced_revisions_per_member=2 in the hardening block (spec §7.2.3)."""
+    from server.harness.config import HarnessConfig
+
+    cfg = HarnessConfig()
+    assert cfg.hardening["max_forced_revisions_per_member"] == 2
+
+
+def test_harness_config_max_forced_revisions_roundtrip(tmp_path):
+    """Custom cap in harness_config.json round-trips through load."""
+    import json
+    from server.harness.config import load_config
+
+    path = tmp_path / "harness_config.json"
+    path.write_text(json.dumps({
+        "stage1_max_tokens": 1200, "stage2_max_tokens": 800,
+        "stage3_max_tokens": 4000, "stage4_max_tokens": 3000,
+        "revision_max_tokens": 2500,
+        "min_stage1_responses": 3, "min_stage2_responses": 2,
+        "verification_threshold": 7.0, "max_revision_attempts": 1,
+        "complexity_multipliers": {"simple": 0.6, "moderate": 1.0, "complex": 1.5},
+        "per_query_type": {},
+        "hardening": {
+            "atomizer_model": "qwen/qwen3.6-plus-2026-04-02",
+            "blinded_verifier_pass_threshold": 0.80,
+            "blinded_verifier_evidence_max_chars": 4000,
+            "contradiction_judge_model": None,
+            "contradiction_max_pairs": 12,
+            "source_authority_overrides": {},
+            "max_forced_revisions_per_member": 3,
+        },
+        "version": 3,
+        "last_modified": "2026-05-17T00:00:00+00:00",
+    }))
+
+    cfg = load_config(path)
+    assert cfg.hardening["max_forced_revisions_per_member"] == 3
+
+
 if __name__ == "__main__":
     unittest.main()

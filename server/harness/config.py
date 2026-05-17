@@ -60,7 +60,7 @@ class HarnessConfig:
     # Per-query-type overrides (Phase B+ tuner slot)
     per_query_type: dict = field(default_factory=dict)
 
-    # Board hardening (P1+, P2+)
+    # Board hardening (P1+, P2+, P3a+, P3b+)
     hardening: dict = field(default_factory=lambda: {
         "atomizer_model": "qwen/qwen3.6-plus-2026-04-02",
         "blinded_verifier_pass_threshold": 0.80,
@@ -70,6 +70,8 @@ class HarnessConfig:
         "contradiction_max_pairs": 12,
         # P3a: per-domain source-tier overrides; {"host": "academic|major_news|established_blog"}
         "source_authority_overrides": {},
+        # P3b: forced-revision cap per member per stage (spec §7.2.3)
+        "max_forced_revisions_per_member": 2,
     })
 
     # Version tracking
