@@ -150,3 +150,45 @@ def test_http_harness_validate_bad_candidate_returns_blocked(tmp_path, monkeypat
     assert payload["readiness"] == "blocked"
     codes = [issue["code"] for issue in payload["errors"]]
     assert "schema.stage_tokens_non_positive" in codes
+
+
+def test_run_harness_review_validates_proposed_not_live(tmp_path, monkeypatch):
+    """Spec §4.3: validation reflects the merged proposed snapshot.
+
+    A snapshot containing a bad model_preferences change should be flagged
+    by the validation field in the review JSON, even though the live config
+    is clean.
+    """
+    monkeypatch.chdir(tmp_path)
+    from server.harness.model_assignment import ModelAssignmentTuningReport, ModelPreferenceChange
+
+    # Mock tune_model_assignments to inject a bogus model change.
+    bogus_change = ModelPreferenceChange(
+        query_type="strategic",
+        member_id="strategist",
+        previous_model="deepseek/deepseek-v4-pro",
+        new_model="fakeprovider/x",
+        previous_score=5.0,
+        new_score=7.0,
+        sample_count=5,
+        runner_up_model=None,
+        runner_up_score=None,
+    )
+    bogus_report = ModelAssignmentTuningReport(
+        examined_assignments=1,
+        eligible_assignments=1,
+        changes=[bogus_change],
+        saved=False,
+        dry_run=True,
+        config_version=1,
+    )
+
+    with patch(
+        "server.harness.reviews.tune_model_assignments",
+        return_value=bogus_report,
+    ):
+        review = run_harness_review(dry_run=True)
+
+    assert review["validation"]["readiness"] == "blocked"
+    codes = [issue["code"] for issue in review["validation"]["errors"]]
+    assert "xref.model_unknown" in codes

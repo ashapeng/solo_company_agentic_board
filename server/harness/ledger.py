@@ -289,7 +289,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "chairman_provider": "TEXT",
         "applied_review_id": "TEXT",
         "routing_misses": "TEXT",
-        "validation_warnings": "TEXT",
+        "validation_warnings": "TEXT DEFAULT '[]'",
     }
     for column, column_type in additions.items():
         if column not in existing:

@@ -120,7 +120,10 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
     # Phase 1 validate.py integration (spec §4.3, §4.4).
     validation_payload: dict
     try:
-        candidate_snapshot = load_config()
+        # Build the merged candidate the same way apply_harness_review would,
+        # so the validation payload reflects the proposed post-apply state.
+        base_config = load_config()
+        candidate_snapshot = _apply_snapshot_to_config(base_config, reports)
         validation_report = validate_config(candidate_snapshot)
         validation_payload = validation_report.to_dict()
     except Exception as exc:
