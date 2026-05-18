@@ -1821,6 +1821,94 @@ class BoardOrchestrator:
         _, _s2_warnings = compact_stage2_with_warnings(session.stage2_responses)
         session.structured_output_warnings.extend(_s2_warnings)
 
+        # P5b: Auto-Promote-to-Live (spec §9.2 + design-choices supplement).
+        # Always compute the disagreement score for telemetry, even when the
+        # dark-launch flag is off (so we can tune the threshold from data
+        # before flipping the flag). Rebuttals only fire under the full gate:
+        # verify=True AND auto_promote_enabled AND score >= threshold AND
+        # pick_top_pairs returns at least one pair.
+        from server.board.deliberation import auto_promote as _auto_promote
+        session.disagreement_score = _auto_promote.compute_disagreement(session.stage2_responses)
+        _ap_cfg = (get_config().hardening or {})
+        _ap_enabled = bool(_ap_cfg.get("auto_promote_enabled", False))
+        _ap_threshold = int(_ap_cfg.get("disagreement_threshold", 4))
+        if (
+            verify
+            and _ap_enabled
+            and session.disagreement_score >= _ap_threshold
+        ):
+            _ap_max_pairs = int(_ap_cfg.get("auto_promote_max_pairs", 2))
+            _ap_pairs = _auto_promote.pick_top_pairs(
+                session.stage2_responses,
+                contradictions=session.contradictions,
+                max_pairs=_ap_max_pairs,
+            )
+            _ap_summarizer_model = (
+                _ap_cfg.get("auto_promote_summarizer_model")
+                or _ap_cfg.get("atomizer_model", "qwen/qwen3.6-max-preview")
+            )
+            members_by_id = get_members_by_id()
+            for _pair in _ap_pairs:
+                a_id, b_id = _pair["pair_member_ids"]
+                m_a = members_by_id.get(a_id)
+                m_b = members_by_id.get(b_id)
+                if m_a is None or m_b is None:
+                    logger.warning(
+                        "auto-promote: missing BoardMember for pair (%s, %s); "
+                        "skipping this rebuttal.", a_id, b_id,
+                    )
+                    continue
+                # Locate claim texts for the moderator prompt. Primary path:
+                # use the contradiction entry that spawned this pair. Fallback
+                # path (no contradictions list): use the topic verbatim for
+                # both sides — best signal we have.
+                claim_a_text = _pair.get("topic", "")
+                claim_b_text = _pair.get("topic", "")
+                for c in session.contradictions or []:
+                    if (
+                        (c.get("claim_a") or {}).get("member_id") in (a_id, b_id)
+                        and (c.get("claim_b") or {}).get("member_id") in (a_id, b_id)
+                        and c.get("topic") == _pair.get("topic")
+                    ):
+                        claim_a_text = (c.get("claim_a") or {}).get("text", "") or claim_a_text
+                        claim_b_text = (c.get("claim_b") or {}).get("text", "") or claim_b_text
+                        break
+                started_at = datetime.now(timezone.utc).isoformat()
+                rebuttal = await _auto_promote.run_live_rebuttal(
+                    chair_member=self.chairman,
+                    chair_model=self.chairman_model,
+                    member_a=m_a, member_a_model=self.model_assignments.get(a_id, self.chairman_model),
+                    member_b=m_b, member_b_model=self.model_assignments.get(b_id, self.chairman_model),
+                    topic=_pair.get("topic", ""),
+                    claim_a_text=claim_a_text,
+                    claim_b_text=claim_b_text,
+                    session=session, max_rounds=2,
+                    on_event=lambda e: None,
+                )
+                summary_text, resolution, sum_in, sum_out = await _auto_promote.summarize_rebuttal(
+                    transcript=rebuttal["transcript"],
+                    topic=_pair.get("topic", ""),
+                    claim_a_text=claim_a_text,
+                    claim_b_text=claim_b_text,
+                    model=_ap_summarizer_model,
+                )
+                session.auto_promoted_rebuttals.append({
+                    "pair_member_ids": list(_pair["pair_member_ids"]),
+                    "disagreement_score": int(session.disagreement_score),
+                    "topic": _pair.get("topic", ""),
+                    "severity": _pair.get("severity"),
+                    "transcript": rebuttal["transcript"],
+                    "summary": summary_text,
+                    "resolution": resolution,
+                    "summarizer_model": _ap_summarizer_model,
+                    "tokens_in": int(rebuttal["tokens_in"]) + int(sum_in),
+                    "tokens_out": int(rebuttal["tokens_out"]) + int(sum_out),
+                    "cost_usd": 0.0,
+                    "started_at": started_at,
+                    "elapsed_seconds": float(rebuttal["elapsed_seconds"]),
+                    "closed_early": bool(rebuttal["closed_early"]),
+                })
+
         # Read institutional memory before synthesis (P4: governed read).
         # `verify=verify` is the HEAVY-tier proxy for judge gating.
         sotb, sotb_health = await read_sotb_governed(effective_query, verify=verify)
@@ -1836,6 +1924,7 @@ class BoardOrchestrator:
             sotb=sotb,
             query_type=query_type,
             complexity=complexity,
+            rebuttal_outcomes=session.auto_promoted_rebuttals or None,
         )
 
         # Stage 4: Verification (opt-in)
