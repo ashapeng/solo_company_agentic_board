@@ -83,6 +83,23 @@ class HarnessConfig:
         # §8.4 default; member can override per-entry via (expires: YYYY-MM-DD).
         # Used by the stale-warning rule (warn but don't drop) on Risk/Open.
         "sotb_stale_days": 90,
+        # P5b: Auto-Promote-to-Live (spec §9.2 + design-choices supplement
+        # docs/superpowers/specs/2026-05-17-p5b-auto-promote-design-choices.md).
+        # disagreement_threshold: spec §9.2.2 default — score >= this fires the
+        #   rebuttal sub-pipeline (when enabled).
+        # auto_promote_summarizer_model: None → fall back to atomizer_model at
+        #   the call site (mirrors contradiction_judge_model and
+        #   sotb_judge_model). Override to pin a stronger summarizer if needed.
+        # auto_promote_max_pairs: hard cap on pairs auto-promoted per session.
+        #   Spec §10 R3 cost-runaway mitigation (paired with the threshold).
+        # auto_promote_enabled: dark-launch gate (default OFF). When False,
+        #   the orchestrator still computes session.disagreement_score for
+        #   "would-have-fired" telemetry, but does NOT fire rebuttals. Flip
+        #   to True only after calibration data justifies the cost.
+        "disagreement_threshold": 4,
+        "auto_promote_summarizer_model": None,
+        "auto_promote_max_pairs": 2,
+        "auto_promote_enabled": False,
     })
 
     # Version tracking

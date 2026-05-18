@@ -24,7 +24,11 @@
     "max_forced_revisions_per_member": 2,
     "sotb_judge_enabled": false,
     "sotb_judge_model": null,
-    "sotb_stale_days": 90
+    "sotb_stale_days": 90,
+    "disagreement_threshold": 4,
+    "auto_promote_summarizer_model": null,
+    "auto_promote_max_pairs": 2,
+    "auto_promote_enabled": false
   },
   "version": 2,
   "last_modified": "2026-05-17T18:06:54.717483+00:00"
