@@ -100,6 +100,7 @@ class DelegationPlanContractTest(unittest.TestCase):
 
 class DelegatedTaskLifecycleContractTest(unittest.TestCase):
     def setUp(self):
+        import os
         self.tmpdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmpdir.name) / "tasks.db"
         # Redirect the ledger DB so the bundled rate-limit hook counts against a
@@ -107,13 +108,22 @@ class DelegatedTaskLifecycleContractTest(unittest.TestCase):
         from server.harness import ledger as _ledger_mod
         self._orig_ledger_path = _ledger_mod._DEFAULT_DB_PATH
         _ledger_mod._DEFAULT_DB_PATH = Path(self.tmpdir.name) / "ledger.db"
+        # Raise the rate limit so lifecycle tests (which legitimately make many
+        # hook-gated calls per test) aren't blocked by the default 5-op cap.
+        self._orig_rate_limit = os.environ.get("AGENTIC_BOARD_DELEGATED_TASK_RATE_LIMIT")
+        os.environ["AGENTIC_BOARD_DELEGATED_TASK_RATE_LIMIT"] = "100"
         self.plan = parse_delegation_plan(SYNTHESIS_WITH_DELEGATION, session_id="board_exec_test")
         record_delegation_plan(self.plan, db_path=self.db_path)
         self.task_id = self.plan["tasks"][0]["id"]
 
     def tearDown(self):
+        import os
         from server.harness import ledger as _ledger_mod
         _ledger_mod._DEFAULT_DB_PATH = self._orig_ledger_path
+        if self._orig_rate_limit is None:
+            os.environ.pop("AGENTIC_BOARD_DELEGATED_TASK_RATE_LIMIT", None)
+        else:
+            os.environ["AGENTIC_BOARD_DELEGATED_TASK_RATE_LIMIT"] = self._orig_rate_limit
         self.tmpdir.cleanup()
 
     def test_task_approval_planning_and_completion_are_persisted(self):

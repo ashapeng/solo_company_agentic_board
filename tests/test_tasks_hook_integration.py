@@ -210,3 +210,58 @@ def test_save_delegated_task_allow_persists_and_records_event(tmp_db, fresh_regi
     finally:
         conn.close()
     assert any(r[0] == "allow" for r in rows)
+
+
+# ─── T17: update_delegated_task_status wrap ───────────────────────────────
+
+
+def test_update_delegated_task_status_denied_raises_HookDeniedError(tmp_db, fresh_registry):
+    ledger_path, tasks_path = tmp_db
+    from server.harness.hooks import (
+        HookVerdict, HookDeniedError, register_pre_hook,
+    )
+    from server.execution.tasks import update_delegated_task_status, save_delegated_task
+
+    save_delegated_task(_approved_task_payload("t17_a"), db_path=tasks_path)
+
+    def denying(ctx):
+        if ctx.request.get("op") == "update_delegated_task_status":
+            return HookVerdict("deny", "no status change", {})
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("delegated_task", denying)
+
+    with pytest.raises(HookDeniedError) as excinfo:
+        update_delegated_task_status(
+            "t17_a",
+            status="completed",
+            manager_agent_id="technical_lead",
+            db_path=tasks_path,
+        )
+    assert "no status change" in str(excinfo.value)
+
+
+def test_update_delegated_task_status_allow_completes(tmp_db, fresh_registry):
+    ledger_path, tasks_path = tmp_db
+    from server.harness.hooks import HookVerdict, register_pre_hook
+    from server.execution.tasks import (
+        update_delegated_task_status, save_delegated_task, get_delegated_task,
+    )
+
+    save_delegated_task(_approved_task_payload("t17_b"), db_path=tasks_path)
+
+    def allowing(ctx):
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("delegated_task", allowing)
+
+    update_delegated_task_status(
+        "t17_b",
+        status="completed",
+        manager_agent_id="technical_lead",
+        result_summary="done",
+        db_path=tasks_path,
+    )
+    task = get_delegated_task("t17_b", db_path=tasks_path)
+    assert task["status"] == "completed"
+    assert task["result_summary"] == "done"

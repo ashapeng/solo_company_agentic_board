@@ -449,6 +449,16 @@ def update_delegated_task_status(
     if status not in TASK_STATUSES:
         raise ExecutionError(f"Invalid task status: {status}")
     task = _load_required_task(task_id, db_path=db_path)
+    _hook_gate_sync(
+        session_id=str(task.get("session_id") or ""),
+        member_id=None,
+        request={
+            "op": "update_delegated_task_status",
+            "task_id": task_id,
+            "new_status": status,
+            "manager_agent_id": manager_agent_id,
+        },
+    )
     if status == "completed" and manager_agent_id != task.get("manager_agent_id"):
         raise ExecutionError("Only the assigned manager agent can complete this task.")
     if status == "running" and task.get("status") not in {"approved", "running"}:
@@ -461,7 +471,19 @@ def update_delegated_task_status(
         task["result_summary"] = result_summary
     if artifacts:
         task["artifacts"] = _dedupe([*(task.get("artifacts") or []), *artifacts])
-    return save_delegated_task(task, db_path=db_path)
+    result = save_delegated_task(task, db_path=db_path)
+    _hook_post_sync(
+        session_id=str(task.get("session_id") or ""),
+        member_id=None,
+        request={
+            "op": "update_delegated_task_status",
+            "task_id": task_id,
+            "new_status": status,
+            "manager_agent_id": manager_agent_id,
+        },
+        result=result,
+    )
+    return result
 
 
 def attach_task_artifact(
