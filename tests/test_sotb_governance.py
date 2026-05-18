@@ -388,5 +388,116 @@ class SotbHealthTest(unittest.TestCase):
         self.assertEqual(h.to_dict()["warnings_count"], 1 + 2 + 1 + 2 + 1)
 
 
+import asyncio
+
+
+def _llm_resp(content: str):
+    """Build a minimal LLMResponse-like object the judge can consume."""
+    from server.board.llm import LLMResponse
+    return LLMResponse(
+        content=content, model="qwen/qwen3.6-max-preview",
+        input_tokens=1, output_tokens=1, latency_seconds=0.1,
+        finish_reason="stop", tool_calls=[],
+    )
+
+
+class DetectQueryConflictsTest(unittest.TestCase):
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_judge_says_contradicts_returns_one_conflict_entry(self):
+        from server.memory.sotb_governance import (
+            SotbEntry, _detect_query_conflicts,
+        )
+        entries = [SotbEntry(
+            entry_id="a" * 12, section="Active Decisions",
+            text="We decided to sunset feature X.",
+            created_at="t", updated_at="t", confidence=0.9,
+            expires_at=None, provenance={},
+        )]
+        judge_resp = _llm_resp(
+            'JSON:\n{"conflicts": [{"entry_id": "aaaaaaaaaaaa", '
+            '"rationale": "query proposes building X; SOTB says X is sunset."}]}'
+        )
+        with patch(
+            "server.memory.sotb_governance.query_llm",
+            new=AsyncMock(return_value=judge_resp),
+        ):
+            conflicts = self._run(_detect_query_conflicts(
+                query="should we invest more in feature X?",
+                entries=entries,
+                model="qwen/qwen3.6-max-preview",
+            ))
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["entry_id"], "aaaaaaaaaaaa")
+        self.assertIn("X is sunset", conflicts[0]["rationale"])
+
+    def test_judge_says_compatible_returns_empty_list(self):
+        from server.memory.sotb_governance import (
+            SotbEntry, _detect_query_conflicts,
+        )
+        entries = [SotbEntry(
+            entry_id="b" * 12, section="Active Decisions",
+            text="Ship MVP friday.", created_at="t", updated_at="t",
+            confidence=0.9, expires_at=None, provenance={},
+        )]
+        judge_resp = _llm_resp('JSON:\n{"conflicts": []}')
+        with patch(
+            "server.memory.sotb_governance.query_llm",
+            new=AsyncMock(return_value=judge_resp),
+        ):
+            conflicts = self._run(_detect_query_conflicts(
+                query="what marketing channel should we test next?",
+                entries=entries,
+                model="qwen/qwen3.6-max-preview",
+            ))
+        self.assertEqual(conflicts, [])
+
+    def test_judge_returns_empty_on_malformed_json_no_crash(self):
+        """Defensive: judge returned freeform text without JSON -> []."""
+        from server.memory.sotb_governance import (
+            SotbEntry, _detect_query_conflicts,
+        )
+        entries = [SotbEntry(entry_id="c" * 12, section="Active Decisions",
+                             text="X", created_at="t", updated_at="t",
+                             confidence=0.5, expires_at=None, provenance={})]
+        with patch(
+            "server.memory.sotb_governance.query_llm",
+            new=AsyncMock(return_value=_llm_resp("freeform with no json")),
+        ):
+            conflicts = self._run(_detect_query_conflicts(
+                query="q", entries=entries, model="m",
+            ))
+        self.assertEqual(conflicts, [])
+
+    def test_judge_returns_empty_on_provider_error(self):
+        """Provider error -> log + return [] (never raise into orchestrator)."""
+        from server.memory.sotb_governance import (
+            SotbEntry, _detect_query_conflicts,
+        )
+        entries = [SotbEntry(entry_id="d" * 12, section="Active Decisions",
+                             text="X", created_at="t", updated_at="t",
+                             confidence=0.5, expires_at=None, provenance={})]
+        with patch(
+            "server.memory.sotb_governance.query_llm",
+            new=AsyncMock(side_effect=RuntimeError("provider down")),
+        ):
+            conflicts = self._run(_detect_query_conflicts(
+                query="q", entries=entries, model="m",
+            ))
+        self.assertEqual(conflicts, [])
+
+    def test_judge_skipped_when_index_empty(self):
+        """No entries -> no LLM call at all (return [] without invoking the mock)."""
+        from server.memory.sotb_governance import _detect_query_conflicts
+        mock = AsyncMock()
+        with patch("server.memory.sotb_governance.query_llm", new=mock):
+            conflicts = self._run(_detect_query_conflicts(
+                query="q", entries=[], model="m",
+            ))
+        self.assertEqual(conflicts, [])
+        mock.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()

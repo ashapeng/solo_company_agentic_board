@@ -427,3 +427,94 @@ def compute_freshness(
             health.stale.append(entry)
 
     return new_md, health
+
+
+_QUERY_CONFLICT_PROMPT = """\
+You are reviewing the State of the Board (SOTB) against a new user query to
+flag direct contradictions. A contradiction means the query's stated direction
+conflicts with an established SOTB decision/position/risk such that the board
+should be aware before answering.
+
+USER QUERY:
+{query}
+
+SOTB ENTRIES (entry_id | section | text):
+{entries_block}
+
+Return a JSON object EXACTLY like:
+{{"conflicts": [{{"entry_id": "<id>", "rationale": "<1 sentence>"}}, ...]}}
+
+If nothing conflicts, return {{"conflicts": []}}. Do not include any other text.
+"""
+
+
+def _format_entries_for_judge(entries: list[SotbEntry], *, max_chars: int = 2000) -> str:
+    lines = []
+    used = 0
+    for e in entries:
+        text = e.text[:200]
+        line = f"{e.entry_id} | {e.section} | {text}"
+        if used + len(line) > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else "(none)"
+
+
+def _extract_json_object(raw: str) -> dict[str, Any] | None:
+    """Best-effort: find the first `{...}` JSON object in `raw`. None if
+    no parseable object found."""
+    if not raw:
+        return None
+    start = raw.find("{")
+    if start == -1:
+        return None
+    # Greedy from start to last `}`.
+    end = raw.rfind("}")
+    if end <= start:
+        return None
+    try:
+        return json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+async def _detect_query_conflicts(
+    *, query: str, entries: list[SotbEntry], model: str,
+) -> list[dict]:
+    """Return a list of `{"entry_id": str, "rationale": str}` conflict
+    records. Never raises — provider errors and malformed JSON both return
+    []."""
+    if not entries:
+        return []
+    prompt = _QUERY_CONFLICT_PROMPT.format(
+        query=query[:1000],
+        entries_block=_format_entries_for_judge(entries),
+    )
+    try:
+        resp = await query_llm(
+            model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+        )
+    except Exception as exc:
+        logger.warning("sotb_governance: query-conflict judge failed: %s", exc)
+        return []
+
+    obj = _extract_json_object(resp.content or "")
+    if not isinstance(obj, dict):
+        return []
+    raw_conflicts = obj.get("conflicts")
+    if not isinstance(raw_conflicts, list):
+        return []
+    out: list[dict] = []
+    valid_ids = {e.entry_id for e in entries}
+    for c in raw_conflicts:
+        if not isinstance(c, dict):
+            continue
+        eid = str(c.get("entry_id", "")).strip()
+        rationale = str(c.get("rationale", "")).strip()
+        if not eid or eid not in valid_ids:
+            continue
+        out.append({"entry_id": eid, "rationale": rationale})
+    return out
