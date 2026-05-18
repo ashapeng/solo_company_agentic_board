@@ -695,3 +695,94 @@ async def test_run_live_rebuttal_short_circuits_on_rebuttal_closed():
     assert result["closed_early"] is True
     # 5 turns: opening + round1's 4 turns; round 2 skipped.
     assert len(result["transcript"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_surfaces_evidence_refs_in_moderator_prompt():
+    """Spec §9.2.3 requires (Cited: <refs>) lines in the chair's moderator
+    prompt. Capture the system prompt of the first query_llm call and assert
+    both members' evidence refs are present."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    captured_systems: list[str] = []
+
+    async def _capture(*a, **kw):
+        sys = kw.get("system", "") if "system" in kw else (a[2] if len(a) > 2 else "")
+        captured_systems.append(sys or "")
+        return llm.LLMResponse(
+            content="ok", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        )
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_capture),
+    ):
+        await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="market growth",
+            claim_a_text="20% YoY",
+            claim_b_text="10% YoY",
+            claim_a_evidence_refs=["https://bloomberg.com/a", "https://reuters.com/b"],
+            claim_b_evidence_refs=["https://wsj.com/c"],
+            session=session, max_rounds=1,  # one round = 5 calls; smaller test
+            on_event=lambda e: None,
+        )
+
+    moderator_systems = [s for s in captured_systems if "moderating" in s.lower()]
+    assert moderator_systems, "no chair turn captured"
+    sample = moderator_systems[0]
+    assert "bloomberg.com/a" in sample
+    assert "reuters.com/b" in sample
+    assert "wsj.com/c" in sample
+    # Defaults render as [UNVERIFIED] when refs aren't passed.
+    assert "[UNVERIFIED]" not in sample  # both sides had real refs
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_evidence_refs_default_to_unverified():
+    """When evidence_refs aren't passed, the prompt renders [UNVERIFIED]."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    captured_systems: list[str] = []
+
+    async def _capture(*a, **kw):
+        sys = kw.get("system", "") if "system" in kw else (a[2] if len(a) > 2 else "")
+        captured_systems.append(sys or "")
+        return llm.LLMResponse(
+            content="ok", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        )
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_capture),
+    ):
+        await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="t", claim_a_text="a", claim_b_text="b",
+            # no evidence refs
+            session=session, max_rounds=1,
+            on_event=lambda e: None,
+        )
+
+    moderator_systems = [s for s in captured_systems if "moderating" in s.lower()]
+    assert moderator_systems
+    # Both sides should render [UNVERIFIED]
+    assert moderator_systems[0].count("[UNVERIFIED]") == 2

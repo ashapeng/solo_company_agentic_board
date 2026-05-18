@@ -355,7 +355,10 @@ CONTESTED CLAIM:
 {topic}
 
   Member A's position: {claim_a_text}
+  (Cited: {claim_a_evidence_refs})
+
   Member B's position: {claim_b_text}
+  (Cited: {claim_b_evidence_refs})
 """
 
 
@@ -392,7 +395,6 @@ async def _member_rebuttal_turn(
     """
     from server.board.tools import TOOLS, execute_tool
     from server.board.deliberation.orchestrator import _make_tool_call_record
-    from server.board.llm import query_llm as _query  # local rebinding
 
     tools_for_member = []
     vc = TOOLS.get("validate_claim")
@@ -498,6 +500,12 @@ async def _chair_turn(
             int(resp.output_tokens or 0))
 
 
+def _format_evidence_refs(refs: list[str] | None) -> str:
+    """Render evidence_refs for the chair moderator prompt. Mirrors
+    contradiction._join_refs: empty/None → ``[UNVERIFIED]``."""
+    return ", ".join(str(r) for r in (refs or ["[UNVERIFIED]"]))
+
+
 async def run_live_rebuttal(
     *,
     chair_member: Any,
@@ -509,6 +517,8 @@ async def run_live_rebuttal(
     topic: str,
     claim_a_text: str,
     claim_b_text: str,
+    claim_a_evidence_refs: list[str] | None = None,
+    claim_b_evidence_refs: list[str] | None = None,
     session: Any,
     max_rounds: int = 2,
     on_event: Callable[[Any], None] | None = None,
@@ -520,6 +530,11 @@ async def run_live_rebuttal(
     Skips the optional per-round chair follow-up listed in §9.2.1 ("may ask
     1 follow-up before next round"); see plan's "Refinements over spec" for
     the rationale (YAGNI; spec marks it optional).
+
+    ``claim_a_evidence_refs`` / ``claim_b_evidence_refs`` are surfaced in
+    the chair's moderator system prompt per spec §9.2.3 so the chair can
+    target follow-ups at the cited sources. Default ``None`` renders as
+    ``[UNVERIFIED]`` (mirrors the contradiction-detector convention).
     """
     t0 = time.monotonic()
     transcript: list[dict] = []
@@ -530,7 +545,11 @@ async def run_live_rebuttal(
     moderator_system = (
         (getattr(chair_member, "system_prompt", "") or "")
         + CHAIR_MODERATOR_SUFFIX.format(
-            topic=topic, claim_a_text=claim_a_text, claim_b_text=claim_b_text,
+            topic=topic,
+            claim_a_text=claim_a_text,
+            claim_b_text=claim_b_text,
+            claim_a_evidence_refs=_format_evidence_refs(claim_a_evidence_refs),
+            claim_b_evidence_refs=_format_evidence_refs(claim_b_evidence_refs),
         )
     )
 
