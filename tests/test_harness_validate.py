@@ -298,3 +298,28 @@ def test_safety_disagreement_threshold_out_of_range_fails():
     report = validate_config(cfg)
     codes = [issue.code for issue in report.errors]
     assert "safety.disagreement_threshold_out_of_range" in codes
+
+
+def test_ledger_has_validation_warnings_column(tmp_path):
+    """Spec §7: session_outcomes gains a validation_warnings column."""
+    import sqlite3
+    from server.harness.ledger import init_db
+
+    db_path = tmp_path / "test_ledger.db"
+    init_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("PRAGMA table_info(session_outcomes)").fetchall()
+        column_names = {row[1] for row in rows}
+    finally:
+        conn.close()
+    assert "validation_warnings" in column_names
+
+
+def test_ledger_validation_warnings_idempotent_add(tmp_path):
+    """_ensure_columns must be idempotent — call init_db twice without error."""
+    from server.harness.ledger import init_db
+
+    db_path = tmp_path / "test_ledger.db"
+    init_db(db_path)
+    init_db(db_path)  # second call must not raise
