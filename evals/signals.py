@@ -114,8 +114,21 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         verifier_deficiencies=list(verification.get("deficiencies") or []),
         clarification_required=bool(questions),
         clarification_questions=questions,
-        # Standard deliberate() doesn't call tools — see Architecture note.
-        validate_claim_verdicts=[],
+        # Populated from `session.tool_call_results` (set by
+        # `agentic_member_turn`). Falls back to [] when the session was
+        # constructed from a legacy JSON that predates the field. Each
+        # surfaced entry is shaped per the eval checker's contract
+        # (`evals/metrics.py::_check_source_quality_trap`): claim,
+        # verdict, rationale.
+        validate_claim_verdicts=[
+            {
+                "claim": str((entry.get("arguments") or {}).get("claim", "")),
+                "verdict": entry.get("verdict"),
+                "rationale": entry.get("summary", ""),
+            }
+            for entry in (getattr(session, "tool_call_results", []) or [])
+            if entry.get("tool_name") == "validate_claim"
+        ],
         blinded_verifier_per_claim=list(verification.get("per_claim") or []),
         contradictions_surfaced=len(getattr(session, "contradictions", None) or []),
         synthesis_unverified_count=synthesis_unverified_count,

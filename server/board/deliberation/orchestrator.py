@@ -136,6 +136,81 @@ def _tool_call_message(tcs: list[ToolCall], reasoning_content: str | None = None
     return msg
 
 
+def _parse_tool_verdict(tool_name: str, content_for_model: str) -> str | None:
+    """Extract the literal ``VERDICT: <X>`` value from a tool result's
+    ``content_for_model`` for tools that emit one.
+
+    Currently only ``validate_claim`` is in scope. For every other tool name
+    this returns ``None``. The parser is case-insensitive to mirror the
+    existing convention in ``_handle_validate_claim`` (which also uppercases
+    before substring match). The P3a downgrade in ``_handle_validate_claim``
+    appends a ``[SOURCE-AUTHORITY DOWNGRADE]`` note *after* the verdict line
+    but does NOT rewrite it; the post-downgrade verdict is carried in
+    ``ToolResult.summary`` ("validate_claim: <X>") and the record builder
+    reads both — see ``_make_tool_call_record``.
+
+    Returns the verdict string (e.g. ``"SUPPORTED"``, ``"CONTRADICTED"``,
+    ``"UNVERIFIED"``) when found; ``None`` otherwise. Never raises.
+    """
+    if tool_name != "validate_claim":
+        return None
+    text = content_for_model or ""
+    upper = text.upper()
+    if "VERDICT: SUPPORTED" in upper or "VERDICT:SUPPORTED" in upper:
+        return "SUPPORTED"
+    if "VERDICT: CONTRADICTED" in upper or "VERDICT:CONTRADICTED" in upper:
+        return "CONTRADICTED"
+    if "VERDICT: UNVERIFIED" in upper or "VERDICT:UNVERIFIED" in upper:
+        return "UNVERIFIED"
+    return None
+
+
+def _make_tool_call_record(
+    member: "BoardMember",
+    stage: int,
+    tool_call: "ToolCall",
+    tool_result: "ToolResult",
+    elapsed_seconds: float,
+) -> dict:
+    """Build a plain-dict audit record for one tool call. Appended to
+    ``BoardSession.tool_call_results`` by ``agentic_member_turn``.
+
+    Shape (pinned — downstream consumers read keys by name):
+      member_id, stage, tool_name, tool_call_id, arguments, summary,
+      content_for_model, verdict, error, elapsed_seconds, timestamp.
+
+    Verdict resolution:
+      - For ``validate_claim``: prefer the canonical post-downgrade verdict
+        from ``tool_result.summary`` (e.g. ``"validate_claim: UNVERIFIED"``
+        after P3a's downgrade). Falls back to parsing
+        ``content_for_model`` if the summary is malformed.
+      - For every other tool: ``None``.
+    """
+    verdict: str | None = None
+    if tool_call.name == "validate_claim":
+        summary = (tool_result.summary or "").strip()
+        if summary.startswith("validate_claim: "):
+            candidate = summary[len("validate_claim: "):].strip().upper()
+            if candidate in ("SUPPORTED", "CONTRADICTED", "UNVERIFIED"):
+                verdict = candidate
+        if verdict is None:
+            verdict = _parse_tool_verdict(tool_call.name, tool_result.content_for_model)
+
+    return {
+        "member_id": member.id,
+        "stage": stage,
+        "tool_name": tool_call.name,
+        "tool_call_id": tool_call.id,
+        "arguments": dict(tool_call.arguments or {}),
+        "summary": tool_result.summary or "",
+        "content_for_model": tool_result.content_for_model or "",
+        "verdict": verdict,
+        "error": tool_result.error,
+        "elapsed_seconds": float(elapsed_seconds),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ─── P3b: Tool-error revision loop (spec §7.2) ──────────────────────────────
 
 # Verbatim from spec §7.2.2. Filled with {tool_name}, {contradicted_claim},
@@ -230,15 +305,17 @@ async def agentic_member_turn(
     t_start = time.monotonic()
 
     # Define _exec outside the loop; it captures member, session, on_event via closure
-    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult, float]:
         on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
+        t_exec_start = time.monotonic()
         result = await execute_tool(
             name=tc.name, arguments=tc.arguments,
             session=session, member_id=member.id,
         )
+        elapsed = time.monotonic() - t_exec_start
         on_event(SimpleEvent("ToolResult", member.id, tc.name,
                               result.summary, result.cost_units))
-        return tc, result
+        return tc, result, elapsed
 
     _iter = 0
     _MAX_ITERS = max(budget.tool_calls_max + 4, 12)
@@ -302,9 +379,10 @@ async def agentic_member_turn(
         # Append assistant tool-call message
         messages.append(_tool_call_message(response.tool_calls, response.reasoning_content))
 
-        # Execute tool calls in parallel
+        # Execute tool calls in parallel; _exec returns per-tool elapsed so
+        # persisted records carry true per-call latency, not the gather's wall.
         results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
-        for tc, result in results:
+        for tc, result, tool_elapsed in results:
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
                 "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
@@ -332,6 +410,19 @@ async def agentic_member_turn(
                             "summary": (result.summary or "")[:200],
                         },
                     )
+
+            # Tool-call persistence (unblocker for source_quality_trap eval).
+            # Guarded so existing SimpleNamespace-based tests still pass.
+            if hasattr(session, "tool_call_results"):
+                session.tool_call_results.append(
+                    _make_tool_call_record(
+                        member=member,
+                        stage=stage,
+                        tool_call=tc,
+                        tool_result=result,
+                        elapsed_seconds=tool_elapsed,
+                    )
+                )
 
 
 @dataclass
@@ -389,6 +480,11 @@ class BoardSession:
     # ContradictionFinding.to_dict() dicts. Populated only when verify=True
     # and ≥2 members responded at Stage 1.
     contradictions: list = field(default_factory=list)
+    # Per-tool-call audit trail (separate from contradictions/atomized_claims).
+    # Populated by `agentic_member_turn` for every tool call. Each entry is a
+    # plain dict — see `_make_tool_call_record` for shape. Consumed by
+    # `evals/signals.py::extract_signals` to populate validate_claim_verdicts.
+    tool_call_results: list[dict] = field(default_factory=list)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -424,6 +520,7 @@ class BoardSession:
             "evidence_packets": self.evidence_packets,
             "atomized_claims": self.atomized_claims,
             "contradictions": self.contradictions,
+            "tool_call_results": self.tool_call_results,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),

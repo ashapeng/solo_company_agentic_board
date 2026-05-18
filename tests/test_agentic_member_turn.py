@@ -492,3 +492,381 @@ async def test_forced_revision_cap_configurable(monkeypatch):
         if m.get("role") == "user" and "FORCED REVISION" in (m.get("content") or "")
     ]
     assert len(forced_turns) == 1
+
+
+# ─── Tool-call persistence helpers ──────────────────────────────────────────
+
+from server.board.deliberation.orchestrator import _parse_tool_verdict
+
+
+def test_parse_tool_verdict_supported():
+    content = "validate_claim('x'):\nVERDICT: SUPPORTED\nRATIONALE: confirmed."
+    assert _parse_tool_verdict("validate_claim", content) == "SUPPORTED"
+
+
+def test_parse_tool_verdict_contradicted():
+    content = "validate_claim('x'):\nVERDICT: CONTRADICTED\nRATIONALE: refuted."
+    assert _parse_tool_verdict("validate_claim", content) == "CONTRADICTED"
+
+
+def test_parse_tool_verdict_unverified():
+    content = "validate_claim('x'):\nVERDICT: UNVERIFIED\nRATIONALE: thin."
+    assert _parse_tool_verdict("validate_claim", content) == "UNVERIFIED"
+
+
+def test_parse_tool_verdict_returns_literal_judge_verdict_even_when_downgrade_appended():
+    """The P3a downgrade appends `[SOURCE-AUTHORITY DOWNGRADE]` to the body.
+    The verdict line itself still says SUPPORTED (the judge's word). The
+    canonical post-downgrade verdict lives on ToolResult.summary; the record
+    builder (`_make_tool_call_record`) reads both and prefers the summary."""
+    content = (
+        "validate_claim('x'):\nVERDICT: SUPPORTED\nRATIONALE: ok\n"
+        "\n[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority. "
+        "Verdict downgraded to UNVERIFIED."
+    )
+    assert _parse_tool_verdict("validate_claim", content) == "SUPPORTED"
+
+
+def test_parse_tool_verdict_returns_none_when_no_verdict_line():
+    """No 'VERDICT:' substring → None (caller stores None on the record)."""
+    assert _parse_tool_verdict("validate_claim", "some other text") is None
+    assert _parse_tool_verdict("validate_claim", "") is None
+
+
+def test_parse_tool_verdict_returns_none_for_non_validate_claim_tool():
+    """web_search, fetch_url, etc. don't emit verdicts. Parser returns None."""
+    assert _parse_tool_verdict("web_search", "VERDICT: SUPPORTED") is None
+    assert _parse_tool_verdict("fetch_url", "VERDICT: CONTRADICTED") is None
+    assert _parse_tool_verdict("open_browser", "anything") is None
+    assert _parse_tool_verdict("ask_user_clarifying_question", "anything") is None
+
+
+def test_parse_tool_verdict_is_case_insensitive():
+    """Mirror _handle_validate_claim's convention (which also .upper()s before
+    substring match) so the persisted record's verdict never disagrees with
+    the tool's own parsing path."""
+    assert _parse_tool_verdict("validate_claim", "verdict: supported") == "SUPPORTED"
+    assert _parse_tool_verdict("validate_claim", "Verdict: ContraDicted") == "CONTRADICTED"
+
+
+from server.board.deliberation.orchestrator import _make_tool_call_record
+
+
+def test_make_tool_call_record_full_shape_for_validate_claim():
+    """The record shape pins the contract for downstream consumers
+    (evals/signals.py reads these keys by name)."""
+    member = _make_member("strategist")
+    tc = llm.ToolCall(
+        id="tc_42",
+        name="validate_claim",
+        arguments={"claim": "average AI demo→paid conversion is 8%"},
+    )
+    result = tools.ToolResult(
+        content_for_model=(
+            "validate_claim('average AI demo→paid conversion is 8%'):\n"
+            "VERDICT: UNVERIFIED\nRATIONALE: thin sources."
+        ),
+        summary="validate_claim: UNVERIFIED",
+        cost_units=2.0,
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=1.42)
+    assert rec["member_id"] == "strategist"
+    assert rec["stage"] == 1
+    assert rec["tool_name"] == "validate_claim"
+    assert rec["tool_call_id"] == "tc_42"
+    assert rec["arguments"] == {"claim": "average AI demo→paid conversion is 8%"}
+    assert rec["summary"] == "validate_claim: UNVERIFIED"
+    assert rec["content_for_model"].startswith("validate_claim(")
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["error"] is None
+    assert rec["elapsed_seconds"] == 1.42
+    assert "T" in rec["timestamp"]
+    assert rec["timestamp"].endswith("+00:00")
+
+
+def test_make_tool_call_record_uses_summary_verdict_when_downgrade_present():
+    """When P3a downgrades SUPPORTED → UNVERIFIED, the body keeps the
+    judge's literal 'VERDICT: SUPPORTED' line but the summary reflects the
+    canonical post-downgrade verdict. The record's `verdict` field MUST
+    match the summary (downstream consumer reads this as the verdict)."""
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="validate_claim",
+                      arguments={"claim": "trap claim"})
+    result = tools.ToolResult(
+        content_for_model=(
+            "validate_claim('trap claim'):\nVERDICT: SUPPORTED\nRATIONALE: ok\n"
+            "\n[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority. "
+            "Verdict downgraded to UNVERIFIED."
+        ),
+        summary="validate_claim: UNVERIFIED",
+        cost_units=2.0,
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.5)
+    assert rec["verdict"] == "UNVERIFIED"
+
+
+def test_make_tool_call_record_verdict_none_for_non_validate_claim():
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="web_search",
+                      arguments={"query": "x"})
+    result = tools.ToolResult(
+        content_for_model="web_search('x') results:\n1. Foo\n2. Bar",
+        summary="web_search 'x' → 2 results",
+        cost_units=1.0,
+    )
+    rec = _make_tool_call_record(member, stage=2, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.3)
+    assert rec["tool_name"] == "web_search"
+    assert rec["verdict"] is None
+    assert rec["arguments"] == {"query": "x"}
+
+
+def test_make_tool_call_record_propagates_error_field():
+    """When the tool returned an error, the record's error field carries it."""
+    member = _make_member()
+    tc = llm.ToolCall(id="tc", name="fetch_url",
+                      arguments={"url": "https://blocked.example/x"})
+    result = tools.ToolResult(
+        content_for_model="fetch_url: blocked URL",
+        summary="fetch_url blocked",
+        cost_units=0.0,
+        error="blocked URL (SSRF guard)",
+    )
+    rec = _make_tool_call_record(member, stage=1, tool_call=tc,
+                                  tool_result=result, elapsed_seconds=0.01)
+    assert rec["error"] == "blocked URL (SSRF guard)"
+
+
+# --- agentic_member_turn → session.tool_call_results persistence -------------
+
+
+async def test_agentic_turn_persists_tool_call_to_session(monkeypatch):
+    """When session has tool_call_results, every tool call is appended."""
+    from server.board.deliberation.orchestrator import BoardSession
+
+    call_responses = iter([
+        llm.LLMResponse(
+            content="", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(
+                id="tc_v", name="validate_claim",
+                arguments={"claim": "the conversion rate for AI demos is 8%"})],
+        ),
+        llm.LLMResponse(
+            content="Wrapped up.", model="m",
+            input_tokens=1, output_tokens=1, latency_seconds=0.1,
+            finish_reason="stop", tool_calls=[],
+        ),
+    ])
+    fake_query_llm = AsyncMock(side_effect=lambda *a, **kw: next(call_responses))
+    # Simulate the post-P3a downgrade: judge said SUPPORTED, summary says
+    # UNVERIFIED, body carries the [SOURCE-AUTHORITY DOWNGRADE] note.
+    fake_tool_result = tools.ToolResult(
+        content_for_model=(
+            "validate_claim('the conversion rate for AI demos is 8%'):\n"
+            "VERDICT: SUPPORTED\nRATIONALE: blogs say so.\n"
+            "\n[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority — "
+            "found 3 unknown; need ≥1 academic OR ≥2 major_news OR ≥3 established_blog. "
+            "Verdict downgraded to UNVERIFIED."
+        ),
+        summary="validate_claim: UNVERIFIED",
+        cost_units=2.0,
+    )
+
+    session = BoardSession(session_id="board_test", user_query="x")
+
+    with patch("server.board.deliberation.orchestrator.query_llm", fake_query_llm), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(return_value=fake_tool_result)):
+        await agentic_member_turn(
+            member=_make_member("strategist"),
+            model="kimi/kimi-k2.6",
+            system_prompt="x",
+            initial_user_message="Analyze AI demo conversion.",
+            tools=[tools.TOOLS["validate_claim"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session,
+            stage=1,
+            on_event=lambda e: None,
+        )
+
+    assert len(session.tool_call_results) == 1
+    rec = session.tool_call_results[0]
+    assert rec["member_id"] == "strategist"
+    assert rec["stage"] == 1
+    assert rec["tool_name"] == "validate_claim"
+    assert rec["tool_call_id"] == "tc_v"
+    assert rec["arguments"] == {"claim": "the conversion rate for AI demos is 8%"}
+    # Canonical post-downgrade verdict from summary, not the judge's literal line.
+    assert rec["verdict"] == "UNVERIFIED"
+    assert rec["error"] is None
+
+
+async def test_agentic_turn_does_not_crash_when_session_lacks_field(monkeypatch):
+    """Back-compat: SimpleNamespace session (used by every other test in
+    this file) has no tool_call_results attribute. The hook must guard
+    with hasattr and skip silently."""
+    fake_response = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="tool_calls",
+        tool_calls=[llm.ToolCall(id="tc", name="web_search",
+                                  arguments={"query": "x"})],
+    )
+    final_response = llm.LLMResponse(
+        content="Done.", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    fake_query_llm = AsyncMock(side_effect=[fake_response, final_response])
+    fake_tool_result = tools.ToolResult(
+        content_for_model="ok", summary="ok", cost_units=1.0,
+    )
+    bare_session = SimpleNamespace()  # NO tool_call_results attr
+    with patch("server.board.deliberation.orchestrator.query_llm", fake_query_llm), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(return_value=fake_tool_result)):
+        result = await agentic_member_turn(
+            member=_make_member(),
+            model="m",
+            system_prompt="x",
+            initial_user_message="x",
+            tools=[tools.TOOLS["web_search"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=bare_session,
+            stage=1,
+            on_event=lambda e: None,
+        )
+    # Loop completed normally.
+    assert result.content == "Done."
+    # Session was never mutated with a new attribute.
+    assert not hasattr(bare_session, "tool_call_results")
+
+
+async def test_agentic_turn_persists_multiple_tool_calls_in_order(monkeypatch):
+    """Multiple tool calls across multiple LLM turns each get one record,
+    preserved in call order."""
+    from server.board.deliberation.orchestrator import BoardSession
+
+    # Turn 1: one validate_claim. Turn 2: one web_search. Turn 3: final.
+    responses = iter([
+        llm.LLMResponse(
+            content="", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(id="tc_1", name="validate_claim",
+                                      arguments={"claim": "claim A"})],
+        ),
+        llm.LLMResponse(
+            content="", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(id="tc_2", name="web_search",
+                                      arguments={"query": "follow-up"})],
+        ),
+        llm.LLMResponse(
+            content="Final.", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        ),
+    ])
+
+    tool_results = iter([
+        tools.ToolResult(
+            content_for_model="validate_claim('claim A'):\nVERDICT: SUPPORTED",
+            summary="validate_claim: SUPPORTED", cost_units=2.0,
+        ),
+        tools.ToolResult(
+            content_for_model="web_search('follow-up') results: ...",
+            summary="web_search 'follow-up' → 3 results", cost_units=1.0,
+        ),
+    ])
+
+    session = BoardSession(session_id="board_test", user_query="x")
+
+    async def _spy_query(*a, **kw):
+        return next(responses)
+
+    async def _spy_exec(*a, **kw):
+        return next(tool_results)
+
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_spy_query)), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(side_effect=_spy_exec)):
+        await agentic_member_turn(
+            member=_make_member("product"),
+            model="m", system_prompt="x", initial_user_message="x",
+            tools=[tools.TOOLS["validate_claim"], tools.TOOLS["web_search"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session, stage=2, on_event=lambda e: None,
+        )
+
+    assert len(session.tool_call_results) == 2
+    assert session.tool_call_results[0]["tool_name"] == "validate_claim"
+    assert session.tool_call_results[0]["verdict"] == "SUPPORTED"
+    assert session.tool_call_results[1]["tool_name"] == "web_search"
+    assert session.tool_call_results[1]["verdict"] is None
+    # Both records carry the right stage.
+    assert all(r["stage"] == 2 for r in session.tool_call_results)
+    assert all(r["member_id"] == "product" for r in session.tool_call_results)
+
+
+async def test_agentic_turn_persists_each_call_in_parallel_fanout():
+    """A single LLMResponse with multiple tool_calls fan out via asyncio.gather;
+    each call must produce its own record with its own elapsed_seconds (not
+    the gather's wall time)."""
+    from server.board.deliberation.orchestrator import BoardSession
+
+    parallel_call = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="tool_calls",
+        tool_calls=[
+            llm.ToolCall(id="tc_a", name="validate_claim",
+                          arguments={"claim": "claim alpha"}),
+            llm.ToolCall(id="tc_b", name="web_search",
+                          arguments={"query": "follow-up"}),
+        ],
+    )
+    final = llm.LLMResponse(
+        content="Done.", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    responses = iter([parallel_call, final])
+
+    async def _query(*a, **kw):
+        return next(responses)
+
+    per_tool_results = {
+        "validate_claim": tools.ToolResult(
+            content_for_model="validate_claim('claim alpha'):\nVERDICT: SUPPORTED",
+            summary="validate_claim: SUPPORTED", cost_units=2.0,
+        ),
+        "web_search": tools.ToolResult(
+            content_for_model="web_search('follow-up') results: ...",
+            summary="web_search 'follow-up' → 3 results", cost_units=1.0,
+        ),
+    }
+
+    async def _exec(*, name, **kw):
+        return per_tool_results[name]
+
+    session = BoardSession(session_id="board_parallel", user_query="x")
+
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_query)), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(side_effect=_exec)):
+        await agentic_member_turn(
+            member=_make_member("strategist"),
+            model="m", system_prompt="x", initial_user_message="x",
+            tools=[tools.TOOLS["validate_claim"], tools.TOOLS["web_search"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session, stage=1, on_event=lambda e: None,
+        )
+
+    # Both tool calls within the same LLM turn each landed as their own record.
+    assert len(session.tool_call_results) == 2
+    names = [r["tool_name"] for r in session.tool_call_results]
+    assert set(names) == {"validate_claim", "web_search"}
+    # Per-call timing semantics: each record carries its own elapsed_seconds.
+    for r in session.tool_call_results:
+        assert isinstance(r["elapsed_seconds"], float)
+        assert r["elapsed_seconds"] >= 0.0
