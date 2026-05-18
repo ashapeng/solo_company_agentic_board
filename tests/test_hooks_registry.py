@@ -254,3 +254,73 @@ async def test_dispatch_pre_hooks_second_deny_after_first_allow(fresh_registry):
 
     assert verdict.action == "deny"
     assert verdict.reason == "second"
+
+
+# ─── T5: hook crash → deny ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_sync_hook_raise_becomes_deny(fresh_registry, caplog):
+    import logging
+    from server.harness.hooks import (
+        HookContext, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def crashy(ctx):
+        raise ValueError("kaboom")
+
+    register_pre_hook("web_search", crashy)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    with caplog.at_level(logging.ERROR, logger="server.harness.hooks"):
+        verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert verdict.reason == "hook crashed: ValueError"
+    assert verdict.metadata == {}
+    assert any("kaboom" in rec.message or "kaboom" in str(rec.exc_info) for rec in caplog.records), \
+        "exception traceback should be logged via logging.exception"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_async_hook_raise_becomes_deny(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    async def crashy(ctx):
+        raise RuntimeError("async kaboom")
+
+    register_pre_hook("web_search", crashy)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert verdict.reason == "hook crashed: RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_crash_short_circuits_remaining(fresh_registry):
+    """A crashed hook denies; later hooks must not run."""
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def crashy(ctx):
+        raise ValueError("boom")
+
+    calls: list[str] = []
+
+    def later(ctx):
+        calls.append("later")
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("web_search", crashy)
+    register_pre_hook("web_search", later)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert calls == []

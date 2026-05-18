@@ -93,19 +93,15 @@ def _list_post_hooks_for_tests(tool_name: str) -> list[PostHook]:
 
 # ─── Dispatch ──────────────────────────────────────────────────────────────
 
+import asyncio
 import inspect
+import logging
 
+_logger = logging.getLogger(__name__)
 _HOOK_TIMEOUT_SECONDS: float = 5.0
 
 
 async def _await_if_needed_pre(fn: PreHook, ctx: HookContext) -> HookVerdict:
-    """Call a pre-hook; await if it returned a coroutine.
-
-    Sync hooks execute inline (no thread). Async hooks are wrapped in
-    asyncio.wait_for with the module-level timeout.
-    """
-    import asyncio  # local import keeps the module's top section visible
-
     result = fn(ctx)
     if inspect.isawaitable(result):
         result = await asyncio.wait_for(result, timeout=_HOOK_TIMEOUT_SECONDS)
@@ -113,18 +109,24 @@ async def _await_if_needed_pre(fn: PreHook, ctx: HookContext) -> HookVerdict:
 
 
 async def dispatch_pre_hooks(ctx: HookContext) -> HookVerdict:
-    """Run every pre-hook registered for ctx.tool_name in registration order.
-
-    On all-allow: returns one verdict with merged metadata (later hook
-    overwrites earlier on key collision).
-    On first-deny: short-circuit and return that verdict.  (Implemented in T4.)
-    On hook crash: convert to deny.  (Implemented in T5.)
-    On hook timeout: convert to deny.  (Implemented in T6.)
-    """
     merged_metadata: dict = {}
     for fn in _pre_hooks.get(ctx.tool_name, []):
-        verdict = await _await_if_needed_pre(fn, ctx)
+        try:
+            verdict = await _await_if_needed_pre(fn, ctx)
+        except asyncio.TimeoutError:
+            verdict = HookVerdict(
+                action="deny",
+                reason="hook timeout",
+                metadata={},
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("Hook %r crashed for tool %s", fn, ctx.tool_name)
+            verdict = HookVerdict(
+                action="deny",
+                reason=f"hook crashed: {type(exc).__name__}",
+                metadata={},
+            )
         if verdict.action == "deny":
-            return verdict  # short-circuit (test in T4)
+            return verdict
         merged_metadata = {**merged_metadata, **verdict.metadata}
     return HookVerdict(action="allow", reason=None, metadata=merged_metadata)
