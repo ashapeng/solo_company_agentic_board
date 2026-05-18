@@ -196,3 +196,132 @@ def test_pick_top_pairs_score_is_combined_challenge_count():
     # First entry should be the (architect, product) pair (combined score 3+1 = 4).
     assert pairs[0]["topic"] == "t-high"
     assert pairs[0]["score"] == 4
+
+
+# ─── T4: summarize_rebuttal + format_rebuttal_outcomes_block ────────────────
+
+
+@pytest.mark.asyncio
+async def test_summarize_rebuttal_extracts_resolution_from_well_formed_output():
+    """Happy path: summarizer model returns spec §9.2.6 format; parser
+    extracts the Resolution: line and returns the full summary text."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    fake_summary = (
+        "REBUTTAL OUTCOME — Market sizing\n\n"
+        "Resolution: PARTIAL\n\n"
+        "Final positions:\n"
+        "  Member A: Conceded the 2025 figure was outdated; now estimates 18–22% YoY.\n"
+        "  Member B: Maintains 28–35% YoY.\n"
+    )
+    transcript = [
+        {"role": "chair", "member_id": "chairperson", "content": "Open.", "tool_calls": []},
+        {"role": "member_a", "member_id": "strategist", "content": "A says.", "tool_calls": []},
+        {"role": "member_b", "member_id": "product", "content": "B says.", "tool_calls": []},
+    ]
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content=fake_summary, model="m",
+            input_tokens=100, output_tokens=80,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        summary, resolution, tokens_in, tokens_out = await auto_promote.summarize_rebuttal(
+            transcript=transcript, topic="Market sizing",
+            claim_a_text="A claim", claim_b_text="B claim",
+            model="qwen/qwen3.6-plus",
+        )
+
+    assert resolution == "PARTIAL"
+    assert "REBUTTAL OUTCOME" in summary
+    assert "Conceded" in summary
+    assert tokens_in == 100
+    assert tokens_out == 80
+
+
+@pytest.mark.asyncio
+async def test_summarize_rebuttal_resolution_none_when_missing():
+    """Malformed summarizer output (no Resolution: line) → resolution = None,
+    summary still returned so the chair gets something."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content="Some prose without the expected block.",
+            model="m", input_tokens=10, output_tokens=5,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        summary, resolution, _i, _o = await auto_promote.summarize_rebuttal(
+            transcript=[], topic="t", claim_a_text="a", claim_b_text="b",
+            model="m",
+        )
+    assert resolution is None
+    assert "Some prose" in summary
+
+
+@pytest.mark.asyncio
+async def test_summarize_rebuttal_uppercases_resolution():
+    """Resolution: 'resolved' (lowercase) → returns 'RESOLVED' canonical form."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content="Resolution: resolved\n\nFinal positions: x",
+            model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        _s, resolution, _i, _o = await auto_promote.summarize_rebuttal(
+            transcript=[], topic="t", claim_a_text="a", claim_b_text="b",
+            model="m",
+        )
+    assert resolution == "RESOLVED"
+
+
+@pytest.mark.asyncio
+async def test_summarize_rebuttal_invalid_resolution_returns_none():
+    """Resolution: 'CONFUSED' (not in {RESOLVED, PARTIAL, UNRESOLVED}) → None."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content="Resolution: confused\n", model="m",
+            input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        _s, resolution, _i, _o = await auto_promote.summarize_rebuttal(
+            transcript=[], topic="t", claim_a_text="a", claim_b_text="b",
+            model="m",
+        )
+    assert resolution is None
+
+
+def test_format_rebuttal_outcomes_block_empty_returns_empty_string():
+    from server.board.deliberation.auto_promote import format_rebuttal_outcomes_block
+    assert format_rebuttal_outcomes_block([]) == ""
+
+
+def test_format_rebuttal_outcomes_block_renders_each_entry_with_header():
+    from server.board.deliberation.auto_promote import format_rebuttal_outcomes_block
+    entries = [
+        {"summary": "REBUTTAL OUTCOME — Topic 1\nResolution: PARTIAL\n...",
+         "topic": "Topic 1"},
+        {"summary": "REBUTTAL OUTCOME — Topic 2\nResolution: RESOLVED\n...",
+         "topic": "Topic 2"},
+    ]
+    block = format_rebuttal_outcomes_block(entries)
+    assert "REBUTTAL OUTCOME (auto-promoted" in block  # spec §9.2.6 header
+    assert "REBUTTAL OUTCOME — Topic 1" in block
+    assert "REBUTTAL OUTCOME — Topic 2" in block
+    # Entries separated by a divider line of some kind.
+    assert block.count("REBUTTAL OUTCOME") >= 3  # 1 header + 2 entries
