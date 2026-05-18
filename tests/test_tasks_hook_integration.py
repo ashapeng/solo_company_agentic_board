@@ -265,3 +265,27 @@ def test_update_delegated_task_status_allow_completes(tmp_db, fresh_registry):
     task = get_delegated_task("t17_b", db_path=tasks_path)
     assert task["status"] == "completed"
     assert task["result_summary"] == "done"
+
+
+# ─── T18: end-to-end with bundled rate-limit hook ─────────────────────────
+
+
+def test_bundled_rate_limit_denies_second_save_within_window(tmp_db, monkeypatch):
+    """End-to-end: bundled rate_limit_delegated_tasks denies the 2nd save."""
+    ledger_path, tasks_path = tmp_db
+    monkeypatch.setenv("AGENTIC_BOARD_DELEGATED_TASK_RATE_LIMIT", "1")
+    monkeypatch.setenv("AGENTIC_BOARD_DELEGATED_TASK_RATE_WINDOW_SECONDS", "60")
+
+    from server.harness.hooks import _list_pre_hooks_for_tests, HookDeniedError
+    from server.harness.hooks._bundled.rate_limit_delegated_tasks import (
+        rate_limit_delegated_tasks,
+    )
+    assert rate_limit_delegated_tasks in _list_pre_hooks_for_tests("delegated_task"), \
+        "bundled rate_limit_delegated_tasks must be auto-loaded"
+
+    from server.execution.tasks import save_delegated_task
+
+    save_delegated_task(_approved_task_payload("t18_a"), db_path=tasks_path)
+    with pytest.raises(HookDeniedError) as excinfo:
+        save_delegated_task(_approved_task_payload("t18_b"), db_path=tasks_path)
+    assert "rate limit" in str(excinfo.value).lower()
