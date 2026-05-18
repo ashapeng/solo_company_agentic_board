@@ -13,10 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .config import load_config
 from .model_assignment import tune_model_assignments
 from .routing_compaction import tune_routing_and_compaction
 from .tuning import tune_token_budgets, tune_verification_thresholds
 from .ledger import query_outcomes
+from .validate import validate_config
 
 
 _REVIEWS_DIR = Path("data/harness_reviews")
@@ -115,6 +117,26 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
             )
         )
 
+    # Phase 1 validate.py integration (spec §4.3, §4.4).
+    validation_payload: dict
+    try:
+        candidate_snapshot = load_config()
+        validation_report = validate_config(candidate_snapshot)
+        validation_payload = validation_report.to_dict()
+    except Exception as exc:
+        recommendations.append(HarnessRecommendation(
+            category="validation",
+            summary="validation check failed",
+            details={"error": str(exc)},
+        ))
+        validation_payload = {
+            "ok": False,
+            "readiness": "blocked",
+            "errors": [],
+            "warnings": [],
+            "error": str(exc),
+        }
+
     review = HarnessReview(
         id=f"harness_review_{time.time_ns()}",
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -123,8 +145,10 @@ def run_harness_review(*, dry_run: bool = True) -> dict[str, Any]:
         status="proposed",
         dry_run=dry_run,
     )
-    _save_review(review.to_dict())
-    return review.to_dict()
+    review_dict = review.to_dict()
+    review_dict["validation"] = validation_payload
+    _save_review(review_dict)
+    return review_dict
 
 
 def latest_harness_review() -> dict[str, Any] | None:
@@ -161,7 +185,7 @@ def apply_harness_review(review_id: str) -> dict[str, Any]:
     if not snapshot:
         raise HarnessReviewError("Approved review has no snapshot to apply.")
 
-    from .config import load_config, save_config
+    from .config import save_config
     from .ledger import snapshot_activation
 
     previous = load_config()
