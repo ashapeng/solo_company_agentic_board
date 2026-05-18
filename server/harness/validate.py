@@ -73,6 +73,7 @@ def validate_config(candidate: HarnessConfig | dict) -> ValidationReport:
 
     _check_schema(config, errors)
     _check_model_preferences(config, errors)
+    _check_suppressed_members(config, errors, warnings)
 
     readiness = _compute_readiness(errors, warnings)
     return ValidationReport(
@@ -273,3 +274,76 @@ def _check_schema(config: HarnessConfig, errors: list[ValidationIssue]) -> None:
             message=f"hardening must be a dict, got {type(config.hardening).__name__}",
             severity="error",
         ))
+
+
+def _member_universe() -> tuple[set[str], set[str]]:
+    """Return (active_ids, shelved_ids) read directly from server/members/*.md.
+
+    Active = filenames without leading underscore. Shelved = filenames with
+    leading underscore (and the file stem stripped of that underscore).
+    Templates are filtered out via the `_template` shelved-id exclusion.
+    """
+    from pathlib import Path
+    members_dir = Path(__file__).resolve().parent.parent / "members"
+    active: set[str] = set()
+    shelved: set[str] = set()
+    if not members_dir.is_dir():
+        return active, shelved
+    for filepath in members_dir.glob("*.md"):
+        if filepath.name.startswith("_"):
+            stem = filepath.stem.lstrip("_")
+            if stem and stem != "template":
+                shelved.add(stem)
+        else:
+            active.add(filepath.stem)
+    return active, shelved
+
+
+def _check_suppressed_members(
+    config: HarnessConfig,
+    errors: list[ValidationIssue],
+    warnings: list[ValidationIssue],
+) -> None:
+    """Cross-ref every per_query_type.*.routing.suppressed_member_ids entry."""
+    active, shelved = _member_universe()
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type, qt_config in per_qt.items():
+        if not isinstance(qt_config, dict):
+            continue
+        routing = qt_config.get("routing")
+        if not isinstance(routing, dict):
+            continue
+        suppressed = routing.get("suppressed_member_ids")
+        if not isinstance(suppressed, list):
+            continue
+        for member_id in suppressed:
+            path = f"per_query_type.{query_type}.routing.suppressed_member_ids"
+            if not isinstance(member_id, str) or not member_id.strip():
+                errors.append(ValidationIssue(
+                    code="xref.member_unknown",
+                    path=path,
+                    message=f"empty or non-string member ID {member_id!r}",
+                    severity="error",
+                ))
+                continue
+            if member_id in shelved:
+                warnings.append(ValidationIssue(
+                    code="xref.member_shelved",
+                    path=path,
+                    message=(
+                        f"member {member_id!r} is shelved (file "
+                        f"server/members/_{member_id}.md); suppression is a no-op"
+                    ),
+                    severity="warning",
+                ))
+                continue
+            if member_id not in active:
+                errors.append(ValidationIssue(
+                    code="xref.member_unknown",
+                    path=path,
+                    message=(
+                        f"member {member_id!r} not found under server/members/*.md "
+                        f"(known active: {sorted(active)})"
+                    ),
+                    severity="error",
+                ))

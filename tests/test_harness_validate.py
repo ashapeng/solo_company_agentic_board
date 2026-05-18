@@ -133,3 +133,38 @@ def test_xref_openrouter_colon_prefix_allowed():
     report = validate_config(cfg)
     codes = [issue.code for issue in report.errors]
     assert "xref.model_unknown" not in codes
+
+
+def test_xref_suppressed_member_unknown_id_fails():
+    """An unknown member ID in routing.suppressed_member_ids is an error."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"routing": {"suppressed_member_ids": ["bogus_member"]}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.member_unknown" in codes
+
+
+def test_xref_suppressed_member_known_id_passes():
+    """Real member IDs pass the xref check."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"routing": {"suppressed_member_ids": ["builder"]}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.member_unknown" not in codes
+
+
+def test_xref_suppressed_shelved_member_emits_warning():
+    """Suppressing a shelved member (e.g., 'guardian') warns but does not block."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"routing": {"suppressed_member_ids": ["guardian"]}},
+    }
+    report = validate_config(cfg)
+    error_codes = [issue.code for issue in report.errors]
+    warning_codes = [issue.code for issue in report.warnings]
+    assert "xref.member_unknown" not in error_codes
+    assert "xref.member_shelved" in warning_codes
