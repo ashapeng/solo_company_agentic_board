@@ -72,6 +72,17 @@ class HarnessConfig:
         "source_authority_overrides": {},
         # P3b: forced-revision cap per member per stage (spec §7.2.3)
         "max_forced_revisions_per_member": 2,
+        # P4: SOTB governance (spec §8). Sidecar + freshness checks are
+        # always-on (pure Python). The LLM judges (read-time query-conflict
+        # §8.2; write-time contradiction §8.3) are gated on tier == HEAVY
+        # (proxied via verify=True) AND this flag, so we can ship the
+        # cheap parts while leaving the judges dark-launched.
+        "sotb_judge_enabled": False,
+        # None → falls back to atomizer_model (mirrors contradiction_judge_model).
+        "sotb_judge_model": None,
+        # §8.4 default; member can override per-entry via (expires: YYYY-MM-DD).
+        # Used by the stale-warning rule (warn but don't drop) on Risk/Open.
+        "sotb_stale_days": 90,
     })
 
     # Version tracking

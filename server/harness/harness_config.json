@@ -21,7 +21,10 @@
     "contradiction_judge_model": null,
     "contradiction_max_pairs": 12,
     "source_authority_overrides": {},
-    "max_forced_revisions_per_member": 2
+    "max_forced_revisions_per_member": 2,
+    "sotb_judge_enabled": false,
+    "sotb_judge_model": null,
+    "sotb_stale_days": 90
   },
   "version": 2,
   "last_modified": "2026-05-17T18:06:54.717483+00:00"
