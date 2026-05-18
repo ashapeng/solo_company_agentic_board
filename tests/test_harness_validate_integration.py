@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,3 +84,35 @@ def test_apply_harness_review_allows_clean_snapshot(tmp_path, monkeypatch):
     # Default snapshot is clean; apply must succeed.
     result = apply_harness_review(approved["id"])
     assert result["status"] == "applied"
+
+
+def test_cli_harness_validate_clean_config_exits_zero(tmp_path):
+    """uv run python -m server.cli --harness-validate on default config → exit 0."""
+    result = subprocess.run(
+        [sys.executable, "-m", "server.cli", "--harness-validate"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=30,
+    )
+    # On a fresh tmpdir (no harness_config.json), defaults apply → ready.
+    assert result.returncode == 0
+    assert "ready" in result.stdout.lower()
+
+
+def test_cli_harness_validate_bad_config_exits_nonzero(tmp_path):
+    """A blocked config JSON file → exit code non-zero."""
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text(json.dumps({
+        "stage1_max_tokens": -1,
+    }))
+    result = subprocess.run(
+        [sys.executable, "-m", "server.cli", "--harness-validate", str(bad_path)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    combined = (result.stdout + result.stderr).lower()
+    assert "blocked" in combined

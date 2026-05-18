@@ -423,6 +423,50 @@ def run_model_tuner(
     return report
 
 
+def run_harness_validate(*, config_path: str | None = None, json_output: bool = False) -> int:
+    """Run the static HarnessConfig validator. Returns shell exit code."""
+    from pathlib import Path as _Path
+    from server.harness.config import load_config
+    from server.harness.validate import validate_config
+
+    if config_path:
+        path = _Path(config_path)
+        if not path.exists():
+            if json_output:
+                print(json.dumps({"error": "not_found", "path": str(path)}))
+            else:
+                console.print(f"[red]Config file not found: {path}[/red]")
+            return 2
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            candidate: dict = raw
+        except json.JSONDecodeError as exc:
+            if json_output:
+                print(json.dumps({"error": "invalid_json", "detail": str(exc)}))
+            else:
+                console.print(f"[red]Invalid JSON in {path}: {exc}[/red]")
+            return 2
+    else:
+        candidate = load_config()
+
+    report = validate_config(candidate)
+
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        console.print()
+        console.rule("[bold yellow]Harness Config Validator[/bold yellow]")
+        console.print(f"  Readiness: [bold]{report.readiness}[/bold]")
+        console.print(f"  Errors: {len(report.errors)}")
+        console.print(f"  Warnings: {len(report.warnings)}")
+        for issue in report.errors:
+            console.print(f"    [red]ERROR[/red] {issue.code} @ {issue.path}: {issue.message}")
+        for issue in report.warnings:
+            console.print(f"    [yellow]WARN[/yellow] {issue.code} @ {issue.path}: {issue.message}")
+
+    return 0 if report.readiness != "blocked" else 1
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -548,6 +592,14 @@ def cli():
         help="Run Phase D routing and compaction tuner",
     )
     parser.add_argument("--tune-models", action="store_true", help="Run Phase E model assignment tuner")
+    parser.add_argument(
+        "--harness-validate",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Run static HarnessConfig validator (optional PATH to candidate JSON)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Preview tuner changes without saving config")
     parser.add_argument(
         "--min-feedback-sessions",
@@ -695,6 +747,13 @@ def cli():
         )
         print(_replay_json.dumps(report.to_dict(), indent=2))
         return
+
+    if args.harness_validate is not None:
+        rc = run_harness_validate(
+            config_path=args.harness_validate or None,
+            json_output=args.json,
+        )
+        sys.exit(rc)
 
     if args.tune:
         run_tuner(dry_run=args.dry_run, json_output=args.json)
