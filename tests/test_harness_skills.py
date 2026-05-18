@@ -285,5 +285,25 @@ class BundledSkillsTest(unittest.TestCase):
         self.assertIn("Jobs to be Done", skill.body)
 
 
+class PackageSurfaceTest(unittest.TestCase):
+    def test_package_reexports_public_api(self):
+        import server.harness.skills as pkg
+
+        self.assertTrue(hasattr(pkg, "Skill"))
+        self.assertTrue(hasattr(pkg, "load_skills"))
+        self.assertTrue(hasattr(pkg, "list_skills"))
+        self.assertTrue(hasattr(pkg, "MAX_SKILL_BODY_CHARS"))
+        self.assertEqual(pkg.MAX_SKILL_BODY_CHARS, 8000)
+
+    def test_skill_is_frozen_dataclass(self):
+        from dataclasses import FrozenInstanceError
+
+        from server.harness.skills import Skill
+
+        s = Skill(name="x", description="d", body="b", path=Path("/tmp/x"))
+        with self.assertRaises(FrozenInstanceError):
+            s.name = "y"  # type: ignore[misc]
+
+
 if __name__ == "__main__":
     unittest.main()
