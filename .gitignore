@@ -52,4 +52,6 @@ body.json
 docs/Singapore_Hackathon_ParticipantsRubric*.pdf
 pitch/
 
+# Hook plugins are auto-loaded from these dirs; site-specific must not commit
+server/harness/hooks/_project/
 

@@ -166,3 +166,49 @@ class HookDeniedError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+# ─── Auto-discovery ────────────────────────────────────────────────────────
+
+
+def _discover_hooks_in(package_name: str) -> int:
+    """Import every non-underscore-prefixed module in `package_name`.
+
+    Returns the count of modules actually loaded. Missing packages count
+    as zero (not an error). A module that raises on import is logged and
+    skipped; other modules in the same package still load.
+    """
+    import importlib
+    import pkgutil
+
+    try:
+        pkg = importlib.import_module(package_name)
+    except ModuleNotFoundError:
+        return 0
+    pkg_path = getattr(pkg, "__path__", None)
+    if pkg_path is None:
+        return 0
+
+    count = 0
+    for module_info in pkgutil.iter_modules(pkg_path):
+        if module_info.name.startswith("_"):
+            continue
+        fqn = f"{package_name}.{module_info.name}"
+        try:
+            importlib.import_module(fqn)
+        except Exception:  # noqa: BLE001
+            _logger.exception("Failed to import hook module %s", fqn)
+            continue
+        count += 1
+    return count
+
+
+def _autodiscover_at_startup() -> None:
+    bundled = _discover_hooks_in("server.harness.hooks._bundled")
+    project = _discover_hooks_in("server.harness.hooks._project")
+    _logger.info(
+        "hooks: loaded %d bundled, %d project hooks", bundled, project
+    )
+
+
+_autodiscover_at_startup()
