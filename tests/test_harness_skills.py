@@ -80,5 +80,61 @@ class SkillLoaderMissingTest(unittest.TestCase):
             self.assertEqual([s.name for s in skills], ["alpha"])
 
 
+class SkillLoaderMalformedTest(unittest.TestCase):
+    def test_missing_frontmatter_delim_warns_and_skips(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            skill_dir = library / "broken"
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                "no frontmatter here, just body text",
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING") as cm:
+                skills = load_skills(["broken"], library_dir=library)
+
+            self.assertEqual(skills, [])
+            self.assertTrue(any("frontmatter" in line.lower() for line in cm.output))
+
+    def test_malformed_yaml_warns_and_skips(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            skill_dir = library / "bad_yaml"
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: bad_yaml\ndescription: : :\n---\nbody\n",
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING") as cm:
+                skills = load_skills(["bad_yaml"], library_dir=library)
+
+            self.assertEqual(skills, [])
+            self.assertTrue(any("malformed" in line.lower() or "yaml" in line.lower() for line in cm.output))
+
+    def test_missing_name_field_warns_and_skips(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            skill_dir = library / "noname"
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\ndescription: no name field\n---\nbody\n",
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING") as cm:
+                skills = load_skills(["noname"], library_dir=library)
+
+            self.assertEqual(skills, [])
+            self.assertTrue(any("name" in line.lower() for line in cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()
