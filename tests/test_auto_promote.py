@@ -374,3 +374,324 @@ async def test_summarize_rebuttal_uses_last_resolution_when_model_echoes_prompt(
             model="m",
         )
     assert resolution == "PARTIAL"
+
+
+# ─── T5: _member_rebuttal_turn + run_live_rebuttal ──────────────────────────
+
+
+from server.board.config import BoardMember
+
+
+def _make_member(member_id: str, role: str = "strategist") -> BoardMember:
+    return BoardMember(
+        id=member_id, title=member_id.title(), role=role,
+        expertise=[], system_prompt="You are a member.",
+    )
+
+
+def _make_session_with_persistence_field():
+    """Build a minimal object that mimics BoardSession enough for the
+    rebuttal persistence path. Avoids importing BoardSession to keep the
+    test independent of orchestrator field additions."""
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        session_id="t",
+        tool_call_results=[],
+        stage1_responses=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_member_rebuttal_turn_no_tool_call_returns_content_only():
+    """Member's LLM produces text with no tool_call → returned as-is."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    member = _make_member("strategist")
+    session = _make_session_with_persistence_field()
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content="I stand by my position.",
+            model="m", input_tokens=20, output_tokens=10,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        content, tcs, tokens_in, tokens_out = await auto_promote._member_rebuttal_turn(
+            member=member, model="m",
+            user_message="Defend.",
+            session=session, stage=2,
+        )
+    assert content == "I stand by my position."
+    assert tcs == []
+    assert tokens_in == 20
+    assert tokens_out == 10
+    assert len(session.tool_call_results) == 0
+
+
+@pytest.mark.asyncio
+async def test_member_rebuttal_turn_executes_one_validate_claim_call():
+    """Member's LLM emits a validate_claim tool_call; wrapper dispatches it
+    once, persists the record, and feeds the result back for a final-message
+    LLM call."""
+    from server.board import llm, tools as tools_mod
+    from server.board.deliberation import auto_promote
+
+    member = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    responses = iter([
+        llm.LLMResponse(
+            content="", model="m", input_tokens=15, output_tokens=8,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(
+                id="tc1", name="validate_claim",
+                arguments={"claim": "growth is 20% YoY"})],
+        ),
+        llm.LLMResponse(
+            content="Validated. Standing by.",
+            model="m", input_tokens=30, output_tokens=12,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        ),
+    ])
+
+    async def _fake_query(*a, **kw):
+        return next(responses)
+
+    async def _fake_validate(**kwargs):
+        from server.board.tools import ToolResult
+        return ToolResult(
+            content_for_model="validate_claim('growth is 20% YoY'):\nVERDICT: SUPPORTED\nRATIONALE: ok\nKEY_SOURCES: x",
+            summary="validate_claim: SUPPORTED",
+            cost_units=2.0,
+        )
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_fake_query),
+    ), patch.dict(
+        tools_mod.TOOLS,
+        {"validate_claim": tools_mod.Tool(
+            name="validate_claim", description="d", parameters={},
+            handler=_fake_validate,
+        )},
+        clear=False,
+    ):
+        content, tcs, tokens_in, tokens_out = await auto_promote._member_rebuttal_turn(
+            member=member, model="m",
+            user_message="Defend or concede.",
+            session=session, stage=2,
+        )
+    assert content == "Validated. Standing by."
+    assert len(tcs) == 1
+    assert tcs[0]["tool_name"] == "validate_claim"
+    assert tcs[0]["verdict"] == "SUPPORTED"
+    # Persistence happened — session.tool_call_results got the same record.
+    assert len(session.tool_call_results) == 1
+    assert session.tool_call_results[0]["tool_name"] == "validate_claim"
+    # Token totals sum across BOTH LLM calls.
+    assert tokens_in == 45
+    assert tokens_out == 20
+
+
+@pytest.mark.asyncio
+async def test_member_rebuttal_turn_caps_at_one_validate_claim_call():
+    """Spec §9.2.4: member may call validate_claim max 1 time per round. If
+    the LLM tries to call it a SECOND time in the same turn, the wrapper
+    rejects via tool_choice='none' on the follow-up call."""
+    from server.board import llm, tools as tools_mod
+    from server.board.deliberation import auto_promote
+
+    member = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    responses = iter([
+        # First LLM call: requests validate_claim
+        llm.LLMResponse(
+            content="", model="m", input_tokens=10, output_tokens=5,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(
+                id="tc1", name="validate_claim",
+                arguments={"claim": "first"})],
+        ),
+        # Second call: budget shows tool exhausted, model produces final text.
+        llm.LLMResponse(
+            content="Final position.",
+            model="m", input_tokens=10, output_tokens=5,
+            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+        ),
+    ])
+
+    async def _fake_query(*a, **kw):
+        return next(responses)
+
+    async def _fake_validate(**kwargs):
+        from server.board.tools import ToolResult
+        return ToolResult(
+            content_for_model="validate_claim('first'):\nVERDICT: UNVERIFIED\nRATIONALE: x\nKEY_SOURCES: y",
+            summary="validate_claim: UNVERIFIED",
+            cost_units=2.0,
+        )
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_fake_query),
+    ), patch.dict(
+        tools_mod.TOOLS,
+        {"validate_claim": tools_mod.Tool(
+            name="validate_claim", description="d", parameters={},
+            handler=_fake_validate,
+        )},
+        clear=False,
+    ):
+        content, tcs, _i, _o = await auto_promote._member_rebuttal_turn(
+            member=member, model="m",
+            user_message="Defend.",
+            session=session, stage=2,
+        )
+    assert content == "Final position."
+    # Exactly one validate_claim record despite two LLM iterations.
+    assert len(tcs) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_two_rounds_no_early_close():
+    """Full mock-driven rebuttal: opening + 2 rounds × (chair→A, A, chair→B, B)
+    = 1 + 8 = 9 chair/member LLM calls. Member turns produce content with no
+    tool calls. closed_early = False."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    # Scripted responses for every LLM call in order:
+    #   opening (chair)
+    #   round 1:  chair→A | member A | chair→B | member B
+    #   round 2:  chair→A | member A | chair→B | member B
+    chair_texts = [
+        "Opening: contested claim is X.",
+        "Member A, defend.", "Member B, respond.",
+        "Member A, defend again.", "Member B, respond again.",
+    ]
+    a_texts = ["A round 1", "A round 2"]
+    b_texts = ["B round 1", "B round 2"]
+
+    # Interleave the expected order:
+    call_log: list[str] = []
+
+    def _next_response(*a, **kw) -> llm.LLMResponse:
+        sys = (kw.get("system") or "") if "system" in kw else (a[2] if len(a) > 2 else "")
+        msgs = kw.get("messages") if "messages" in kw else (a[1] if len(a) > 1 else [])
+        # Use the system prompt to pick which queue to draw from. Chair turns
+        # are dispatched with the moderator-suffixed chair system prompt
+        # (CHAIR_MODERATOR_SUFFIX includes "chairperson moderating"); member
+        # turns use the member's own system prompt ("You are a member.").
+        if "moderating" in (sys or "").lower():
+            text = chair_texts.pop(0)
+            call_log.append(f"chair:{text}")
+        else:
+            # Member turn — first time wakes A, second time wakes B per call order
+            # We can't easily distinguish A vs B by system_prompt in this fake;
+            # use a deterministic call-order index instead.
+            if len(a_texts) >= len(b_texts):
+                text = a_texts.pop(0)
+                call_log.append(f"a:{text}")
+            else:
+                text = b_texts.pop(0)
+                call_log.append(f"b:{text}")
+        return llm.LLMResponse(
+            content=text, model="m",
+            input_tokens=5, output_tokens=3,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        )
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_next_response),
+    ):
+        result = await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="X", claim_a_text="A says", claim_b_text="B says",
+            session=session, max_rounds=2,
+            on_event=lambda e: None,
+        )
+    transcript = result["transcript"]
+    # Opening + 2 rounds × 4 turns = 9 turns
+    assert len(transcript) == 9
+    # Opening is chair
+    assert transcript[0]["role"] == "chair"
+    # Members alternate
+    member_roles = [t["role"] for t in transcript if t["role"] in ("member_a", "member_b")]
+    assert member_roles == ["member_a", "member_b", "member_a", "member_b"]
+    assert result["tokens_in"] == 5 * 9
+    assert result["tokens_out"] == 3 * 9
+    assert result["closed_early"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_short_circuits_on_rebuttal_closed():
+    """Chair emits 'REBUTTAL CLOSED' in round 1's last chair statement →
+    loop breaks before starting round 2."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    responses = iter([
+        # opening
+        llm.LLMResponse(
+            content="Opening.", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # chair → A
+        llm.LLMResponse(
+            content="A, go.", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # member A
+        llm.LLMResponse(
+            content="A position.", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # chair → B (includes REBUTTAL CLOSED — short-circuit after this round)
+        llm.LLMResponse(
+            content="B, respond. REBUTTAL CLOSED.",
+            model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # member B
+        llm.LLMResponse(
+            content="B position.", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # If round 2 starts, the next call would dequeue here and the test
+        # would fail with StopIteration — proving early exit.
+    ])
+
+    async def _fake(*a, **kw):
+        return next(responses)
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_fake),
+    ):
+        result = await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="X", claim_a_text="A", claim_b_text="B",
+            session=session, max_rounds=2,
+            on_event=lambda e: None,
+        )
+    assert result["closed_early"] is True
+    # 5 turns: opening + round1's 4 turns; round 2 skipped.
+    assert len(result["transcript"]) == 5
