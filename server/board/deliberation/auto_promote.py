@@ -405,16 +405,23 @@ async def _member_rebuttal_turn(
     total_in = 0
     total_out = 0
 
-    first = await query_llm(
-        model=model,
-        messages=messages,
-        system=getattr(member, "system_prompt", "") or "",
-        tools=tools_for_member or None,
-        tool_choice="auto" if tools_for_member else "none",
-        temperature=0.3,
-        max_tokens=600,
-        timeout=120.0,
-    )
+    try:
+        first = await query_llm(
+            model=model,
+            messages=messages,
+            system=getattr(member, "system_prompt", "") or "",
+            tools=tools_for_member or None,
+            tool_choice="auto" if tools_for_member else "none",
+            temperature=0.3,
+            max_tokens=600,
+            timeout=120.0,
+        )
+    except Exception as e:
+        logger.warning(
+            "auto-promote member turn (member=%s) first call failed: %s",
+            getattr(member, "id", "?"), e,
+        )
+        return ("", [], total_in, total_out)
     total_in += int(first.input_tokens or 0)
     total_out += int(first.output_tokens or 0)
 
@@ -427,7 +434,15 @@ async def _member_rebuttal_turn(
         None,
     )
     if tc is None:
-        # Model emitted some other tool — ignore the calls; treat content as final.
+        # Model emitted some other tool — log + ignore. Returning content
+        # (often empty here since the model only emitted tool_calls) lets
+        # the rebuttal continue rather than abort on a misaligned model.
+        unexpected = [t.name for t in first.tool_calls]
+        logger.warning(
+            "auto-promote member turn (member=%s) emitted non-validate_claim "
+            "tool calls and was ignored: %s",
+            getattr(member, "id", "?"), unexpected,
+        )
         return (first.content or "", [], total_in, total_out)
 
     t_exec_start = time.monotonic()
@@ -462,16 +477,23 @@ async def _member_rebuttal_turn(
         "content": (result.content_for_model or "")[:8000],
     })
 
-    follow = await query_llm(
-        model=model,
-        messages=messages,
-        system=getattr(member, "system_prompt", "") or "",
-        tools=None,
-        tool_choice="none",
-        temperature=0.3,
-        max_tokens=600,
-        timeout=120.0,
-    )
+    try:
+        follow = await query_llm(
+            model=model,
+            messages=messages,
+            system=getattr(member, "system_prompt", "") or "",
+            tools=None,
+            tool_choice="none",
+            temperature=0.3,
+            max_tokens=600,
+            timeout=120.0,
+        )
+    except Exception as e:
+        logger.warning(
+            "auto-promote member turn (member=%s) follow-up call failed: %s",
+            getattr(member, "id", "?"), e,
+        )
+        return ("", [record], total_in, total_out)
     total_in += int(follow.input_tokens or 0)
     total_out += int(follow.output_tokens or 0)
     return (follow.content or "", [record], total_in, total_out)
@@ -484,17 +506,23 @@ async def _chair_turn(
     moderator_system: str,
     user_message: str,
 ) -> tuple[str, int, int]:
-    """One chair statement. Returns (content, tokens_in, tokens_out)."""
-    resp = await query_llm(
-        model=chair_model,
-        messages=[{"role": "user", "content": user_message}],
-        system=moderator_system,
-        tools=None,
-        tool_choice="none",
-        temperature=0.2,
-        max_tokens=400,
-        timeout=120.0,
-    )
+    """One chair statement. Returns (content, tokens_in, tokens_out).
+    Returns ("", 0, 0) on LLM failure (logged) so the caller degrades
+    gracefully instead of killing the whole rebuttal."""
+    try:
+        resp = await query_llm(
+            model=chair_model,
+            messages=[{"role": "user", "content": user_message}],
+            system=moderator_system,
+            tools=None,
+            tool_choice="none",
+            temperature=0.2,
+            max_tokens=400,
+            timeout=120.0,
+        )
+    except Exception as e:
+        logger.warning("auto-promote chair turn failed: %s", e)
+        return ("", 0, 0)
     return (resp.content or "",
             int(resp.input_tokens or 0),
             int(resp.output_tokens or 0))
@@ -535,6 +563,12 @@ async def run_live_rebuttal(
     the chair's moderator system prompt per spec §9.2.3 so the chair can
     target follow-ups at the cited sources. Default ``None`` renders as
     ``[UNVERIFIED]`` (mirrors the contradiction-detector convention).
+
+    ``on_event`` is accepted for forward compatibility with the SSE event
+    stream (spec §10 R6) but is currently a no-op — surfacing rebuttal
+    events to the UI is deferred to a separate frontend pass per the P5b
+    plan's "Out of scope" section. The parameter stays so T8 callers can
+    wire it without a future signature change.
     """
     t0 = time.monotonic()
     transcript: list[dict] = []
@@ -553,6 +587,9 @@ async def run_live_rebuttal(
         )
     )
 
+    def _closed(text: str) -> bool:
+        return _REBUTTAL_CLOSED_TOKEN.lower() in (text or "").lower()
+
     # Opening chair statement.
     opening, oi, oo = await _chair_turn(
         chair_member=chair_member, chair_model=chair_model,
@@ -565,67 +602,76 @@ async def run_live_rebuttal(
         "role": "chair", "member_id": getattr(chair_member, "id", None),
         "content": opening, "tool_calls": [],
     })
+    if _closed(opening):
+        closed_early = True
+    else:
+        for round_num in range(1, max_rounds + 1):
+            # chair → A
+            chair_a_msg, ci, co = await _chair_turn(
+                chair_member=chair_member, chair_model=chair_model,
+                moderator_system=moderator_system,
+                user_message=f"Round {round_num}: address Member A. Ask them to defend or revise.",
+            )
+            total_in += ci
+            total_out += co
+            transcript.append({
+                "role": "chair", "member_id": getattr(chair_member, "id", None),
+                "content": chair_a_msg, "tool_calls": [],
+            })
+            if _closed(chair_a_msg):
+                closed_early = True
+                break
 
-    for round_num in range(1, max_rounds + 1):
-        # chair → A
-        chair_a_msg, ci, co = await _chair_turn(
-            chair_member=chair_member, chair_model=chair_model,
-            moderator_system=moderator_system,
-            user_message=f"Round {round_num}: address Member A. Ask them to defend or revise.",
-        )
-        total_in += ci
-        total_out += co
-        transcript.append({
-            "role": "chair", "member_id": getattr(chair_member, "id", None),
-            "content": chair_a_msg, "tool_calls": [],
-        })
+            a_content, a_tcs, a_in, a_out = await _member_rebuttal_turn(
+                member=member_a, model=member_a_model,
+                user_message=chair_a_msg,
+                session=session, stage=2,
+            )
+            total_in += a_in
+            total_out += a_out
+            transcript.append({
+                "role": "member_a", "member_id": getattr(member_a, "id", None),
+                "content": a_content, "tool_calls": a_tcs,
+            })
 
-        a_content, a_tcs, a_in, a_out = await _member_rebuttal_turn(
-            member=member_a, model=member_a_model,
-            user_message=chair_a_msg,
-            session=session, stage=2,
-        )
-        total_in += a_in
-        total_out += a_out
-        transcript.append({
-            "role": "member_a", "member_id": getattr(member_a, "id", None),
-            "content": a_content, "tool_calls": a_tcs,
-        })
+            # chair → B
+            chair_b_msg, cbi, cbo = await _chair_turn(
+                chair_member=chair_member, chair_model=chair_model,
+                moderator_system=moderator_system,
+                user_message=f"Round {round_num}: address Member B. Ask them to respond or concede.",
+            )
+            total_in += cbi
+            total_out += cbo
+            transcript.append({
+                "role": "chair", "member_id": getattr(chair_member, "id", None),
+                "content": chair_b_msg, "tool_calls": [],
+            })
+            if _closed(chair_b_msg):
+                closed_early = True
+                break
 
-        # chair → B
-        chair_b_msg, cbi, cbo = await _chair_turn(
-            chair_member=chair_member, chair_model=chair_model,
-            moderator_system=moderator_system,
-            user_message=f"Round {round_num}: address Member B. Ask them to respond or concede.",
-        )
-        total_in += cbi
-        total_out += cbo
-        transcript.append({
-            "role": "chair", "member_id": getattr(chair_member, "id", None),
-            "content": chair_b_msg, "tool_calls": [],
-        })
+            b_content, b_tcs, b_in, b_out = await _member_rebuttal_turn(
+                member=member_b, model=member_b_model,
+                user_message=chair_b_msg,
+                session=session, stage=2,
+            )
+            total_in += b_in
+            total_out += b_out
+            transcript.append({
+                "role": "member_b", "member_id": getattr(member_b, "id", None),
+                "content": b_content, "tool_calls": b_tcs,
+            })
 
-        b_content, b_tcs, b_in, b_out = await _member_rebuttal_turn(
-            member=member_b, model=member_b_model,
-            user_message=chair_b_msg,
-            session=session, stage=2,
-        )
-        total_in += b_in
-        total_out += b_out
-        transcript.append({
-            "role": "member_b", "member_id": getattr(member_b, "id", None),
-            "content": b_content, "tool_calls": b_tcs,
-        })
-
-        # Early-exit: any chair turn in this round emitted REBUTTAL CLOSED.
-        if _REBUTTAL_CLOSED_TOKEN.lower() in (chair_a_msg + " " + chair_b_msg).lower():
-            closed_early = True
-            break
-
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "auto-promote rebuttal complete: turns=%d closed_early=%s "
+        "tokens_in=%d tokens_out=%d elapsed=%.2fs",
+        len(transcript), closed_early, total_in, total_out, elapsed,
+    )
     return {
         "transcript": transcript,
         "tokens_in": total_in,
         "tokens_out": total_out,
-        "elapsed_seconds": time.monotonic() - t0,
+        "elapsed_seconds": elapsed,
         "closed_early": closed_early,
     }

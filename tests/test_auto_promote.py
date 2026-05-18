@@ -497,9 +497,13 @@ async def test_member_rebuttal_turn_executes_one_validate_claim_call():
 
 @pytest.mark.asyncio
 async def test_member_rebuttal_turn_caps_at_one_validate_claim_call():
-    """Spec §9.2.4: member may call validate_claim max 1 time per round. If
-    the LLM tries to call it a SECOND time in the same turn, the wrapper
-    rejects via tool_choice='none' on the follow-up call."""
+    """Spec §9.2.4: member may call validate_claim max 1 time per round.
+    Even if the model's follow-up response tries to emit ANOTHER
+    validate_claim tool_call, the structural cap (follow-up call uses
+    tools=None + tool_choice='none') means it's silently dropped — only
+    one tool_call_record lands. Also asserts the follow-up `query_llm`
+    invocation received tools=None / tool_choice='none' so a counter-based
+    refactor that relaxed the cap would fail this test."""
     from server.board import llm, tools as tools_mod
     from server.board.deliberation import auto_promote
 
@@ -515,15 +519,27 @@ async def test_member_rebuttal_turn_caps_at_one_validate_claim_call():
                 id="tc1", name="validate_claim",
                 arguments={"claim": "first"})],
         ),
-        # Second call: budget shows tool exhausted, model produces final text.
+        # Follow-up call: model TRIES to emit another validate_claim, but
+        # since we passed tool_choice="none", a well-behaved provider would
+        # return content only. We script a misbehaving model to prove the
+        # call's tool_calls are NEVER iterated/dispatched by the helper.
         llm.LLMResponse(
-            content="Final position.",
+            content="Final position after one validate.",
             model="m", input_tokens=10, output_tokens=5,
-            latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+            latency_seconds=0.1, finish_reason="stop",
+            tool_calls=[llm.ToolCall(
+                id="tc2", name="validate_claim",
+                arguments={"claim": "second (should be ignored)"})],
         ),
     ])
 
+    captured_calls: list[dict] = []
+
     async def _fake_query(*a, **kw):
+        captured_calls.append({
+            "tools": kw.get("tools"),
+            "tool_choice": kw.get("tool_choice"),
+        })
         return next(responses)
 
     async def _fake_validate(**kwargs):
@@ -550,28 +566,44 @@ async def test_member_rebuttal_turn_caps_at_one_validate_claim_call():
             user_message="Defend.",
             session=session, stage=2,
         )
-    assert content == "Final position."
-    # Exactly one validate_claim record despite two LLM iterations.
+    assert content == "Final position after one validate."
+    # Exactly one validate_claim record despite the follow-up's misbehaving
+    # tool_call — proves the structural cap is structural, not counter-based.
     assert len(tcs) == 1
+    assert len(session.tool_call_results) == 1
+    # Structural-cap proof: the second query_llm invocation was passed
+    # tools=None + tool_choice="none", so the provider couldn't dispatch
+    # another tool even if the LLM tried.
+    assert len(captured_calls) == 2
+    assert captured_calls[1]["tools"] is None
+    assert captured_calls[1]["tool_choice"] == "none"
 
 
 @pytest.mark.asyncio
 async def test_run_live_rebuttal_two_rounds_no_early_close():
     """Full mock-driven rebuttal: opening + 2 rounds × (chair→A, A, chair→B, B)
     = 1 + 8 = 9 chair/member LLM calls. Member turns produce content with no
-    tool calls. closed_early = False."""
+    tool calls. closed_early = False. Routes calls to A/B queues by
+    matching the member's system_prompt (not call order) so the test is
+    robust against an A-before-B order flip."""
     from server.board import llm
     from server.board.deliberation import auto_promote
+    from server.board.config import BoardMember
 
-    chair = _make_member("chairperson", role="chair")
-    member_a = _make_member("strategist")
-    member_b = _make_member("product")
+    chair = BoardMember(
+        id="chairperson", title="Chairperson", role="chair",
+        expertise=[], system_prompt="You are the chair (base prompt).",
+    )
+    member_a = BoardMember(
+        id="strategist", title="Strategist", role="strategist",
+        expertise=[], system_prompt="MEMBER A IDENTITY.",
+    )
+    member_b = BoardMember(
+        id="product", title="Product", role="product",
+        expertise=[], system_prompt="MEMBER B IDENTITY.",
+    )
     session = _make_session_with_persistence_field()
 
-    # Scripted responses for every LLM call in order:
-    #   opening (chair)
-    #   round 1:  chair→A | member A | chair→B | member B
-    #   round 2:  chair→A | member A | chair→B | member B
     chair_texts = [
         "Opening: contested claim is X.",
         "Member A, defend.", "Member B, respond.",
@@ -580,29 +612,19 @@ async def test_run_live_rebuttal_two_rounds_no_early_close():
     a_texts = ["A round 1", "A round 2"]
     b_texts = ["B round 1", "B round 2"]
 
-    # Interleave the expected order:
-    call_log: list[str] = []
-
     def _next_response(*a, **kw) -> llm.LLMResponse:
         sys = (kw.get("system") or "") if "system" in kw else (a[2] if len(a) > 2 else "")
-        msgs = kw.get("messages") if "messages" in kw else (a[1] if len(a) > 1 else [])
-        # Use the system prompt to pick which queue to draw from. Chair turns
-        # are dispatched with the moderator-suffixed chair system prompt
-        # (CHAIR_MODERATOR_SUFFIX includes "chairperson moderating"); member
-        # turns use the member's own system prompt ("You are a member.").
-        if "moderating" in (sys or "").lower():
+        lower = (sys or "").lower()
+        # Chair turn: moderator suffix contains "moderating".
+        if "moderating" in lower:
             text = chair_texts.pop(0)
-            call_log.append(f"chair:{text}")
+        # Route by member identity in system_prompt — no call-order coupling.
+        elif "member a identity" in lower:
+            text = a_texts.pop(0)
+        elif "member b identity" in lower:
+            text = b_texts.pop(0)
         else:
-            # Member turn — first time wakes A, second time wakes B per call order
-            # We can't easily distinguish A vs B by system_prompt in this fake;
-            # use a deterministic call-order index instead.
-            if len(a_texts) >= len(b_texts):
-                text = a_texts.pop(0)
-                call_log.append(f"a:{text}")
-            else:
-                text = b_texts.pop(0)
-                call_log.append(f"b:{text}")
+            raise AssertionError(f"unrecognized system prompt: {sys!r}")
         return llm.LLMResponse(
             content=text, model="m",
             input_tokens=5, output_tokens=3,
@@ -624,11 +646,15 @@ async def test_run_live_rebuttal_two_rounds_no_early_close():
     transcript = result["transcript"]
     # Opening + 2 rounds × 4 turns = 9 turns
     assert len(transcript) == 9
-    # Opening is chair
     assert transcript[0]["role"] == "chair"
     # Members alternate
     member_roles = [t["role"] for t in transcript if t["role"] in ("member_a", "member_b")]
     assert member_roles == ["member_a", "member_b", "member_a", "member_b"]
+    # Member content matches the identity-routed queue, not call order.
+    member_a_turns = [t["content"] for t in transcript if t["role"] == "member_a"]
+    assert member_a_turns == ["A round 1", "A round 2"]
+    member_b_turns = [t["content"] for t in transcript if t["role"] == "member_b"]
+    assert member_b_turns == ["B round 1", "B round 2"]
     assert result["tokens_in"] == 5 * 9
     assert result["tokens_out"] == 3 * 9
     assert result["closed_early"] is False
@@ -636,8 +662,9 @@ async def test_run_live_rebuttal_two_rounds_no_early_close():
 
 @pytest.mark.asyncio
 async def test_run_live_rebuttal_short_circuits_on_rebuttal_closed():
-    """Chair emits 'REBUTTAL CLOSED' in round 1's last chair statement →
-    loop breaks before starting round 2."""
+    """Chair emits 'REBUTTAL CLOSED' on the chair→B turn → loop breaks
+    BEFORE member B speaks (saving one LLM call). Transcript has 4 turns:
+    opening + chair→A + member A + chair→B (with CLOSED). Round 2 skipped."""
     from server.board import llm
     from server.board.deliberation import auto_promote
 
@@ -662,19 +689,14 @@ async def test_run_live_rebuttal_short_circuits_on_rebuttal_closed():
             content="A position.", model="m", input_tokens=1, output_tokens=1,
             latency_seconds=0.01, finish_reason="stop", tool_calls=[],
         ),
-        # chair → B (includes REBUTTAL CLOSED — short-circuit after this round)
+        # chair → B (includes REBUTTAL CLOSED — break immediately, skip member B)
         llm.LLMResponse(
             content="B, respond. REBUTTAL CLOSED.",
             model="m", input_tokens=1, output_tokens=1,
             latency_seconds=0.01, finish_reason="stop", tool_calls=[],
         ),
-        # member B
-        llm.LLMResponse(
-            content="B position.", model="m", input_tokens=1, output_tokens=1,
-            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
-        ),
-        # If round 2 starts, the next call would dequeue here and the test
-        # would fail with StopIteration — proving early exit.
+        # If member B or round 2 starts, the next call would dequeue here and
+        # the test would fail with StopIteration — proving the saved call.
     ])
 
     async def _fake(*a, **kw):
@@ -693,8 +715,90 @@ async def test_run_live_rebuttal_short_circuits_on_rebuttal_closed():
             on_event=lambda e: None,
         )
     assert result["closed_early"] is True
-    # 5 turns: opening + round1's 4 turns; round 2 skipped.
-    assert len(result["transcript"]) == 5
+    # 4 turns: opening + chair→A + member A + chair→B (with CLOSED).
+    # Member B and round 2 skipped — saving up to 5 LLM calls vs naive end-of-round check.
+    assert len(result["transcript"]) == 4
+    # No member_b turn ever recorded.
+    assert all(t["role"] != "member_b" for t in result["transcript"])
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_short_circuits_when_opening_signals_closed():
+    """Edge case: chair's opening turn emits REBUTTAL CLOSED. No rounds run."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    responses = iter([
+        llm.LLMResponse(
+            content="Both members already agree. REBUTTAL CLOSED.",
+            model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        ),
+        # No further calls expected — any next call raises StopIteration.
+    ])
+
+    async def _fake(*a, **kw):
+        return next(responses)
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_fake),
+    ):
+        result = await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="X", claim_a_text="A", claim_b_text="B",
+            session=session, max_rounds=2,
+            on_event=lambda e: None,
+        )
+    assert result["closed_early"] is True
+    assert len(result["transcript"]) == 1  # opening only
+    assert result["transcript"][0]["role"] == "chair"
+
+
+@pytest.mark.asyncio
+async def test_run_live_rebuttal_degrades_on_llm_failure():
+    """If a chair turn's LLM call raises, the rebuttal returns whatever
+    partial transcript accumulated (degraded). Critical for production:
+    the spec wants a partial REBUTTAL OUTCOME, not a kill of the whole
+    Stage 2 → Stage 3 path."""
+    from server.board.deliberation import auto_promote
+
+    chair = _make_member("chairperson", role="chair")
+    member_a = _make_member("strategist")
+    member_b = _make_member("product")
+    session = _make_session_with_persistence_field()
+
+    call_count = {"n": 0}
+
+    async def _fake(*a, **kw):
+        call_count["n"] += 1
+        # First call (opening) raises — the rebuttal must NOT propagate.
+        raise RuntimeError("provider unreachable")
+
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(side_effect=_fake),
+    ):
+        result = await auto_promote.run_live_rebuttal(
+            chair_member=chair, chair_model="m",
+            member_a=member_a, member_a_model="m",
+            member_b=member_b, member_b_model="m",
+            topic="t", claim_a_text="a", claim_b_text="b",
+            session=session, max_rounds=2,
+            on_event=lambda e: None,
+        )
+    # We get a transcript shape back, with an empty opening (LLM failed).
+    assert "transcript" in result
+    # At minimum the opening entry exists (with empty content from failure).
+    assert len(result["transcript"]) >= 1
+    assert result["transcript"][0]["content"] == ""
 
 
 @pytest.mark.asyncio
