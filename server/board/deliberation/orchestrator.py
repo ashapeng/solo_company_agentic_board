@@ -305,15 +305,17 @@ async def agentic_member_turn(
     t_start = time.monotonic()
 
     # Define _exec outside the loop; it captures member, session, on_event via closure
-    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+    async def _exec(tc: ToolCall) -> tuple[ToolCall, ToolResult, float]:
         on_event(SimpleEvent("ToolCall", member.id, tc.name, tc.arguments))
+        t_exec_start = time.monotonic()
         result = await execute_tool(
             name=tc.name, arguments=tc.arguments,
             session=session, member_id=member.id,
         )
+        elapsed = time.monotonic() - t_exec_start
         on_event(SimpleEvent("ToolResult", member.id, tc.name,
                               result.summary, result.cost_units))
-        return tc, result
+        return tc, result, elapsed
 
     _iter = 0
     _MAX_ITERS = max(budget.tool_calls_max + 4, 12)
@@ -377,11 +379,10 @@ async def agentic_member_turn(
         # Append assistant tool-call message
         messages.append(_tool_call_message(response.tool_calls, response.reasoning_content))
 
-        # Execute tool calls in parallel
-        t_call_start = time.monotonic()
+        # Execute tool calls in parallel; _exec returns per-tool elapsed so
+        # persisted records carry true per-call latency, not the gather's wall.
         results = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
-        call_elapsed = time.monotonic() - t_call_start
-        for tc, result in results:
+        for tc, result, tool_elapsed in results:
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
                 "content": result.content_for_model[:MAX_TOOL_RESULT_CHARS],
@@ -419,7 +420,7 @@ async def agentic_member_turn(
                         stage=stage,
                         tool_call=tc,
                         tool_result=result,
-                        elapsed_seconds=call_elapsed,
+                        elapsed_seconds=tool_elapsed,
                     )
                 )
 

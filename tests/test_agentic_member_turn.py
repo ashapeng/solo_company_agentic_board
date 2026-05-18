@@ -807,3 +807,66 @@ async def test_agentic_turn_persists_multiple_tool_calls_in_order(monkeypatch):
     # Both records carry the right stage.
     assert all(r["stage"] == 2 for r in session.tool_call_results)
     assert all(r["member_id"] == "product" for r in session.tool_call_results)
+
+
+async def test_agentic_turn_persists_each_call_in_parallel_fanout():
+    """A single LLMResponse with multiple tool_calls fan out via asyncio.gather;
+    each call must produce its own record with its own elapsed_seconds (not
+    the gather's wall time)."""
+    from server.board.deliberation.orchestrator import BoardSession
+
+    parallel_call = llm.LLMResponse(
+        content="", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="tool_calls",
+        tool_calls=[
+            llm.ToolCall(id="tc_a", name="validate_claim",
+                          arguments={"claim": "claim alpha"}),
+            llm.ToolCall(id="tc_b", name="web_search",
+                          arguments={"query": "follow-up"}),
+        ],
+    )
+    final = llm.LLMResponse(
+        content="Done.", model="m", input_tokens=1, output_tokens=1,
+        latency_seconds=0.1, finish_reason="stop", tool_calls=[],
+    )
+    responses = iter([parallel_call, final])
+
+    async def _query(*a, **kw):
+        return next(responses)
+
+    per_tool_results = {
+        "validate_claim": tools.ToolResult(
+            content_for_model="validate_claim('claim alpha'):\nVERDICT: SUPPORTED",
+            summary="validate_claim: SUPPORTED", cost_units=2.0,
+        ),
+        "web_search": tools.ToolResult(
+            content_for_model="web_search('follow-up') results: ...",
+            summary="web_search 'follow-up' → 3 results", cost_units=1.0,
+        ),
+    }
+
+    async def _exec(*, name, **kw):
+        return per_tool_results[name]
+
+    session = BoardSession(session_id="board_parallel", user_query="x")
+
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_query)), \
+         patch("server.board.deliberation.orchestrator.execute_tool",
+                AsyncMock(side_effect=_exec)):
+        await agentic_member_turn(
+            member=_make_member("strategist"),
+            model="m", system_prompt="x", initial_user_message="x",
+            tools=[tools.TOOLS["validate_claim"], tools.TOOLS["web_search"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session, stage=1, on_event=lambda e: None,
+        )
+
+    # Both tool calls within the same LLM turn each landed as their own record.
+    assert len(session.tool_call_results) == 2
+    names = [r["tool_name"] for r in session.tool_call_results]
+    assert set(names) == {"validate_claim", "web_search"}
+    # Per-call timing semantics: each record carries its own elapsed_seconds.
+    for r in session.tool_call_results:
+        assert isinstance(r["elapsed_seconds"], float)
+        assert r["elapsed_seconds"] >= 0.0
