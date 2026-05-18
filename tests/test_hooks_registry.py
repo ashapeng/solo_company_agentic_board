@@ -202,3 +202,55 @@ async def test_dispatch_pre_hooks_later_hook_overwrites_metadata_key(fresh_regis
     ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
     verdict = await dispatch_pre_hooks(ctx)
     assert verdict.metadata == {"shared": "second"}
+
+
+# ─── T4: dispatch_pre_hooks first-deny short-circuits ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_first_deny_returns_immediately(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def hook_a(ctx):
+        return HookVerdict("deny", "first", {"first": True})
+
+    calls: list[str] = []
+
+    def hook_b(ctx):
+        calls.append("b")
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("web_search", hook_a)
+    register_pre_hook("web_search", hook_b)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert verdict.reason == "first"
+    assert verdict.metadata == {"first": True}
+    assert calls == [], "hook_b must not run when hook_a denies"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_second_deny_after_first_allow(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def hook_a(ctx):
+        return HookVerdict("allow", None, {"a": 1})
+
+    def hook_b(ctx):
+        return HookVerdict("deny", "second", {})
+
+    register_pre_hook("web_search", hook_a)
+    register_pre_hook("web_search", hook_b)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert verdict.reason == "second"
