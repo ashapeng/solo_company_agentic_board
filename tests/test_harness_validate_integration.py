@@ -116,3 +116,37 @@ def test_cli_harness_validate_bad_config_exits_nonzero(tmp_path):
     assert result.returncode != 0
     combined = (result.stdout + result.stderr).lower()
     assert "blocked" in combined
+
+
+def test_http_harness_validate_default_returns_report(tmp_path, monkeypatch):
+    """POST /harness/validate with empty body returns the active-config report."""
+    from fastapi.testclient import TestClient
+    from server.api.app import app
+
+    # Set up harness config in tmp_path but don't chdir
+    monkeypatch.setenv("AGENTIC_BOARD_ALLOW_REMOTE", "1")
+    client = TestClient(app)
+    response = client.post("/harness/validate", json={})
+    assert response.status_code == 200
+    payload = response.json()
+    assert "readiness" in payload
+    assert payload["readiness"] in {"ready", "warning", "blocked"}
+
+
+def test_http_harness_validate_bad_candidate_returns_blocked(tmp_path, monkeypatch):
+    """POST /harness/validate with a broken candidate body returns blocked."""
+    from fastapi.testclient import TestClient
+    from server.api.app import app
+
+    # Set up harness config in tmp_path but don't chdir
+    monkeypatch.setenv("AGENTIC_BOARD_ALLOW_REMOTE", "1")
+    client = TestClient(app)
+    response = client.post(
+        "/harness/validate",
+        json={"candidate": {"stage1_max_tokens": -1}},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["readiness"] == "blocked"
+    codes = [issue["code"] for issue in payload["errors"]]
+    assert "schema.stage_tokens_non_positive" in codes

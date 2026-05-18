@@ -97,6 +97,10 @@ class HarnessReviewApprovalRequest(BaseModel):
     approve: bool = True
 
 
+class HarnessValidateRequest(BaseModel):
+    candidate: dict | None = None
+
+
 class ContinueRequest(BaseModel):
     user_input: str
 

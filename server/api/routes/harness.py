@@ -6,6 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException
 
+from server.harness.config import load_config
 from server.harness.reviews import (
     HarnessReviewError,
     apply_harness_review,
@@ -14,8 +15,9 @@ from server.harness.reviews import (
     run_harness_review,
 )
 from server.harness.shadow import watch_after_apply
+from server.harness.validate import validate_config
 
-from ..schemas import HarnessReviewApprovalRequest, HarnessReviewRunRequest
+from ..schemas import HarnessReviewApprovalRequest, HarnessReviewRunRequest, HarnessValidateRequest
 
 
 router = APIRouter()
@@ -54,3 +56,11 @@ async def apply_harness_review_endpoint(review_id: str):
         # Shadow watcher must not surface errors through the apply response.
         pass
     return result
+
+
+@router.post("/harness/validate")
+async def harness_validate_endpoint(req: HarnessValidateRequest):
+    """Spec §4.3: run the static HarnessConfig validator and return the report."""
+    candidate = req.candidate if req.candidate is not None else load_config()
+    report = validate_config(candidate)
+    return report.to_dict()
