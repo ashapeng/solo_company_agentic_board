@@ -325,3 +325,52 @@ def test_format_rebuttal_outcomes_block_renders_each_entry_with_header():
     assert "REBUTTAL OUTCOME — Topic 2" in block
     # Entries separated by a divider line of some kind.
     assert block.count("REBUTTAL OUTCOME") >= 3  # 1 header + 2 entries
+
+
+def test_format_rebuttal_outcomes_block_skips_partial_empty_entries():
+    """Mixed: one usable entry + one empty-summary entry → header + 1 entry."""
+    from server.board.deliberation.auto_promote import format_rebuttal_outcomes_block
+    out = format_rebuttal_outcomes_block([
+        {"summary": "REBUTTAL OUTCOME — A\nResolution: PARTIAL"},
+        {"summary": ""},
+    ])
+    assert "REBUTTAL OUTCOME (auto-promoted" in out  # header survived
+    # Only the usable entry was rendered (header + 1 entry).
+    assert out.count("REBUTTAL OUTCOME") == 2
+
+
+def test_format_rebuttal_outcomes_block_all_empty_returns_empty_string():
+    """If every summarizer failed, suppress the misleading header — chair
+    should not see a promise with no body."""
+    from server.board.deliberation.auto_promote import format_rebuttal_outcomes_block
+    assert format_rebuttal_outcomes_block([{"summary": ""}, {"summary": None}]) == ""
+
+
+@pytest.mark.asyncio
+async def test_summarize_rebuttal_uses_last_resolution_when_model_echoes_prompt():
+    """Model echoes the prompt's `Resolution: <RESOLVED|...>` placeholder
+    before producing its real answer → parser must skip the echo and read
+    the trailing real value."""
+    from server.board import llm
+    from server.board.deliberation import auto_promote
+
+    echoed = (
+        "I will produce the structured outcome you requested.\n"
+        "Resolution: <RESOLVED|PARTIAL|UNRESOLVED>\n"
+        "\n"
+        "REBUTTAL OUTCOME — Market sizing\n"
+        "\n"
+        "Resolution: PARTIAL\n"
+    )
+    with patch(
+        "server.board.deliberation.auto_promote.query_llm",
+        AsyncMock(return_value=llm.LLMResponse(
+            content=echoed, model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.01, finish_reason="stop", tool_calls=[],
+        )),
+    ):
+        _s, resolution, _i, _o = await auto_promote.summarize_rebuttal(
+            transcript=[], topic="t", claim_a_text="a", claim_b_text="b",
+            model="m",
+        )
+    assert resolution == "PARTIAL"

@@ -220,7 +220,12 @@ Validated claims:
   - "<claim text>" → SUPPORTED|CONTRADICTED|UNVERIFIED (rationale)"""
 
 
-_RESOLUTION_RE = re.compile(r"Resolution:\s*(\w+)", re.IGNORECASE)
+# Anchor to start-of-line + MULTILINE so a `Resolution:` substring quoted
+# inside a member's content cannot front-run the real outcome line. Iterate
+# matches from last to first below so a model that echoes the prompt's
+# `Resolution: <RESOLVED|PARTIAL|UNRESOLVED>` example before producing its
+# real answer is parsed correctly.
+_RESOLUTION_RE = re.compile(r"^\s*Resolution:\s*(\w+)", re.IGNORECASE | re.MULTILINE)
 _VALID_RESOLUTIONS = {"RESOLVED", "PARTIAL", "UNRESOLVED"}
 
 
@@ -244,12 +249,17 @@ def _render_transcript(transcript: list[dict]) -> str:
 def _parse_resolution(text: str) -> str | None:
     """Extract Resolution: <X> from summarizer output. Returns canonical
     uppercase form ∈ {RESOLVED, PARTIAL, UNRESOLVED}, or None if missing or
-    not one of the three valid values."""
-    m = _RESOLUTION_RE.search(text or "")
-    if not m:
-        return None
-    candidate = m.group(1).upper()
-    return candidate if candidate in _VALID_RESOLUTIONS else None
+    not one of the three valid values.
+
+    Walks matches from last to first so a model that echoes the prompt's
+    placeholder line (`Resolution: <RESOLVED|PARTIAL|UNRESOLVED>`) before
+    producing its real answer is parsed by the trailing real value.
+    """
+    for candidate in reversed(_RESOLUTION_RE.findall(text or "")):
+        upper = candidate.upper()
+        if upper in _VALID_RESOLUTIONS:
+            return upper
+    return None
 
 
 async def summarize_rebuttal(
@@ -297,10 +307,16 @@ async def summarize_rebuttal(
 
 def format_rebuttal_outcomes_block(rebuttals: list[dict]) -> str:
     """Render the REBUTTAL OUTCOME block(s) the chair sees in Stage 3
-    (spec §9.2.6). Empty string when no rebuttals fired, so callers can
-    drop a literal placeholder cleanly.
+    (spec §9.2.6). Empty string when no rebuttals fired OR every entry
+    has an empty summary (e.g., every summarizer call failed); callers
+    can drop a literal placeholder cleanly without showing the chair a
+    promise that has no body.
     """
-    if not rebuttals:
+    non_empty = [
+        r for r in (rebuttals or [])
+        if ((r.get("summary") or "").strip())
+    ]
+    if not non_empty:
         return ""
     lines: list[str] = [
         "───────────────────────────────────────",
@@ -308,11 +324,8 @@ def format_rebuttal_outcomes_block(rebuttals: list[dict]) -> str:
         "───────────────────────────────────────",
         "",
     ]
-    for r in rebuttals:
-        summary = (r.get("summary") or "").rstrip()
-        if not summary:
-            continue
-        lines.append(summary)
+    for r in non_empty:
+        lines.append((r.get("summary") or "").rstrip())
         lines.append("")
         lines.append("───────────────────────────────────────")
         lines.append("")
