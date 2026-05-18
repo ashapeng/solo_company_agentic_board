@@ -81,3 +81,11 @@ def test_schema_complexity_multipliers_required_keys():
     report = validate_config(cfg)
     codes = [issue.code for issue in report.errors]
     assert "schema.complexity_multipliers_missing_keys" in codes
+
+
+def test_schema_rejects_bool_max_revision_attempts():
+    """max_revision_attempts=True must be rejected even though isinstance(True, int) is True."""
+    cfg = HarnessConfig(max_revision_attempts=True)  # type: ignore[arg-type]
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "schema.max_revision_attempts_negative" in codes

@@ -141,7 +141,11 @@ def _check_schema(config: HarnessConfig, errors: list[ValidationIssue]) -> None:
                 severity="error",
             ))
 
-    if not isinstance(config.max_revision_attempts, int) or config.max_revision_attempts < 0:
+    if (
+        not isinstance(config.max_revision_attempts, int)
+        or isinstance(config.max_revision_attempts, bool)
+        or config.max_revision_attempts < 0
+    ):
         errors.append(ValidationIssue(
             code="schema.max_revision_attempts_negative",
             path="max_revision_attempts",
