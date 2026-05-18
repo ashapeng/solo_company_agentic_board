@@ -180,6 +180,7 @@ def _discover_hooks_in(package_name: str) -> int:
     """
     import importlib
     import pkgutil
+    import sys
 
     try:
         pkg = importlib.import_module(package_name)
@@ -195,7 +196,12 @@ def _discover_hooks_in(package_name: str) -> int:
             continue
         fqn = f"{package_name}.{module_info.name}"
         try:
-            importlib.import_module(fqn)
+            # Reload if already in sys.modules so register_* side effects
+            # fire again when the hooks package is reloaded (e.g. in tests).
+            if fqn in sys.modules:
+                importlib.reload(sys.modules[fqn])
+            else:
+                importlib.import_module(fqn)
         except Exception:  # noqa: BLE001
             _logger.exception("Failed to import hook module %s", fqn)
             continue

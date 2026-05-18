@@ -19,8 +19,13 @@ def tmp_db(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def fresh_registry():
-    from server.harness.hooks import _snapshot_registry, _restore_registry
+    """Snapshot + clear + restore so tests don't collide with bundled hooks."""
+    from server.harness.hooks import (
+        _snapshot_registry, _restore_registry, _pre_hooks, _post_hooks,
+    )
     snapshot = _snapshot_registry()
+    _pre_hooks.clear()
+    _post_hooks.clear()
     yield
     _restore_registry(snapshot)
 

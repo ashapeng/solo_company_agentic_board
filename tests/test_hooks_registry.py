@@ -62,9 +62,17 @@ def test_hook_verdict_deny_carries_reason():
 
 @pytest.fixture
 def fresh_registry():
-    """Snapshot + restore the registry so tests run in isolation."""
-    from server.harness.hooks import _snapshot_registry, _restore_registry
+    """Snapshot + clear + restore the registry so dispatch tests see a clean slate.
+
+    Without the clear step, bundled hooks (auto-loaded at package import) would
+    coexist with the test's hooks and pollute metadata-merge assertions.
+    """
+    from server.harness.hooks import (
+        _snapshot_registry, _restore_registry, _pre_hooks, _post_hooks,
+    )
     snapshot = _snapshot_registry()
+    _pre_hooks.clear()
+    _post_hooks.clear()
     yield
     _restore_registry(snapshot)
 
