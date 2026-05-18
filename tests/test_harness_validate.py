@@ -47,3 +47,37 @@ def test_validate_config_accepts_dict_input():
     report = validate_config({})
     # Empty dict → defaults applied → ready
     assert report.readiness in {"ready", "warning"}
+
+
+def test_schema_rejects_negative_stage_tokens():
+    """Negative stage budgets are structurally broken."""
+    cfg = HarnessConfig(stage1_max_tokens=-100)
+    report = validate_config(cfg)
+    assert report.readiness == "blocked"
+    codes = [issue.code for issue in report.errors]
+    assert "schema.stage_tokens_non_positive" in codes
+
+
+def test_schema_rejects_min_responses_below_one():
+    """min_stage1_responses must be >= 1."""
+    cfg = HarnessConfig(min_stage1_responses=0)
+    report = validate_config(cfg)
+    assert report.readiness == "blocked"
+    codes = [issue.code for issue in report.errors]
+    assert "schema.min_responses_below_one" in codes
+
+
+def test_schema_rejects_verification_threshold_out_of_range():
+    """verification_threshold ranges to floor/ceiling — error if outside."""
+    cfg = HarnessConfig(verification_threshold=0.0)
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "schema.verification_threshold_out_of_range" in codes
+
+
+def test_schema_complexity_multipliers_required_keys():
+    """complexity_multipliers must contain simple/moderate/complex."""
+    cfg = HarnessConfig(complexity_multipliers={"simple": 1.0})
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "schema.complexity_multipliers_missing_keys" in codes

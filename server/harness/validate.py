@@ -70,7 +70,9 @@ def validate_config(candidate: HarnessConfig | dict) -> ValidationReport:
     config = _coerce_to_config(candidate)
     errors: list[ValidationIssue] = []
     warnings: list[ValidationIssue] = []
-    # Future tasks add: schema, cross-ref, safety checks here.
+
+    _check_schema(config, errors)
+
     readiness = _compute_readiness(errors, warnings)
     return ValidationReport(
         ok=(readiness == "ready"),
@@ -101,3 +103,100 @@ def _compute_readiness(
     if warnings:
         return "warning"
     return "ready"
+
+
+_REQUIRED_COMPLEXITY_KEYS = {"simple", "moderate", "complex"}
+
+
+def _check_schema(config: HarnessConfig, errors: list[ValidationIssue]) -> None:
+    """Schema checks: types/ranges/required keys for top-level fields."""
+    from .tuning import (
+        VERIFICATION_THRESHOLD_CEILING,
+        VERIFICATION_THRESHOLD_FLOOR,
+    )
+
+    for stage_field in (
+        "stage1_max_tokens",
+        "stage2_max_tokens",
+        "stage3_max_tokens",
+        "stage4_max_tokens",
+        "revision_max_tokens",
+    ):
+        value = getattr(config, stage_field)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(ValidationIssue(
+                code="schema.stage_tokens_non_positive",
+                path=stage_field,
+                message=f"{stage_field} must be a positive int, got {value!r}",
+                severity="error",
+            ))
+
+    for field_name in ("min_stage1_responses", "min_stage2_responses"):
+        value = getattr(config, field_name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            errors.append(ValidationIssue(
+                code="schema.min_responses_below_one",
+                path=field_name,
+                message=f"{field_name} must be >= 1, got {value!r}",
+                severity="error",
+            ))
+
+    if not isinstance(config.max_revision_attempts, int) or config.max_revision_attempts < 0:
+        errors.append(ValidationIssue(
+            code="schema.max_revision_attempts_negative",
+            path="max_revision_attempts",
+            message=f"max_revision_attempts must be >= 0, got {config.max_revision_attempts!r}",
+            severity="error",
+        ))
+
+    threshold = config.verification_threshold
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or threshold < VERIFICATION_THRESHOLD_FLOOR
+        or threshold > VERIFICATION_THRESHOLD_CEILING
+    ):
+        errors.append(ValidationIssue(
+            code="schema.verification_threshold_out_of_range",
+            path="verification_threshold",
+            message=(
+                f"verification_threshold must be in "
+                f"[{VERIFICATION_THRESHOLD_FLOOR}, {VERIFICATION_THRESHOLD_CEILING}], "
+                f"got {threshold!r}"
+            ),
+            severity="error",
+        ))
+
+    multipliers = config.complexity_multipliers
+    if not isinstance(multipliers, dict):
+        errors.append(ValidationIssue(
+            code="schema.complexity_multipliers_not_dict",
+            path="complexity_multipliers",
+            message=f"complexity_multipliers must be a dict, got {type(multipliers).__name__}",
+            severity="error",
+        ))
+    else:
+        missing = sorted(_REQUIRED_COMPLEXITY_KEYS - set(multipliers))
+        if missing:
+            errors.append(ValidationIssue(
+                code="schema.complexity_multipliers_missing_keys",
+                path="complexity_multipliers",
+                message=f"complexity_multipliers missing required keys: {missing}",
+                severity="error",
+            ))
+
+    if not isinstance(config.per_query_type, dict):
+        errors.append(ValidationIssue(
+            code="schema.per_query_type_not_dict",
+            path="per_query_type",
+            message=f"per_query_type must be a dict, got {type(config.per_query_type).__name__}",
+            severity="error",
+        ))
+
+    if not isinstance(config.hardening, dict):
+        errors.append(ValidationIssue(
+            code="schema.hardening_not_dict",
+            path="hardening",
+            message=f"hardening must be a dict, got {type(config.hardening).__name__}",
+            severity="error",
+        ))
