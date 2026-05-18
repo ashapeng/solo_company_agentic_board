@@ -1,4 +1,4 @@
-from server.harness.config import HarnessConfig, get_config
+from server.harness.config import HarnessConfig, load_config, save_config
 
 
 def test_hardening_disagreement_threshold_default_is_four():
@@ -27,7 +27,6 @@ def test_hardening_auto_promote_enabled_default_is_false():
 
 def test_hardening_p5b_keys_round_trip_via_json(tmp_path):
     """Save + reload preserves all four P5b keys."""
-    from server.harness.config import save_config, load_config
     cfg = HarnessConfig()
     cfg.hardening["disagreement_threshold"] = 6
     cfg.hardening["auto_promote_summarizer_model"] = "qwen/qwen3.6-max-preview"
