@@ -77,6 +77,9 @@ def validate_config(candidate: HarnessConfig | dict) -> ValidationReport:
     _check_query_type_keys(config, warnings)
     _check_stage1_sections(config, errors)
     _check_hardening_models(config, errors)
+    _check_routing_pool_not_empty(config, errors)
+    _check_token_budget_bounds(config, errors)
+    _check_disagreement_threshold(config, errors)
 
     readiness = _compute_readiness(errors, warnings)
     return ValidationReport(
@@ -448,3 +451,115 @@ def _check_hardening_models(
                 ),
                 severity="error",
             ))
+
+
+def _check_routing_pool_not_empty(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    """For each per_query_type entry, ensure the routing pool isn't fully suppressed."""
+    try:
+        from server.board.roster import select_members_for_decision_type
+    except Exception:
+        return
+    known_qts = _known_query_types()
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type, qt_config in per_qt.items():
+        if query_type not in known_qts:
+            continue
+        if not isinstance(qt_config, dict):
+            continue
+        routing = qt_config.get("routing")
+        if not isinstance(routing, dict):
+            continue
+        suppressed = routing.get("suppressed_member_ids")
+        if not isinstance(suppressed, list):
+            continue
+        suppressed_set = {s for s in suppressed if isinstance(s, str)}
+        if not suppressed_set:
+            continue
+        try:
+            selection = select_members_for_decision_type(query_type)
+        except Exception:
+            continue
+        candidate_pool = set(selection.member_ids)
+        remaining = candidate_pool - suppressed_set
+        if candidate_pool and not remaining:
+            errors.append(ValidationIssue(
+                code="safety.routing_pool_empty",
+                path=f"per_query_type.{query_type}.routing.suppressed_member_ids",
+                message=(
+                    f"suppressing {sorted(suppressed_set)} empties the routing "
+                    f"pool for query_type {query_type!r} (candidates were "
+                    f"{sorted(candidate_pool)})"
+                ),
+                severity="error",
+            ))
+
+
+def _check_token_budget_bounds(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    """Per-query token budgets must stay within tuning floors/ceilings."""
+    from .tuning import TOKEN_BUDGET_CEILINGS, TOKEN_BUDGET_FLOORS
+
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type, qt_config in per_qt.items():
+        if not isinstance(qt_config, dict):
+            continue
+        token_budgets = qt_config.get("token_budgets")
+        if not isinstance(token_budgets, dict):
+            continue
+        for complexity, complexity_config in token_budgets.items():
+            if not isinstance(complexity_config, dict):
+                continue
+            for field_name, value in complexity_config.items():
+                if field_name not in TOKEN_BUDGET_FLOORS:
+                    continue
+                if not isinstance(value, int) or isinstance(value, bool):
+                    continue
+                path = (
+                    f"per_query_type.{query_type}.token_budgets."
+                    f"{complexity}.{field_name}"
+                )
+                floor = TOKEN_BUDGET_FLOORS[field_name]
+                ceiling = TOKEN_BUDGET_CEILINGS[field_name]
+                if value < floor:
+                    errors.append(ValidationIssue(
+                        code="safety.token_budget_below_floor",
+                        path=path,
+                        message=(
+                            f"{field_name}={value} is below floor {floor} "
+                            f"(see TOKEN_BUDGET_FLOORS in server/harness/tuning.py)"
+                        ),
+                        severity="error",
+                    ))
+                elif value > ceiling:
+                    errors.append(ValidationIssue(
+                        code="safety.token_budget_above_ceiling",
+                        path=path,
+                        message=(
+                            f"{field_name}={value} is above ceiling {ceiling} "
+                            f"(see TOKEN_BUDGET_CEILINGS in server/harness/tuning.py)"
+                        ),
+                        severity="error",
+                    ))
+
+
+def _check_disagreement_threshold(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    """Verify hardening.disagreement_threshold is in [1, 10]."""
+    hardening = config.hardening if isinstance(config.hardening, dict) else {}
+    threshold = hardening.get("disagreement_threshold")
+    if threshold is None:
+        return
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 1 or threshold > 10:
+        errors.append(ValidationIssue(
+            code="safety.disagreement_threshold_out_of_range",
+            path="hardening.disagreement_threshold",
+            message=(
+                f"hardening.disagreement_threshold must be an int in [1, 10], "
+                f"got {threshold!r}"
+            ),
+            severity="error",
+        ))

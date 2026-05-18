@@ -230,3 +230,71 @@ def test_xref_hardening_model_none_passes():
     report = validate_config(cfg)
     codes = [issue.code for issue in report.errors]
     assert "xref.hardening_model_unknown" not in codes
+
+
+def test_safety_suppression_empties_routing_pool_fails():
+    """If every active member for a query_type is suppressed, error out."""
+    from server.board.roster import load_roster, select_members_for_decision_type
+
+    selection = select_members_for_decision_type("strategic")
+    all_routed = list(selection.member_ids)
+    assert len(all_routed) >= 1
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"routing": {"suppressed_member_ids": all_routed}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "safety.routing_pool_empty" in codes
+
+
+def test_safety_routing_partial_suppression_passes():
+    """Suppressing only some members leaves a non-empty pool — allowed."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"routing": {"suppressed_member_ids": ["builder"]}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "safety.routing_pool_empty" not in codes
+
+
+def test_safety_stage_budget_below_floor_fails():
+    """Stage1 budget below TOKEN_BUDGET_FLOORS rejects."""
+    from server.harness.tuning import TOKEN_BUDGET_FLOORS
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {
+            "token_budgets": {
+                "simple": {"stage1_max_tokens": TOKEN_BUDGET_FLOORS["stage1_max_tokens"] - 1},
+            },
+        },
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "safety.token_budget_below_floor" in codes
+
+
+def test_safety_stage_budget_above_ceiling_fails():
+    """Stage1 budget above TOKEN_BUDGET_CEILINGS rejects."""
+    from server.harness.tuning import TOKEN_BUDGET_CEILINGS
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {
+            "token_budgets": {
+                "simple": {"stage1_max_tokens": TOKEN_BUDGET_CEILINGS["stage1_max_tokens"] + 1},
+            },
+        },
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "safety.token_budget_above_ceiling" in codes
+
+
+def test_safety_disagreement_threshold_out_of_range_fails():
+    """hardening.disagreement_threshold must be in [1, 10]."""
+    cfg = HarnessConfig()
+    cfg.hardening["disagreement_threshold"] = 99
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "safety.disagreement_threshold_out_of_range" in codes
