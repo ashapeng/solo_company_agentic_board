@@ -307,6 +307,20 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             reason            TEXT
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS hook_events (
+            session_id TEXT NOT NULL,
+            tool_name  TEXT NOT NULL,
+            action     TEXT NOT NULL,
+            reason     TEXT,
+            metadata   TEXT NOT NULL,
+            ts         TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hook_events_session_tool_ts "
+        "ON hook_events(session_id, tool_name, ts)"
+    )
 
 
 def query_outcomes(
@@ -579,3 +593,58 @@ def distribution_shift(
         "recent": {lbl: round(v, 3) for lbl, v in recent_dist.items()},
         "baseline": {lbl: round(v, 3) for lbl, v in baseline_dist.items()},
     }
+
+
+def record_hook_event(
+    *,
+    session_id: str,
+    tool_name: str,
+    action: str,
+    reason: str | None,
+    metadata: dict,
+    db_path: Path | None = None,
+) -> None:
+    """Append a row to hook_events. Called by hook dispatch and gate sites."""
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO hook_events (session_id, tool_name, action, reason, metadata, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                tool_name,
+                action,
+                reason,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _count_in_window(
+    *,
+    session_id: str,
+    tool_name: str,
+    window_seconds: int,
+    db_path: Path | None = None,
+) -> int:
+    """Count hook_events rows for (session_id, tool_name) within the last
+    `window_seconds`. Used by bundled hooks to make cap / rate-limit decisions
+    without each hook re-implementing the sqlite read.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat()
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM hook_events "
+            "WHERE session_id = ? AND tool_name = ? AND ts >= ?",
+            (session_id, tool_name, cutoff),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
