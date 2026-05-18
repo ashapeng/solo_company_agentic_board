@@ -95,6 +95,27 @@ def get_stage2_output_format() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Skill injection helper (spec §6.4)
+# ---------------------------------------------------------------------------
+
+_SKILL_DIVIDER = "\n\n---\n\n"
+
+
+def compose_system_prompt(base_prompt: str, skill_bodies: list[str]) -> str:
+    """Append member-declared skill bodies to a base system prompt.
+
+    Spec §6.4: skill bodies are appended after the member's own system
+    prompt, separated by ``\\n\\n---\\n\\n``, in the order declared in
+    member frontmatter. Skill descriptions are NOT injected — only bodies.
+    An empty ``skill_bodies`` list returns ``base_prompt`` unchanged (no
+    divider, no marker).
+    """
+    if not skill_bodies:
+        return base_prompt
+    return _SKILL_DIVIDER.join([base_prompt, *skill_bodies])
+
+
+# ---------------------------------------------------------------------------
 # Stage 1 — Independent Analysis
 # ---------------------------------------------------------------------------
 
