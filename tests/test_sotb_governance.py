@@ -499,5 +499,113 @@ class DetectQueryConflictsTest(unittest.TestCase):
         mock.assert_not_awaited()
 
 
+class ReadSotbGovernedTest(unittest.TestCase):
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_returns_md_and_empty_health_for_empty_index(self):
+        from server.memory.sotb_governance import read_sotb_governed
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text("# SOTB\n## Active Decisions\n[No decisions yet.]\n",
+                               encoding="utf-8")
+            md, health = self._run(read_sotb_governed(
+                query="q", verify=True, md_path=md_path, index_path=idx_path,
+            ))
+            self.assertIn("SOTB", md)
+            self.assertEqual(health.warnings_count if hasattr(health, "warnings_count")
+                             else health.to_dict()["warnings_count"], 0)
+
+    def test_judge_not_called_when_verify_false(self):
+        from server.memory.sotb_governance import read_sotb_governed
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text("## Active Decisions\n- X\n", encoding="utf-8")
+            mock = AsyncMock()
+            with patch("server.memory.sotb_governance.query_llm", new=mock), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True)):
+                self._run(read_sotb_governed(
+                    query="q", verify=False, md_path=md_path, index_path=idx_path,
+                ))
+            mock.assert_not_awaited()
+
+    def test_judge_not_called_when_flag_disabled(self):
+        from server.memory.sotb_governance import read_sotb_governed
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text("## Active Decisions\n- X\n", encoding="utf-8")
+            mock = AsyncMock()
+            with patch("server.memory.sotb_governance.query_llm", new=mock), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=False)):
+                self._run(read_sotb_governed(
+                    query="q", verify=True, md_path=md_path, index_path=idx_path,
+                ))
+            mock.assert_not_awaited()
+
+    def test_judge_called_when_heavy_and_flag_enabled(self):
+        from server.memory.sotb_governance import read_sotb_governed
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text("## Active Decisions\n- X\n", encoding="utf-8")
+            judge_resp = _llm_resp('{"conflicts": []}')
+            with patch("server.memory.sotb_governance.query_llm",
+                       new=AsyncMock(return_value=judge_resp)) as mock, \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True,
+                                         sotb_judge_model="qwen/test")):
+                _, health = self._run(read_sotb_governed(
+                    query="q", verify=True, md_path=md_path, index_path=idx_path,
+                ))
+            mock.assert_awaited_once()
+            self.assertEqual(health.query_conflicts, [])
+
+    def test_expired_entries_dropped_from_returned_md(self):
+        """Wires T4's compute_freshness through the governed read path."""
+        from server.memory.sotb_governance import (
+            SotbEntry, read_sotb_governed, write_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text("## Active Decisions\n- OLD\n- KEEP\n",
+                               encoding="utf-8")
+            now = datetime.now(timezone.utc)
+            past = (now - timedelta(days=1)).isoformat()
+            write_sotb_index([
+                SotbEntry(entry_id=SotbEntry.compute_entry_id("Active Decisions", "OLD"),
+                          section="Active Decisions", text="OLD",
+                          created_at="2026-01-01T00:00:00+00:00",
+                          updated_at="2026-01-01T00:00:00+00:00",
+                          confidence=0.9, expires_at=past, provenance={}),
+                SotbEntry(entry_id=SotbEntry.compute_entry_id("Active Decisions", "KEEP"),
+                          section="Active Decisions", text="KEEP",
+                          created_at="2026-05-01T00:00:00+00:00",
+                          updated_at="2026-05-01T00:00:00+00:00",
+                          confidence=0.9, expires_at=None, provenance={}),
+            ], path=idx_path)
+            with patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=False)):
+                md, health = self._run(read_sotb_governed(
+                    query="q", verify=True, md_path=md_path, index_path=idx_path,
+                ))
+            self.assertNotIn("- OLD", md)
+            self.assertIn("- KEEP", md)
+            self.assertEqual(len(health.expired), 1)
+
+
+def _cfg(**overrides):
+    """Build a minimal HarnessConfig-like object for governance tests."""
+    from server.harness.config import HarnessConfig
+    cfg = HarnessConfig()
+    cfg.hardening = {**cfg.hardening, **overrides}
+    return cfg
+
+
 if __name__ == "__main__":
     unittest.main()

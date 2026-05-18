@@ -28,6 +28,7 @@ from server.harness.config import (
 from server.harness.ledger import record_session as _record_to_ledger
 from server.memory.review import propose_memory_update
 from server.memory.sotb import read_sotb
+from server.memory.sotb_governance import read_sotb_governed
 
 from .atomizer import atomize
 from .contradiction import ContradictionFinding, detect_contradictions, format_contradictions_block
@@ -466,6 +467,9 @@ class BoardSession:
     decision: dict | None = None
     delegation_plan: dict | None = None
     verification: dict | None = None
+    # P4: SOTB governance health report (spec §8). dict-or-None mirrors
+    # `verification`. Populated by `read_sotb_governed` before Stage 3.
+    sotb_health: dict | None = None
     memory: dict | None = None
     status: str = "completed"
     intake_cards: list[dict] = field(default_factory=list)
@@ -512,6 +516,7 @@ class BoardSession:
             "decision": self.decision,
             "delegation_plan": self.delegation_plan,
             "verification": self.verification,
+            "sotb_health": self.sotb_health,
             "memory": self.memory,
             "status": self.status,
             "intake_cards": self.intake_cards,
@@ -771,6 +776,23 @@ Board decision:
 def _synthesis_has_actions(content: str) -> bool:
     lower = content.lower()
     return "### next steps" in lower or "### implementation plan" in lower
+
+
+def _format_sotb_health_block(health: dict) -> str:
+    """Render the SOTB HEALTH block for the chair's Stage 3 context."""
+    parts: list[str] = []
+    if health.get("expired"):
+        parts.append(f"- {len(health['expired'])} expired entries were dropped from this read.")
+    if health.get("low_confidence"):
+        parts.append(f"- {len(health['low_confidence'])} entries are low-confidence (< 0.5); treat with caution.")
+    if health.get("stale"):
+        parts.append(f"- {len(health['stale'])} entries are stale (> threshold days); re-confirm if load-bearing.")
+    if health.get("query_conflicts"):
+        for c in health["query_conflicts"]:
+            parts.append(f"- QUERY CONFLICT: entry {c.get('entry_id')}: {c.get('rationale')}")
+    if health.get("conflicts_logged"):
+        parts.append(f"- {len(health['conflicts_logged'])} write-time conflicts logged this session (see ledger).")
+    return "\n".join(parts) if parts else "(no warnings)"
 
 
 def _metadata_for_decision(
@@ -1740,8 +1762,14 @@ class BoardOrchestrator:
         _, _s2_warnings = compact_stage2_with_warnings(session.stage2_responses)
         session.structured_output_warnings.extend(_s2_warnings)
 
-        # Read institutional memory before synthesis
-        sotb = read_sotb()
+        # Read institutional memory before synthesis (P4: governed read).
+        # `verify=verify` is the HEAVY-tier proxy for judge gating.
+        sotb, sotb_health = await read_sotb_governed(effective_query, verify=verify)
+        session.sotb_health = sotb_health.to_dict()
+        # Append a SOTB HEALTH block to the chair context when warnings exist.
+        warnings_count = session.sotb_health.get("warnings_count", 0)
+        if warnings_count > 0:
+            sotb = sotb + "\n\n---\n## SOTB HEALTH (auto-generated)\n" + _format_sotb_health_block(session.sotb_health)
 
         # Stage 3: Chairman synthesizes everything (with SOTB context)
         session.stage3_synthesis = await self.stage3(

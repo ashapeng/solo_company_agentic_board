@@ -423,3 +423,32 @@ def test_source_quality_trap_checker_passes_when_signal_built_from_session():
 
     signals = extract_signals(session)
     assert check_signal_for_prompt(prompt, signals) is True
+
+
+def test_extract_signals_populates_sotb_health_warnings_from_session():
+    """When session.sotb_health is populated, ObservedSignals surfaces the count."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+    )
+    session.sotb_health = {
+        "expired": [{"entry_id": "a" * 12}],
+        "low_confidence": [{"entry_id": "b" * 12}, {"entry_id": "c" * 12}],
+        "stale": [],
+        "query_conflicts": [],
+        "conflicts_logged": [],
+        "warnings_count": 3,
+    }
+    signals = extract_signals(session)
+    assert signals.sotb_health_warnings == 3
+
+
+def test_extract_signals_sotb_health_warnings_defaults_zero_when_missing():
+    """Legacy session with no sotb_health attribute → signal is 0."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+    )
+    # Don't touch session.sotb_health (default None).
+    signals = extract_signals(session)
+    assert signals.sotb_health_warnings == 0

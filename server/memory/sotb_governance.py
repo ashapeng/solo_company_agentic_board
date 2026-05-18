@@ -27,6 +27,7 @@ from typing import Any
 
 from server.board.llm import query_llm  # used in T5 only; imported here so tests
                                          # can patch `server.memory.sotb_governance.query_llm`.
+from server.harness.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -518,3 +519,41 @@ async def _detect_query_conflicts(
             continue
         out.append({"entry_id": eid, "rationale": rationale})
     return out
+
+
+async def read_sotb_governed(
+    query: str, *, verify: bool,
+    md_path: Path | None = None,
+    index_path: Path | None = None,
+) -> tuple[str, SotbHealth]:
+    """§8.2: read the SOTB markdown plus a `SotbHealth` report.
+
+    `verify=True` is the HEAVY-tier proxy (matches the orchestrator's
+    atomized_claims / contradictions gating). The query-conflict LLM judge
+    runs only when `verify=True` AND `hardening.sotb_judge_enabled is True`
+    (DC6). The non-LLM freshness checks always run.
+
+    Returns `(md, health)`. The markdown has expired entries removed.
+    Never raises — provider errors in the judge return empty conflict lists.
+    """
+    mp = md_path or _SOTB_PATH
+    ip = index_path or _INDEX_PATH
+
+    md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
+    entries = read_sotb_index(md_path=mp, index_path=ip)
+
+    cfg = get_config()
+    stale_days = int(cfg.hardening.get("sotb_stale_days", 90))
+    new_md, health = compute_freshness(md=md_text, entries=entries, stale_days=stale_days)
+
+    judge_enabled = bool(cfg.hardening.get("sotb_judge_enabled", False))
+    if verify and judge_enabled and entries:
+        model = (
+            cfg.hardening.get("sotb_judge_model")
+            or cfg.hardening.get("atomizer_model", "qwen/qwen3.6-max-preview")
+        )
+        health.query_conflicts = await _detect_query_conflicts(
+            query=query, entries=entries, model=model,
+        )
+
+    return new_md, health
