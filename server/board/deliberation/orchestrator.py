@@ -66,6 +66,7 @@ class ToolBudget:
     web_search_max: int
     fetch_url_max: int
     ask_user_max: int
+    expand_peer_max: int = 0
     tool_calls_used: int = 0
     wall_seconds_used: float = 0.0
     sub_used: dict[str, int] = field(default_factory=dict)
@@ -75,18 +76,32 @@ class ToolBudget:
         "open_browser": "open_browser_max",
         "fetch_url": "fetch_url_max",
         "ask_user_clarifying_question": "ask_user_max",
+        "expand_peer": "expand_peer_max",
     }
 
     @classmethod
     def for_mode(cls, mode: str, *, member_role: str = "member") -> "ToolBudget":
         if mode == "fast":
-            return cls(0, 60, 240.0, 0, 0, 0, 1 if member_role == "chair" else 0)
+            return cls(
+                tool_calls_max=0, wall_seconds_max=60, per_call_timeout=240.0,
+                open_browser_max=0, web_search_max=0, fetch_url_max=0,
+                ask_user_max=1 if member_role == "chair" else 0,
+                expand_peer_max=0,
+            )
         if mode == "standard":
-            return cls(3, 180, 240.0, 1, 3, 2,
-                        2 if member_role == "chair" else 0)
+            return cls(
+                tool_calls_max=3, wall_seconds_max=180, per_call_timeout=240.0,
+                open_browser_max=1, web_search_max=3, fetch_url_max=2,
+                ask_user_max=2 if member_role == "chair" else 0,
+                expand_peer_max=1,
+            )
         if mode == "deep":
-            return cls(8, 480, 240.0, 3, 6, 4,
-                        3 if member_role == "chair" else 1)
+            return cls(
+                tool_calls_max=8, wall_seconds_max=480, per_call_timeout=240.0,
+                open_browser_max=3, web_search_max=6, fetch_url_max=4,
+                ask_user_max=3 if member_role == "chair" else 1,
+                expand_peer_max=1,
+            )
         raise ValueError(f"unknown mode {mode!r}; expected fast|standard|deep")
 
     def can_call(self, name: str) -> bool:
@@ -489,6 +504,12 @@ class BoardSession:
     # plain dict — see `_make_tool_call_record` for shape. Consumed by
     # `evals/signals.py::extract_signals` to populate validate_claim_verdicts.
     tool_call_results: list[dict] = field(default_factory=list)
+    # P5a: Stage 2 anonymization map. Populated by `stage2()` before fanning
+    # out to peer-review members. Keyed by letter (A, B, C, ...); value is
+    # the real member_id. Consumed by `_handle_expand_peer` in tools.py to
+    # resolve a member_letter argument back to the un-compacted Stage 1
+    # response.
+    stage2_anonymization_map: dict[str, str] = field(default_factory=dict)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -526,6 +547,7 @@ class BoardSession:
             "atomized_claims": self.atomized_claims,
             "contradictions": self.contradictions,
             "tool_call_results": self.tool_call_results,
+            "stage2_anonymization_map": self.stage2_anonymization_map,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
@@ -1145,6 +1167,7 @@ class BoardOrchestrator:
         query_type: str | None = None,
         complexity: str | None = None,
         contradictions: list[dict] | None = None,
+        session: "BoardSession | None" = None,
     ) -> list[MemberResponse]:
         self._fire(self._on_stage_start, 2, "Peer Review & Challenge")
         self._token_budget_query_type = query_type
@@ -1157,6 +1180,17 @@ class BoardOrchestrator:
 
         # Compact Stage 1 responses before passing to peer review
         compacted_s1 = compact_stage1_responses(stage1_responses, query_type=query_type)
+
+        # P5a: build the canonical letter→member_id map ONCE for the whole
+        # Stage 2 batch and stash it on the session so `_handle_expand_peer`
+        # can resolve a member_letter argument back to the un-compacted
+        # Stage 1 response. The map is built from compacted_s1 in order
+        # (matching `_anonymize_responses`' sequential A, B, C, ...).
+        if session is not None and hasattr(session, "stage2_anonymization_map"):
+            session.stage2_anonymization_map = {
+                chr(ord("A") + i): resp.member_id
+                for i, resp in enumerate(compacted_s1)
+            }
 
         # Build the PEER CONTRADICTIONS block once; it's identical across members.
         peer_contradictions_block = ""
@@ -1756,6 +1790,7 @@ class BoardOrchestrator:
             query_type=query_type,
             complexity=complexity,
             contradictions=session.contradictions,
+            session=session,
         )
 
         # Record Stage 2 JSON parse warnings
