@@ -2,15 +2,102 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import sqlite3
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .agents import AGENTS_BY_ID, AGENTS_BY_UNIT
+
+
+def _run_async_blocking(coro) -> Any:
+    """Run an async coroutine from synchronous code.
+
+    Fast path: when no event loop is running in this thread, use asyncio.run.
+    Slow path: when a loop is running, spawn a fresh loop in a worker thread.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result_box: dict[str, Any] = {}
+
+    def _worker():
+        new_loop = asyncio.new_event_loop()
+        try:
+            result_box["value"] = new_loop.run_until_complete(coro)
+        except BaseException as exc:  # noqa: BLE001
+            result_box["error"] = exc
+        finally:
+            new_loop.close()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    if "error" in result_box:
+        raise result_box["error"]
+    return result_box["value"]
+
+
+def _hook_gate_sync(
+    *,
+    session_id: str,
+    member_id: str | None,
+    request: dict[str, Any],
+) -> None:
+    """Sync façade around dispatch_pre_hooks for tasks.py wraps.
+
+    Raises HookDeniedError on deny; returns None on allow. Always records a
+    hook_events row.
+    """
+    from server.harness.hooks import (
+        HookContext, HookDeniedError, dispatch_pre_hooks,
+    )
+    from server.harness.ledger import record_hook_event
+
+    ctx = HookContext(
+        tool_name="delegated_task",
+        stage=0,
+        session_id=session_id or "anon",
+        member_id=member_id,
+        request=request,
+    )
+    verdict = _run_async_blocking(dispatch_pre_hooks(ctx))
+    record_hook_event(
+        session_id=ctx.session_id,
+        tool_name="delegated_task",
+        action=verdict.action,
+        reason=verdict.reason,
+        metadata=verdict.metadata,
+    )
+    if verdict.action == "deny":
+        raise HookDeniedError(verdict.reason or "delegated_task denied")
+
+
+def _hook_post_sync(
+    *,
+    session_id: str,
+    member_id: str | None,
+    request: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Sync façade around dispatch_post_hooks for tasks.py wraps."""
+    from server.harness.hooks import HookContext, dispatch_post_hooks
+
+    ctx = HookContext(
+        tool_name="delegated_task",
+        stage=0,
+        session_id=session_id or "anon",
+        member_id=member_id,
+        request=request,
+    )
+    _run_async_blocking(dispatch_post_hooks(ctx, result))
 
 
 DEFAULT_DB_PATH = Path("data/harness_ledger.db")
@@ -305,6 +392,16 @@ def plan_delegated_task(
     db_path: Path | None = None,
 ) -> dict[str, Any]:
     task = _load_required_task(task_id, db_path=db_path)
+    _hook_gate_sync(
+        session_id=str(task.get("session_id") or ""),
+        member_id=None,
+        request={
+            "op": "plan_delegated_task",
+            "task_id": task_id,
+            "manager_agent_id": manager_agent_id,
+            "has_subtask_plan": subtask_plan is not None,
+        },
+    )
     if task["status"] not in {"approved", "running"}:
         raise ExecutionError(f"Task must be approved before planning; current status: {task['status']}")
     if not manager_agent_id:
@@ -316,7 +413,14 @@ def plan_delegated_task(
     _validate_subtask_plan(plan, expected_manager_id=str(task.get("manager_agent_id") or ""))
     task["subtask_plan"] = plan
     task["status"] = "running"
-    return save_delegated_task(task, db_path=db_path)
+    result = save_delegated_task(task, db_path=db_path)
+    _hook_post_sync(
+        session_id=str(task.get("session_id") or ""),
+        member_id=None,
+        request={"op": "plan_delegated_task", "task_id": task_id},
+        result=result,
+    )
+    return result
 
 
 def update_delegated_task_status(
