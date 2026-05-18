@@ -31,6 +31,9 @@ class ObservedSignals:
     # Cross-member contradictions surfaced by the P2 detector (count of
     # entries in session.contradictions). Was always 0 pre-P2.
     contradictions_surfaced: int = 0
+    # P4: SOTB governance warnings (expired + low_confidence + stale +
+    # query_conflicts + conflicts_logged). Always 0 pre-P4.
+    sotb_health_warnings: int = 0
     # Count of `[UNVERIFIED]` markers in the chair synthesis (P1.2+). Used by
     # the hallucination_planted checker to credit "appropriately deferred"
     # behavior: when the chair refuses to fabricate and tags claims [UNVERIFIED]
@@ -52,6 +55,7 @@ class ObservedSignals:
             "validate_claim_verdicts": list(self.validate_claim_verdicts),
             "blinded_verifier_per_claim": list(self.blinded_verifier_per_claim),
             "contradictions_surfaced": self.contradictions_surfaced,
+            "sotb_health_warnings": self.sotb_health_warnings,
             "synthesis_unverified_count": self.synthesis_unverified_count,
             "total_cost_usd": self.total_cost_usd,
             "total_latency_seconds": self.total_latency_seconds,
@@ -69,6 +73,7 @@ class ObservedSignals:
             validate_claim_verdicts=list(d.get("validate_claim_verdicts") or []),
             blinded_verifier_per_claim=list(d.get("blinded_verifier_per_claim") or []),
             contradictions_surfaced=int(d.get("contradictions_surfaced", 0)),
+            sotb_health_warnings=int(d.get("sotb_health_warnings", 0)),
             synthesis_unverified_count=int(d.get("synthesis_unverified_count", 0)),
             total_cost_usd=float(d.get("total_cost_usd", 0.0)),
             total_latency_seconds=float(d.get("total_latency_seconds", 0.0)),
@@ -131,6 +136,9 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
         ],
         blinded_verifier_per_claim=list(verification.get("per_claim") or []),
         contradictions_surfaced=len(getattr(session, "contradictions", None) or []),
+        sotb_health_warnings=int(
+            (getattr(session, "sotb_health", None) or {}).get("warnings_count", 0)
+        ),
         synthesis_unverified_count=synthesis_unverified_count,
         total_cost_usd=float(metrics.total_cost_estimate()) if metrics else 0.0,
         total_latency_seconds=float(session.total_elapsed or 0.0),
