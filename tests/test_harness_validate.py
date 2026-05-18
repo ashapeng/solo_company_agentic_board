@@ -89,3 +89,47 @@ def test_schema_rejects_bool_max_revision_attempts():
     report = validate_config(cfg)
     codes = [issue.code for issue in report.errors]
     assert "schema.max_revision_attempts_negative" in codes
+
+
+def test_xref_model_pref_matching_known_model_passes():
+    """A model preference using a default chairman/council model is allowed."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"model_preferences": {"strategist": "deepseek/deepseek-v4-pro"}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.model_unknown" not in codes
+
+
+def test_xref_model_pref_with_known_prefix_passes():
+    """Any model with a known provider prefix is allowed (e.g. qwen/foo)."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"model_preferences": {"strategist": "qwen/qwen-mythical"}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.model_unknown" not in codes
+
+
+def test_xref_model_pref_unknown_prefix_fails():
+    """A model with no recognised prefix is rejected."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"model_preferences": {"strategist": "fakeprovider/x"}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.model_unknown" in codes
+
+
+def test_xref_openrouter_colon_prefix_allowed():
+    """openrouter:<id> with a colon, not slash, is a valid escape hatch."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"model_preferences": {"strategist": "openrouter:anthropic/foo"}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.model_unknown" not in codes

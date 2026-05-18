@@ -72,6 +72,7 @@ def validate_config(candidate: HarnessConfig | dict) -> ValidationReport:
     warnings: list[ValidationIssue] = []
 
     _check_schema(config, errors)
+    _check_model_preferences(config, errors)
 
     readiness = _compute_readiness(errors, warnings)
     return ValidationReport(
@@ -106,6 +107,74 @@ def _compute_readiness(
 
 
 _REQUIRED_COMPLEXITY_KEYS = {"simple", "moderate", "complex"}
+
+
+def _allowed_models() -> set[str]:
+    """Build the set of explicit allowed model IDs from the live project state.
+
+    The check is: a model is allowed if its ID is in this set OR its prefix
+    is in the known provider prefix set (see `_known_prefixes()`).
+    """
+    from server.board.config import (
+        get_chairman_model,
+        get_classifier_model,
+        get_council_models,
+        get_verification_model,
+    )
+    allowed: set[str] = set()
+    allowed.add(get_chairman_model())
+    allowed.add(get_classifier_model())
+    allowed.add(get_verification_model())
+    allowed.update(get_council_models())
+    return {m for m in allowed if m}
+
+
+def _known_prefixes() -> set[str]:
+    """Set of provider prefixes recognised by the LLM client."""
+    from server.board.llm import _PROVIDERS
+    return set(_PROVIDERS.keys())
+
+
+def _model_is_resolvable(model: str) -> bool:
+    """A model ID resolves if either listed explicitly or its prefix is known.
+
+    Mirrors `server.board.llm._split_model_id` semantics: `openrouter:<id>`
+    has a colon, all others use `<prefix>/<id>`.
+    """
+    if not isinstance(model, str) or not model.strip():
+        return False
+    if model in _allowed_models():
+        return True
+    if model.startswith("openrouter:"):
+        return "openrouter" in _known_prefixes()
+    if "/" in model:
+        prefix = model.split("/", 1)[0]
+        return prefix in _known_prefixes()
+    return False
+
+
+def _check_model_preferences(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    """Cross-ref every per_query_type.*.model_preferences entry."""
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type, qt_config in per_qt.items():
+        if not isinstance(qt_config, dict):
+            continue
+        prefs = qt_config.get("model_preferences")
+        if not isinstance(prefs, dict):
+            continue
+        for member_id, model in prefs.items():
+            if not _model_is_resolvable(model):
+                errors.append(ValidationIssue(
+                    code="xref.model_unknown",
+                    path=f"per_query_type.{query_type}.model_preferences.{member_id}",
+                    message=(
+                        f"model {model!r} does not resolve: not in the allowed "
+                        f"set and prefix not in {sorted(_known_prefixes())}"
+                    ),
+                    severity="error",
+                ))
 
 
 def _check_schema(config: HarnessConfig, errors: list[ValidationIssue]) -> None:
