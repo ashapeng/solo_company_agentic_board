@@ -675,3 +675,95 @@ TOOLS["validate_claim"] = Tool(
     },
     handler=_handle_validate_claim,
 )
+
+
+# ────────────── expand_peer (P5a, spec §9.1) ──────────────
+
+
+async def _handle_expand_peer(
+    *,
+    member_letter: str,
+    session: Any = None,
+    member_id: str | None = None,
+    **_unused: Any,
+) -> ToolResult:
+    """Resolve `member_letter` (A, B, C, ...) via the session's Stage 2
+    anonymization map and return the matching member's un-compacted Stage 1
+    response. Pure session-state read — no LLM call.
+
+    Failure modes (all return a `ToolResult` with `error` set; never raise):
+      - session is None or lacks the expected fields → `error="no session"`.
+      - letter not in `session.stage2_anonymization_map` → `error="unknown letter"`.
+      - resolved member_id == calling member_id → `error="self-expand not allowed"`.
+      - resolved member_id has no entry in `session.stage1_responses` →
+        `error="no stage1 response for resolved member"`.
+
+    The cap is enforced upstream by `ToolBudget.expand_peer_max` (1 per member
+    per stage in standard/deep, 0 in fast). When the cap is reached the tool is
+    filtered out of the schemas the LLM sees, so this handler never runs at
+    cap. If for some reason it does, it still succeeds — there's no per-call
+    counter inside the handler; the budget is the gate.
+    """
+    if session is None:
+        return ToolResult(
+            content_for_model="expand_peer: no session available.",
+            summary="expand_peer: no session",
+            cost_units=0.0,
+            error="no session",
+        )
+
+    letter = (member_letter or "").strip().upper()
+    if not letter:
+        return ToolResult(
+            content_for_model="expand_peer: empty member_letter.",
+            summary="expand_peer: empty letter",
+            cost_units=0.0,
+            error="empty member_letter",
+        )
+
+    amap: dict[str, str] = getattr(session, "stage2_anonymization_map", {}) or {}
+    resolved_id = amap.get(letter)
+    if resolved_id is None:
+        known = ", ".join(sorted(amap.keys())) or "(none)"
+        return ToolResult(
+            content_for_model=(
+                f"expand_peer: no member with letter {letter!r}. "
+                f"Known letters: {known}."
+            ),
+            summary=f"expand_peer: unknown letter {letter!r}",
+            cost_units=0.0,
+            error=f"unknown member_letter: {letter!r}",
+        )
+
+    if member_id is not None and resolved_id == member_id:
+        return ToolResult(
+            content_for_model=(
+                f"expand_peer: cannot expand your own response "
+                f"(letter {letter} → {resolved_id})."
+            ),
+            summary="expand_peer: self-expand blocked",
+            cost_units=0.0,
+            error="self-expand not allowed",
+        )
+
+    stage1 = getattr(session, "stage1_responses", []) or []
+    match = next((r for r in stage1 if r.member_id == resolved_id), None)
+    if match is None:
+        return ToolResult(
+            content_for_model=(
+                f"expand_peer: no stage 1 response found for resolved member "
+                f"{resolved_id!r} (letter {letter})."
+            ),
+            summary=f"expand_peer: no stage1 for {resolved_id}",
+            cost_units=0.0,
+            error="no stage1 response for resolved member",
+        )
+
+    return ToolResult(
+        content_for_model=(
+            f"expand_peer(letter={letter}) → Member {letter} "
+            f"(member_id={resolved_id}):\n{match.content}"
+        ),
+        summary=f"expand_peer {letter} → {resolved_id}",
+        cost_units=0.5,
+    )
