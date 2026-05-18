@@ -324,3 +324,56 @@ async def test_dispatch_pre_hooks_crash_short_circuits_remaining(fresh_registry)
 
     assert verdict.action == "deny"
     assert calls == []
+
+
+# ─── T6: hook timeout → deny ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_async_hook_timeout_becomes_deny(fresh_registry, monkeypatch):
+    import asyncio
+    from server.harness import hooks as hooks_mod
+    from server.harness.hooks import (
+        HookContext, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    # Shrink the timeout so the test stays under 1s wall-clock.
+    monkeypatch.setattr(hooks_mod, "_HOOK_TIMEOUT_SECONDS", 0.05)
+
+    async def slow_hook(ctx):
+        await asyncio.sleep(1.0)  # > 0.05 → must time out
+        from server.harness.hooks import HookVerdict
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("web_search", slow_hook)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "deny"
+    assert verdict.reason == "hook timeout"
+    assert verdict.metadata == {}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_sync_hook_never_times_out(fresh_registry, monkeypatch):
+    """The 5s timeout only applies to coroutines. A sync hook ignores it."""
+    import time
+    from server.harness import hooks as hooks_mod
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    monkeypatch.setattr(hooks_mod, "_HOOK_TIMEOUT_SECONDS", 0.05)
+
+    def sync_slow(ctx):
+        time.sleep(0.1)  # > timeout but sync — runs to completion
+        return HookVerdict("allow", None, {"ran": True})
+
+    register_pre_hook("web_search", sync_slow)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+
+    assert verdict.action == "allow"
+    assert verdict.metadata == {"ran": True}
