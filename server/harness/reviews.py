@@ -191,6 +191,16 @@ def apply_harness_review(review_id: str) -> dict[str, Any]:
     previous = load_config()
     previous_snapshot = _config_to_snapshot(previous)
     updated = _apply_snapshot_to_config(previous, snapshot)
+
+    # Phase 1: validate the merged candidate before persisting.
+    validation_report = validate_config(updated)
+    if validation_report.readiness == "blocked":
+        first_code = (
+            validation_report.errors[0].code
+            if validation_report.errors else "unknown"
+        )
+        raise HarnessReviewError(f"validation blocked: {first_code}")
+
     save_config(updated)
 
     snapshot_activation(
@@ -202,6 +212,7 @@ def apply_harness_review(review_id: str) -> dict[str, Any]:
     review["status"] = "applied"
     review["applied_reports"] = snapshot
     review["applied_at"] = datetime.now(timezone.utc).isoformat()
+    review["validation"] = validation_report.to_dict()
     _save_review(review)
     return review
 

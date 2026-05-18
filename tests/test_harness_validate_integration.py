@@ -43,3 +43,42 @@ def test_run_harness_review_swallows_validator_crash(tmp_path, monkeypatch):
     validation_rec = next(r for r in review["recommendations"] if r["category"] == "validation")
     assert "validation check failed" in validation_rec["summary"]
     assert "simulated validator crash" in validation_rec["details"]["error"]
+
+
+def test_apply_harness_review_refuses_blocked_snapshot(tmp_path, monkeypatch):
+    """Spec §4.3: apply must raise HarnessReviewError when blocked."""
+    monkeypatch.chdir(tmp_path)
+
+    review = run_harness_review(dry_run=True)
+    approved = approve_harness_review(review["id"], approve=True)
+
+    # Inject a snapshot whose model_assignments changes reference a bogus model.
+    approved["snapshot"]["model_assignments"] = {
+        "changes": [
+            {
+                "query_type": "strategic",
+                "member_id": "strategist",
+                "previous_model": "deepseek/deepseek-v4-pro",
+                "new_model": "fakeprovider/x",
+            }
+        ],
+    }
+    review_path = Path("data/harness_reviews") / f"{approved['id']}.json"
+    review_path.write_text(json.dumps(approved, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    with pytest.raises(HarnessReviewError) as excinfo:
+        apply_harness_review(approved["id"])
+    assert "validation blocked" in str(excinfo.value)
+    assert "xref.model_unknown" in str(excinfo.value)
+
+
+def test_apply_harness_review_allows_clean_snapshot(tmp_path, monkeypatch):
+    """A snapshot that validates as 'ready' or 'warning' must apply."""
+    monkeypatch.chdir(tmp_path)
+
+    review = run_harness_review(dry_run=True)
+    approved = approve_harness_review(review["id"], approve=True)
+
+    # Default snapshot is clean; apply must succeed.
+    result = apply_harness_review(approved["id"])
+    assert result["status"] == "applied"
