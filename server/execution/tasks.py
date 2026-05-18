@@ -304,6 +304,13 @@ def save_delegated_task(task: dict[str, Any], *, db_path: Path | None = None) ->
     if status not in TASK_STATUSES:
         raise ExecutionError(f"Invalid task status: {status}")
 
+    session_id = str(task.get("session_id") or "")
+    _hook_gate_sync(
+        session_id=session_id,
+        member_id=None,
+        request={"op": "save_delegated_task", "task_id": task_id, "status": status},
+    )
+
     now = _utc_now()
     payload = dict(task)
     payload["id"] = task_id
@@ -337,6 +344,12 @@ def save_delegated_task(task: dict[str, Any], *, db_path: Path | None = None) ->
         conn.commit()
     finally:
         conn.close()
+    _hook_post_sync(
+        session_id=session_id,
+        member_id=None,
+        request={"op": "save_delegated_task", "task_id": task_id, "status": status},
+        result=payload,
+    )
     return payload
 
 

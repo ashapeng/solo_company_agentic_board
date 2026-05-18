@@ -147,3 +147,66 @@ def test_plan_delegated_task_allow_completes_normally(tmp_db, fresh_registry):
     finally:
         conn.close()
     assert any(r[0] == "allow" for r in rows)
+
+
+# ─── T16: save_delegated_task wrap ────────────────────────────────────────
+
+
+def test_save_delegated_task_denied_raises_HookDeniedError(tmp_db, fresh_registry):
+    ledger_path, tasks_path = tmp_db
+    from server.harness.hooks import (
+        HookVerdict, HookDeniedError, register_pre_hook,
+    )
+    from server.execution.tasks import save_delegated_task
+
+    def denying(ctx):
+        return HookVerdict("deny", "save denied", {})
+
+    register_pre_hook("delegated_task", denying)
+
+    with pytest.raises(HookDeniedError) as excinfo:
+        save_delegated_task(_approved_task_payload("t16_a"), db_path=tasks_path)
+    assert "save denied" in str(excinfo.value)
+
+
+def test_save_delegated_task_denied_does_not_persist(tmp_db, fresh_registry):
+    ledger_path, tasks_path = tmp_db
+    from server.harness.hooks import (
+        HookVerdict, HookDeniedError, register_pre_hook,
+    )
+    from server.execution.tasks import save_delegated_task, get_delegated_task
+
+    def denying(ctx):
+        return HookVerdict("deny", "save denied", {})
+
+    register_pre_hook("delegated_task", denying)
+
+    with pytest.raises(HookDeniedError):
+        save_delegated_task(_approved_task_payload("t16_b"), db_path=tasks_path)
+
+    assert get_delegated_task("t16_b", db_path=tasks_path) is None
+
+
+def test_save_delegated_task_allow_persists_and_records_event(tmp_db, fresh_registry):
+    ledger_path, tasks_path = tmp_db
+    from server.harness.hooks import HookVerdict, register_pre_hook
+    from server.execution.tasks import save_delegated_task, get_delegated_task
+
+    def allowing(ctx):
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("delegated_task", allowing)
+
+    save_delegated_task(_approved_task_payload("t16_c"), db_path=tasks_path)
+    assert get_delegated_task("t16_c", db_path=tasks_path) is not None
+
+    conn = sqlite3.connect(str(ledger_path))
+    try:
+        rows = conn.execute(
+            "SELECT action FROM hook_events WHERE tool_name = 'delegated_task' "
+            "AND session_id = ?",
+            ("s_t15",),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert any(r[0] == "allow" for r in rows)

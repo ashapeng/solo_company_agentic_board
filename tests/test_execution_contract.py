@@ -101,12 +101,19 @@ class DelegationPlanContractTest(unittest.TestCase):
 class DelegatedTaskLifecycleContractTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmpdir.name) / "ledger.db"
+        self.db_path = Path(self.tmpdir.name) / "tasks.db"
+        # Redirect the ledger DB so the bundled rate-limit hook counts against a
+        # fresh tmp DB (not the shared default path) for each test.
+        from server.harness import ledger as _ledger_mod
+        self._orig_ledger_path = _ledger_mod._DEFAULT_DB_PATH
+        _ledger_mod._DEFAULT_DB_PATH = Path(self.tmpdir.name) / "ledger.db"
         self.plan = parse_delegation_plan(SYNTHESIS_WITH_DELEGATION, session_id="board_exec_test")
         record_delegation_plan(self.plan, db_path=self.db_path)
         self.task_id = self.plan["tasks"][0]["id"]
 
     def tearDown(self):
+        from server.harness import ledger as _ledger_mod
+        _ledger_mod._DEFAULT_DB_PATH = self._orig_ledger_path
         self.tmpdir.cleanup()
 
     def test_task_approval_planning_and_completion_are_persisted(self):
