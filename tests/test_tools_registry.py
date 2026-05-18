@@ -407,3 +407,44 @@ def test_tool_result_triggers_revision_ignores_content_for_model():
         cost_units=2.0,
     )
     assert r.triggers_revision is False
+
+
+def test_expand_peer_registered_with_spec_schema():
+    """Spec §9.1: TOOLS["expand_peer"] with the exact schema."""
+    assert "expand_peer" in tools.TOOLS
+    t = tools.TOOLS["expand_peer"]
+    assert t.name == "expand_peer"
+    # Description includes the cap reminder so the model self-rations.
+    assert "1 call per stage" in t.description.lower() \
+        or "capped" in t.description.lower()
+    # Parameters: member_letter (string, required), no others.
+    params = t.parameters
+    assert params["type"] == "object"
+    assert "member_letter" in params["properties"]
+    assert params["properties"]["member_letter"]["type"] == "string"
+    assert params["required"] == ["member_letter"]
+    # Handler is async + bound.
+    import inspect
+    assert inspect.iscoroutinefunction(t.handler)
+
+
+async def test_expand_peer_via_execute_tool_routes_to_handler():
+    """End-to-end: execute_tool('expand_peer', ...) dispatches to the handler."""
+    from server.board.deliberation.orchestrator import BoardSession, MemberResponse
+
+    session = BoardSession(
+        session_id="t", user_query="x",
+        stage1_responses=[
+            MemberResponse(member_id="strategist", stage=1,
+                            content="STRAT FULL.", model="m",
+                            elapsed_seconds=0.1),
+        ],
+        stage2_anonymization_map={"A": "strategist"},
+    )
+    result = await tools.execute_tool(
+        name="expand_peer",
+        arguments={"member_letter": "A"},
+        session=session, member_id="critic",
+    )
+    assert result.error is None
+    assert "STRAT FULL." in result.content_for_model

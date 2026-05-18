@@ -767,3 +767,24 @@ async def _handle_expand_peer(
         summary=f"expand_peer {letter} → {resolved_id}",
         cost_units=0.5,
     )
+
+
+TOOLS["expand_peer"] = Tool(
+    name="expand_peer",
+    description=(
+        "Read one peer member's full Stage 1 response (un-compacted). "
+        "Use only when your challenge depends on detail that may have been "
+        "stripped by compaction. Capped at 1 call per stage."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "member_letter": {
+                "type": "string",
+                "description": "The anonymized letter (A, B, C, ...) of the peer to expand",
+            }
+        },
+        "required": ["member_letter"],
+    },
+    handler=_handle_expand_peer,
+)
