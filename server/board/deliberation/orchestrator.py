@@ -489,6 +489,12 @@ class BoardSession:
     # plain dict — see `_make_tool_call_record` for shape. Consumed by
     # `evals/signals.py::extract_signals` to populate validate_claim_verdicts.
     tool_call_results: list[dict] = field(default_factory=list)
+    # P5a: Stage 2 anonymization map. Populated by `stage2()` before fanning
+    # out to peer-review members. Keyed by letter (A, B, C, ...); value is
+    # the real member_id. Consumed by `_handle_expand_peer` in tools.py to
+    # resolve a member_letter argument back to the un-compacted Stage 1
+    # response.
+    stage2_anonymization_map: dict[str, str] = field(default_factory=dict)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -526,6 +532,7 @@ class BoardSession:
             "atomized_claims": self.atomized_claims,
             "contradictions": self.contradictions,
             "tool_call_results": self.tool_call_results,
+            "stage2_anonymization_map": self.stage2_anonymization_map,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
@@ -1145,6 +1152,7 @@ class BoardOrchestrator:
         query_type: str | None = None,
         complexity: str | None = None,
         contradictions: list[dict] | None = None,
+        session: "BoardSession | None" = None,
     ) -> list[MemberResponse]:
         self._fire(self._on_stage_start, 2, "Peer Review & Challenge")
         self._token_budget_query_type = query_type
@@ -1157,6 +1165,17 @@ class BoardOrchestrator:
 
         # Compact Stage 1 responses before passing to peer review
         compacted_s1 = compact_stage1_responses(stage1_responses, query_type=query_type)
+
+        # P5a: build the canonical letter→member_id map ONCE for the whole
+        # Stage 2 batch and stash it on the session so `_handle_expand_peer`
+        # can resolve a member_letter argument back to the un-compacted
+        # Stage 1 response. The map is built from compacted_s1 in order
+        # (matching `_anonymize_responses`' sequential A, B, C, ...).
+        if session is not None and hasattr(session, "stage2_anonymization_map"):
+            session.stage2_anonymization_map = {
+                chr(ord("A") + i): resp.member_id
+                for i, resp in enumerate(compacted_s1)
+            }
 
         # Build the PEER CONTRADICTIONS block once; it's identical across members.
         peer_contradictions_block = ""
@@ -1756,6 +1775,7 @@ class BoardOrchestrator:
             query_type=query_type,
             complexity=complexity,
             contradictions=session.contradictions,
+            session=session,
         )
 
         # Record Stage 2 JSON parse warnings
