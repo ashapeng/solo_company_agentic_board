@@ -51,5 +51,34 @@ class SkillLoaderWellFormedTest(unittest.TestCase):
             self.assertEqual(skill.path, path)
 
 
+class SkillLoaderMissingTest(unittest.TestCase):
+    def test_missing_skill_warns_and_is_skipped(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            library.mkdir(parents=True, exist_ok=True)
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING") as cm:
+                skills = load_skills(["does_not_exist"], library_dir=library)
+
+            self.assertEqual(skills, [])
+            joined = " ".join(cm.output)
+            self.assertIn("does_not_exist", joined)
+            self.assertIn("not found", joined.lower())
+
+    def test_partial_load_keeps_known_skips_unknown(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            _make_skill(library, "alpha", "alpha desc", "alpha body")
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING"):
+                skills = load_skills(["alpha", "ghost"], library_dir=library)
+
+            self.assertEqual([s.name for s in skills], ["alpha"])
+
+
 if __name__ == "__main__":
     unittest.main()
