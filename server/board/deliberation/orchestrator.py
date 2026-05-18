@@ -510,6 +510,18 @@ class BoardSession:
     # resolve a member_letter argument back to the un-compacted Stage 1
     # response.
     stage2_anonymization_map: dict[str, str] = field(default_factory=dict)
+    # P5b: per-session disagreement-score (spec §9.2.2). Populated by
+    # `deliberate()` after Stage 2 regardless of whether the auto-promote
+    # rebuttal sub-pipeline fires. Persisted as "would-have-fired" telemetry
+    # for threshold tuning when `hardening.auto_promote_enabled` is False.
+    disagreement_score: int = 0
+    # P5b: auto-promoted live-rebuttal entries (spec §9.2 + design-choices
+    # supplement §4). Each entry: pair_member_ids, disagreement_score, topic,
+    # severity, transcript (raw turns), summary (REBUTTAL OUTCOME block),
+    # resolution, summarizer_model, tokens_in/out, cost_usd, started_at,
+    # elapsed_seconds, closed_early. Populated only when the flag is on AND
+    # HEAVY tier AND disagreement >= threshold AND pick_top_pairs found pairs.
+    auto_promoted_rebuttals: list[dict] = field(default_factory=list)
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -548,6 +560,8 @@ class BoardSession:
             "contradictions": self.contradictions,
             "tool_call_results": self.tool_call_results,
             "stage2_anonymization_map": self.stage2_anonymization_map,
+            "disagreement_score": self.disagreement_score,
+            "auto_promoted_rebuttals": self.auto_promoted_rebuttals,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
