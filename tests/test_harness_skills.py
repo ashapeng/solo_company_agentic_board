@@ -223,5 +223,41 @@ class SkillLoaderOrderTest(unittest.TestCase):
             self.assertEqual(skills, [])
 
 
+class SkillListTest(unittest.TestCase):
+    def test_list_skills_returns_sorted_well_formed_only(self):
+        from server.harness.skills.loader import list_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            _make_skill(library, "zebra", "z", "zbody")
+            _make_skill(library, "apple", "a", "abody")
+            broken_dir = library / "broken"
+            broken_dir.mkdir(parents=True, exist_ok=True)
+            (broken_dir / "SKILL.md").write_text("no frontmatter", encoding="utf-8")
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING"):
+                listed = list_skills(library_dir=library)
+
+            names = [s.name for s in listed]
+            self.assertEqual(names, ["apple", "zebra"])
+
+    def test_list_skills_empty_library_returns_empty(self):
+        from server.harness.skills.loader import list_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            library.mkdir(parents=True, exist_ok=True)
+
+            self.assertEqual(list_skills(library_dir=library), [])
+
+    def test_list_skills_missing_library_returns_empty(self):
+        from server.harness.skills.loader import list_skills
+
+        with TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "no_such_dir"
+
+            self.assertEqual(list_skills(library_dir=missing), [])
+
+
 if __name__ == "__main__":
     unittest.main()
