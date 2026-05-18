@@ -23,6 +23,9 @@ node_modules/
 Thumbs.db
 PROJECT_DESCRIPTION.md
 
+# Runtime SOTB sidecar (regenerated lazily; never commit)
+server/memory/sotb_index.jsonl
+
 # Override global gitignore for project docs
 !docs/architecture/
 !docs/superpowers/

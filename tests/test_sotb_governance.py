@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from server.harness.config import HarnessConfig, get_config
@@ -136,6 +138,144 @@ class ParseEntriesFromUpdateTest(unittest.TestCase):
         self.assertEqual(e.confidence, 0.7)
         self.assertEqual(e.expires_at, "2026-06-30T00:00:00+00:00")
         self.assertEqual(e.text, "Ship X.")
+
+
+class SotbIndexIOTest(unittest.TestCase):
+    def test_write_then_read_roundtrips(self):
+        from server.memory.sotb_governance import (
+            SotbEntry, read_sotb_index, write_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path = Path(td) / "sotb.md"
+            md_path.write_text("# SOTB\n", encoding="utf-8")  # empty-ish md
+            entries = [
+                SotbEntry(entry_id="aaa111bbb222", section="Active Decisions",
+                          text="ship", created_at="2026-05-17T00:00:00+00:00",
+                          updated_at="2026-05-17T00:00:00+00:00", confidence=0.8,
+                          expires_at=None, provenance={"session_id": "s", "source_member": "m"}),
+            ]
+            write_sotb_index(entries, path=idx_path)
+            read_back = read_sotb_index(md_path=md_path, index_path=idx_path)
+            self.assertEqual(len(read_back), 1)
+            self.assertEqual(read_back[0].entry_id, "aaa111bbb222")
+            self.assertEqual(read_back[0].text, "ship")
+            self.assertEqual(read_back[0].confidence, 0.8)
+
+    def test_read_with_missing_sidecar_bootstraps_from_markdown(self):
+        """First-time read on a real sotb.md with no sidecar creates one."""
+        from server.memory.sotb_governance import read_sotb_index
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text(
+                "# State of the Board\n"
+                "## Active Decisions\n"
+                "- ship MVP friday.\n"
+                "## Risk Register\n"
+                "- supplier risk.\n",
+                encoding="utf-8",
+            )
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            self.assertTrue(idx_path.exists())
+            sections = sorted(e.section for e in entries)
+            self.assertEqual(sections, ["Active Decisions", "Risk Register"])
+            texts = sorted(e.text for e in entries)
+            self.assertEqual(texts, ["ship MVP friday.", "supplier risk."])
+            for e in entries:
+                self.assertEqual(e.provenance["source_member"], "manual")
+                self.assertEqual(e.provenance["session_id"], "bootstrap")
+                self.assertEqual(e.confidence, 0.5)
+
+    def test_read_with_empty_markdown_bootstraps_to_empty_index(self):
+        """sotb.md exists but has no entries — index is empty, no crash."""
+        from server.memory.sotb_governance import read_sotb_index
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            md_path.write_text(
+                "# State of the Board\n"
+                "## Active Decisions\n"
+                "[No decisions yet.]\n",  # placeholder, no `- ` bullet
+                encoding="utf-8",
+            )
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            self.assertEqual(entries, [])
+
+    def test_read_reconciles_drift_markdown_edit_creates_new_sidecar_row(self):
+        """§8.6: hand-edit to sotb.md → next read creates a sidecar row for the
+        new entry with provenance.source_member='manual'."""
+        from server.memory.sotb_governance import (
+            SotbEntry, read_sotb_index, write_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+
+            # Sidecar knows about "X" only.
+            write_sotb_index([SotbEntry(
+                entry_id=SotbEntry.compute_entry_id("Active Decisions", "X"),
+                section="Active Decisions", text="X",
+                created_at="2026-05-17T00:00:00+00:00",
+                updated_at="2026-05-17T00:00:00+00:00", confidence=0.7,
+                expires_at=None, provenance={"session_id": "s1", "source_member": "chair"},
+            )], path=idx_path)
+
+            # Markdown has X AND a hand-added Y.
+            md_path.write_text(
+                "## Active Decisions\n- X\n- Y\n", encoding="utf-8",
+            )
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            texts = sorted(e.text for e in entries)
+            self.assertEqual(texts, ["X", "Y"])
+            y_entry = next(e for e in entries if e.text == "Y")
+            self.assertEqual(y_entry.provenance["source_member"], "manual")
+            x_entry = next(e for e in entries if e.text == "X")
+            self.assertEqual(x_entry.confidence, 0.7)  # sidecar metadata preserved
+
+    def test_read_reconciles_drift_markdown_deletion_drops_sidecar_row(self):
+        """§8.6 corollary: hand-delete from sotb.md → next read drops the
+        orphaned sidecar row (markdown is truth)."""
+        from server.memory.sotb_governance import (
+            SotbEntry, read_sotb_index, write_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "sotb.md"
+            idx_path = Path(td) / "sotb_index.jsonl"
+            write_sotb_index([
+                SotbEntry(entry_id=SotbEntry.compute_entry_id("Active Decisions", "X"),
+                          section="Active Decisions", text="X",
+                          created_at="t", updated_at="t", confidence=0.5,
+                          expires_at=None, provenance={}),
+                SotbEntry(entry_id=SotbEntry.compute_entry_id("Active Decisions", "Y"),
+                          section="Active Decisions", text="Y",
+                          created_at="t", updated_at="t", confidence=0.5,
+                          expires_at=None, provenance={}),
+            ], path=idx_path)
+            # Markdown only has X now.
+            md_path.write_text("## Active Decisions\n- X\n", encoding="utf-8")
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            self.assertEqual([e.text for e in entries], ["X"])
+
+    def test_write_is_atomic_via_tmp_rename(self):
+        """The writer should write to *.tmp and rename, not write in place.
+        Approximated by checking the file content is valid JSON-per-line
+        after write."""
+        from server.memory.sotb_governance import SotbEntry, write_sotb_index
+        with tempfile.TemporaryDirectory() as td:
+            idx_path = Path(td) / "sotb_index.jsonl"
+            entries = [SotbEntry(
+                entry_id="x" * 12, section="Active Decisions", text="t",
+                created_at="t", updated_at="t", confidence=0.5,
+                expires_at=None, provenance={},
+            )]
+            write_sotb_index(entries, path=idx_path)
+            # Each line is a valid JSON object.
+            for line in idx_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    json.loads(line)
+            # No leftover tmp file.
+            self.assertFalse((idx_path.parent / (idx_path.name + ".tmp")).exists())
 
 
 if __name__ == "__main__":

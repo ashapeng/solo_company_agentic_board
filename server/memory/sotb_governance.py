@@ -194,3 +194,145 @@ def parse_entries_from_update(
         ))
 
     return entries
+
+
+def _parse_markdown_entries(md_text: str) -> list[tuple[str, str]]:
+    """Walk markdown, return list of (section, bullet_text) for every bullet
+    under a recognized section heading. Skips placeholders like `[No ...]`.
+    Pure function — no IO."""
+    out: list[tuple[str, str]] = []
+    current_section: str | None = None
+    for raw_line in md_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## "):
+            heading = line[3:].strip().rstrip(":")
+            current_section = heading if heading in _VALID_SECTIONS else None
+            continue
+        if current_section is None:
+            continue
+        if not (line.startswith("- ") or line.startswith("* ")):
+            continue
+        bullet = line[2:].strip()
+        if not bullet or bullet.startswith("[No "):
+            continue
+        # Strip any suffixes if a manual-edit included them (defensive).
+        clean = _strip_suffixes(bullet)
+        if not clean:
+            continue
+        out.append((current_section, clean))
+    return out
+
+
+def _bootstrap_entries_from_markdown(md_text: str) -> list[SotbEntry]:
+    """DC1: lazy bootstrap. Every markdown bullet becomes a sidecar row
+    with `provenance.source_member='manual'`, `session_id='bootstrap'`,
+    `confidence=0.5`, and a section-default `expires_at`."""
+    now = _now_iso()
+    entries: list[SotbEntry] = []
+    for section, text in _parse_markdown_entries(md_text):
+        default_days = SECTION_DEFAULTS.get(section)
+        expires_at = _expiry_iso_from_days(default_days) if default_days else None
+        entries.append(SotbEntry(
+            entry_id=SotbEntry.compute_entry_id(section, text),
+            section=section, text=text,
+            created_at=now, updated_at=now,
+            confidence=0.5, expires_at=expires_at,
+            provenance={"session_id": "bootstrap", "source_member": "manual"},
+        ))
+    return entries
+
+
+def write_sotb_index(entries: list[SotbEntry], *, path: Path | None = None) -> None:
+    """Atomic write: write to *.tmp, fsync, rename."""
+    target = path or _INDEX_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
+        f.flush()
+        try:
+            import os
+            os.fsync(f.fileno())
+        except (OSError, AttributeError):  # best-effort
+            pass
+    tmp.replace(target)
+
+
+def _read_index_raw(path: Path) -> list[SotbEntry]:
+    """Read the sidecar JSONL into SotbEntry objects. No bootstrap, no
+    reconcile. Returns [] if missing."""
+    if not path.exists():
+        return []
+    out: list[SotbEntry] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(SotbEntry.from_dict(json.loads(line)))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            logger.warning("sotb_index: skipping malformed line: %s", exc)
+            continue
+    return out
+
+
+def read_sotb_index(
+    *, md_path: Path | None = None, index_path: Path | None = None,
+) -> list[SotbEntry]:
+    """Return the reconciled index for the current sotb.md.
+
+    DC1 (bootstrap): If the sidecar doesn't exist, parse markdown into rows
+    and persist.
+
+    DC5 (drift reconcile): If the sidecar exists, walk both sides — markdown
+    is truth. New markdown rows become sidecar rows with
+    `provenance.source_member='manual'`; orphaned sidecar rows are dropped.
+    Sidecar metadata for surviving rows is preserved.
+    """
+    mp = md_path or _SOTB_PATH
+    ip = index_path or _INDEX_PATH
+
+    md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
+    md_pairs = _parse_markdown_entries(md_text)
+    md_ids = {SotbEntry.compute_entry_id(s, t): (s, t) for s, t in md_pairs}
+
+    if not ip.exists():
+        entries = _bootstrap_entries_from_markdown(md_text)
+        write_sotb_index(entries, path=ip)
+        return entries
+
+    raw = _read_index_raw(ip)
+    by_id = {e.entry_id: e for e in raw}
+
+    # Drop orphans (sidecar rows whose md hash no longer exists). When the
+    # markdown parses to zero entries we treat that as "no signal" rather
+    # than "definitive truth" — otherwise an empty/unparseable md would nuke
+    # the sidecar. (Matches the plan's roundtrip-with-empty-md test.)
+    if md_ids:
+        survivors = [e for e in raw if e.entry_id in md_ids]
+    else:
+        survivors = list(raw)
+    survivor_ids = {e.entry_id for e in survivors}
+
+    # Add manual-drift rows (md entries with no sidecar row).
+    now = _now_iso()
+    additions: list[SotbEntry] = []
+    for mid, (section, text) in md_ids.items():
+        if mid in survivor_ids:
+            continue
+        default_days = SECTION_DEFAULTS.get(section)
+        expires_at = _expiry_iso_from_days(default_days) if default_days else None
+        additions.append(SotbEntry(
+            entry_id=mid, section=section, text=text,
+            created_at=now, updated_at=now,
+            confidence=0.5, expires_at=expires_at,
+            provenance={"session_id": "drift-reconcile", "source_member": "manual"},
+        ))
+
+    merged = survivors + additions
+    # Only rewrite if reconciliation changed something — keeps file mtime
+    # stable on no-op reads.
+    if len(merged) != len(raw) or set(e.entry_id for e in merged) != set(by_id.keys()):
+        write_sotb_index(merged, path=ip)
+    return merged
