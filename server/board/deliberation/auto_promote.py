@@ -6,11 +6,11 @@ contentious member pair(s), then summarizes each rebuttal into a REBUTTAL
 OUTCOME block the chair reads during Stage 3 synthesis.
 
 Public surface used by the orchestrator (`deliberate()`):
-  - compute_disagreement(stage2_responses) -> int
-  - pick_top_pairs(stage2_responses, contradictions, *, max_pairs) -> list[dict]
-  - run_live_rebuttal(*, ...) -> dict
-  - summarize_rebuttal(transcript, *, model) -> tuple[str, str | None]
-  - format_rebuttal_outcomes_block(rebuttals) -> str
+  - compute_disagreement(stage2_responses) -> int                              # implemented
+  - pick_top_pairs(stage2_responses, *, contradictions, max_pairs) -> list     # planned (T3)
+  - summarize_rebuttal(*, transcript, topic, ..., model) -> tuple              # planned (T4)
+  - format_rebuttal_outcomes_block(rebuttals) -> str                            # planned (T4)
+  - run_live_rebuttal(*, ...) -> dict                                          # planned (T5)
 
 Behind a dark-launch flag (`hardening.auto_promote_enabled: False`) so the
 cheap orchestration ships immediately and the expensive live-rebuttal loop
