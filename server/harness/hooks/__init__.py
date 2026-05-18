@@ -155,3 +155,14 @@ async def dispatch_post_hooks(ctx: HookContext, result: dict) -> None:
             _logger.exception(
                 "Post-hook %r crashed for tool %s", fn, ctx.tool_name
             )
+
+
+# ─── Exception ─────────────────────────────────────────────────────────────
+
+
+class HookDeniedError(Exception):
+    """Raised by a tool call site when dispatch_pre_hooks returns deny."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason

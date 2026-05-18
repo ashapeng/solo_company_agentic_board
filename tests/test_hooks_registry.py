@@ -485,3 +485,24 @@ async def test_dispatch_post_hooks_timeout_is_logged_not_raised(fresh_registry, 
     await dispatch_post_hooks(ctx, {"results": []})
 
     assert calls == ["later"], "timeout in earlier hook must not block later hooks"
+
+
+# ─── T8: HookDeniedError ───────────────────────────────────────────────────
+
+
+def test_hook_denied_error_is_exception_subclass():
+    from server.harness.hooks import HookDeniedError
+    assert issubclass(HookDeniedError, Exception)
+
+
+def test_hook_denied_error_carries_reason_str():
+    from server.harness.hooks import HookDeniedError
+    err = HookDeniedError("cap exceeded")
+    assert str(err) == "cap exceeded"
+
+
+def test_hook_denied_error_carries_reason_attribute():
+    """Call sites and tests may want structured access without parsing str()."""
+    from server.harness.hooks import HookDeniedError
+    err = HookDeniedError("rate limited")
+    assert err.reason == "rate limited"
