@@ -141,3 +141,34 @@ class LoaderSkillsParsingTest(unittest.TestCase):
 
             self.assertEqual(len(members), 1)
             self.assertEqual(members[0].skills, ["pricing_research"])
+
+
+class LoadedMembersDeclareSkillsTest(unittest.TestCase):
+    def test_strategist_declares_pricing_research(self):
+        from server.board.config import get_members_by_id
+
+        members = get_members_by_id()
+        strategist = members.get("strategist")
+        self.assertIsNotNone(strategist, "strategist member must exist")
+        self.assertIn("pricing_research", strategist.skills)
+
+    def test_researcher_declares_jtbd_interview(self):
+        from server.board.config import get_members_by_id
+
+        members = get_members_by_id()
+        researcher = members.get("researcher")
+        self.assertIsNotNone(researcher, "researcher member must exist")
+        self.assertIn("jtbd_interview", researcher.skills)
+
+    def test_other_members_have_no_skills_declared(self):
+        from server.board.config import get_board_members
+
+        excluded = {"strategist", "researcher"}
+        for member in get_board_members():
+            if member.id in excluded:
+                continue
+            self.assertEqual(
+                member.skills,
+                [],
+                f"member {member.id!r} has unexpected skills: {member.skills}",
+            )

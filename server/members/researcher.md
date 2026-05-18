@@ -7,6 +7,7 @@ priority: 80
 tags: [customer, research, interviews, personas, jtbd]
 model_override: null
 evidence_required: true
+skills: [jtbd_interview]
 intake:
   clarifying_question: "Which customers have already shown this pain through behavior or spend?"
   immediate_concern: "No customer evidence has been supplied."

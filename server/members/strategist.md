@@ -7,6 +7,7 @@ priority: 90
 tags: [strategy, market, evidence, competition, gtm]
 model_override: null
 evidence_required: true
+skills: [pricing_research]
 intake:
   clarifying_question: "Which seller segment and market wedge should this target first?"
   immediate_concern: "Market and competitive assumptions are not yet grounded."
