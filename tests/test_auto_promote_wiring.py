@@ -354,3 +354,98 @@ async def test_live_path_skipped_when_verify_false(monkeypatch):
     assert session.disagreement_score >= 4  # always computed
     assert fired["called"] is False
     assert session.auto_promoted_rebuttals == []
+
+
+@pytest.mark.asyncio
+async def test_live_path_primary_passes_evidence_refs_to_chair(monkeypatch):
+    """Primary path: when a contradiction matches the picked pair, the
+    orchestrator extracts evidence_refs from claim_a / claim_b and passes
+    them through to run_live_rebuttal so the chair can target follow-ups
+    at cited sources (spec §9.2.3). Pre-fix: evidence_refs were dropped
+    and chair always saw [UNVERIFIED]."""
+    from server.board.deliberation import auto_promote, orchestrator as orch_mod
+    from server.board.deliberation.orchestrator import BoardOrchestrator, MemberResponse
+    from server.board.deliberation.verification import VerificationResult
+
+    orch = BoardOrchestrator()
+    orch.chairman_model = "m"
+
+    cfg = orch_mod.get_config()
+    monkeypatch.setitem(cfg.hardening, "auto_promote_enabled", True)
+    monkeypatch.setitem(cfg.hardening, "disagreement_threshold", 4)
+
+    s1 = [MemberResponse(member_id="strategist", stage=1, content="x", model="m", elapsed_seconds=0.01)]
+    s2 = [MemberResponse(member_id="strategist", stage=2,
+                          content="[Challenge] x\n[Challenge] y\n[Challenge] z\n[Challenge] w\nChanged because z",
+                          model="m", elapsed_seconds=0.01)]
+
+    # Seed a contradiction with explicit evidence_refs on both claims.
+    fake_contradictions = [{
+        "topic": "market growth",
+        "claim_a": {"member_id": "strategist", "text": "20% YoY",
+                     "evidence_refs": ["https://bloomberg.com/a"]},
+        "claim_b": {"member_id": "product", "text": "10% YoY",
+                     "evidence_refs": ["https://reuters.com/b", "https://wsj.com/c"]},
+        "severity": "load_bearing",
+    }]
+
+    async def _fake_stage1(*a, **kw): return s1
+    async def _fake_stage2(*a, **kw):
+        if "session" in kw and kw["session"] is not None:
+            kw["session"].contradictions = list(fake_contradictions)
+        return s2
+    async def _fake_stage3(*a, **kw):
+        return MemberResponse(member_id="chairperson", stage=3, content="synth",
+                              model="m", elapsed_seconds=0.01)
+    async def _fake_stage4(*a, **kw): return None
+    async def _fake_atomize(*a, **kw): return {}
+    async def _fake_evidence(*a, **kw): return ({}, {})
+    async def _fake_sotb_gov(*a, **kw):
+        from server.memory.sotb_governance import SotbHealth
+        return ("", SotbHealth())
+    async def _fake_delegate(*a, **kw):
+        return {"session_id": "t", "tasks": [], "warnings": [], "requires_approval": True,
+                "structured_output_failed": False, "truncated": False}
+    async def _fake_verify(**kw):
+        return VerificationResult(score=10, passed=True)
+
+    monkeypatch.setattr(orch, "stage1", _fake_stage1)
+    monkeypatch.setattr(orch, "stage2", _fake_stage2)
+    monkeypatch.setattr(orch, "stage3", _fake_stage3)
+    monkeypatch.setattr(orch, "stage4_secretary_brief", _fake_stage4)
+    monkeypatch.setattr(orch, "stage0_intake", lambda *a, **kw: ([], {"status": "not_required", "answers": {}}))
+    monkeypatch.setattr(orch, "_collect_member_evidence", _fake_evidence)
+    monkeypatch.setattr(orch, "_atomize_stage1", _fake_atomize)
+    monkeypatch.setattr(orch, "build_delegation_plan", _fake_delegate)
+    monkeypatch.setattr(orch_mod, "read_sotb_governed", _fake_sotb_gov)
+    monkeypatch.setattr(orch_mod, "propose_memory_update",
+                        lambda *a, **kw: {"proposed_sotb_update": None})
+    monkeypatch.setattr("server.board.deliberation.verification.verify_synthesis",
+                        _fake_verify)
+
+    # Capture run_live_rebuttal kwargs to verify evidence_refs flowed through.
+    captured: dict = {}
+    async def _capture_rebuttal(**kw):
+        captured.update(kw)
+        return {
+            "transcript": [{"role": "chair", "member_id": "chairperson",
+                             "content": "open", "tool_calls": []}],
+            "tokens_in": 1, "tokens_out": 1,
+            "elapsed_seconds": 0.01, "closed_early": False,
+        }
+    async def _fake_summarize(**kw):
+        return ("REBUTTAL OUTCOME — market growth\nResolution: PARTIAL", "PARTIAL", 5, 3)
+
+    monkeypatch.setattr(auto_promote, "run_live_rebuttal", _capture_rebuttal)
+    monkeypatch.setattr(auto_promote, "summarize_rebuttal", _fake_summarize)
+
+    await orch.deliberate("q", skip_classify=True, verify=True)
+
+    # The orchestrator must have passed the contradiction's evidence_refs through.
+    assert captured.get("claim_a_evidence_refs") == ["https://bloomberg.com/a"]
+    assert captured.get("claim_b_evidence_refs") == [
+        "https://reuters.com/b", "https://wsj.com/c",
+    ]
+    # And the claim texts too.
+    assert captured.get("claim_a_text") == "20% YoY"
+    assert captured.get("claim_b_text") == "10% YoY"

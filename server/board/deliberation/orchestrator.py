@@ -1858,12 +1858,17 @@ class BoardOrchestrator:
                         "skipping this rebuttal.", a_id, b_id,
                     )
                     continue
-                # Locate claim texts for the moderator prompt. Primary path:
-                # use the contradiction entry that spawned this pair. Fallback
-                # path (no contradictions list): use the topic verbatim for
-                # both sides — best signal we have.
+                # Locate claim texts AND evidence_refs for the moderator prompt.
+                # Primary path: use the contradiction entry that spawned this
+                # pair (carries .text and .evidence_refs on each claim dict —
+                # P2's AtomizedClaim.to_dict() shape). Fallback path (no
+                # contradictions list, fallback pair picker): use the topic
+                # verbatim for both sides; evidence_refs default to None →
+                # render as [UNVERIFIED] in the chair prompt.
                 claim_a_text = _pair.get("topic", "")
                 claim_b_text = _pair.get("topic", "")
+                claim_a_refs: list[str] | None = None
+                claim_b_refs: list[str] | None = None
                 for c in session.contradictions or []:
                     if (
                         (c.get("claim_a") or {}).get("member_id") in (a_id, b_id)
@@ -1872,6 +1877,8 @@ class BoardOrchestrator:
                     ):
                         claim_a_text = (c.get("claim_a") or {}).get("text", "") or claim_a_text
                         claim_b_text = (c.get("claim_b") or {}).get("text", "") or claim_b_text
+                        claim_a_refs = (c.get("claim_a") or {}).get("evidence_refs")
+                        claim_b_refs = (c.get("claim_b") or {}).get("evidence_refs")
                         break
                 started_at = datetime.now(timezone.utc).isoformat()
                 rebuttal = await _auto_promote.run_live_rebuttal(
@@ -1882,7 +1889,12 @@ class BoardOrchestrator:
                     topic=_pair.get("topic", ""),
                     claim_a_text=claim_a_text,
                     claim_b_text=claim_b_text,
+                    claim_a_evidence_refs=claim_a_refs,
+                    claim_b_evidence_refs=claim_b_refs,
                     session=session, max_rounds=2,
+                    # on_event hook is the SSE seam (spec §10 R6); UI surfacing
+                    # is deferred to a separate frontend pass per the P5b plan's
+                    # "Out of scope" section, so we pass a no-op here.
                     on_event=lambda e: None,
                 )
                 summary_text, resolution, sum_in, sum_out = await _auto_promote.summarize_rebuttal(
