@@ -188,3 +188,123 @@ def test_expand_peer_cap_message_via_budget_filter():
     names = [t["function"]["name"] for t in visible]
     assert "web_search" in names
     assert "expand_peer" not in names
+
+
+# ─── T5: integration through agentic_member_turn ────────────────────────────
+
+
+def _make_member(member_id="critic"):
+    return BoardMember(
+        id=member_id, title="Devil's Advocate", role="critic",
+        expertise=[], system_prompt="You challenge peers.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_agentic_turn_expand_peer_end_to_end():
+    """Stage 2: critic's first LLM turn requests expand_peer(A); second turn
+    receives the un-compacted text and produces final analysis."""
+    responses = iter([
+        llm.LLMResponse(
+            content="", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(
+                id="tc_ep", name="expand_peer",
+                arguments={"member_letter": "A"})],
+        ),
+        llm.LLMResponse(
+            content="After reading Member A's full response, I challenge: ...",
+            model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+            finish_reason="stop", tool_calls=[],
+        ),
+    ])
+
+    session = BoardSession(
+        session_id="t", user_query="x",
+        stage1_responses=[
+            _resp("strategist", "STRATEGIST FULL un-compacted analysis."),
+            _resp("product", "PRODUCT FULL un-compacted analysis."),
+        ],
+        stage2_anonymization_map={"A": "strategist", "B": "product"},
+    )
+
+    async def _fake_query(*a, **kw):
+        return next(responses)
+
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_fake_query)):
+        result = await agentic_member_turn(
+            member=_make_member("critic"),
+            model="m",
+            system_prompt="x",
+            initial_user_message="Peer review.",
+            tools=[tools.TOOLS["expand_peer"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session,
+            stage=2,
+            on_event=lambda e: None,
+        )
+
+    # Final analysis appears in result.content
+    assert "challenge" in result.content.lower()
+    # Tool call landed in the persistence hook (P-Persist Task 4 free ride)
+    assert len(session.tool_call_results) == 1
+    rec = session.tool_call_results[0]
+    assert rec["tool_name"] == "expand_peer"
+    assert rec["arguments"] == {"member_letter": "A"}
+    assert rec["verdict"] is None  # only validate_claim sets verdicts
+    assert rec["error"] is None
+    # The handler's content_for_model carried the un-compacted text
+    assert "STRATEGIST FULL un-compacted analysis." in rec["content_for_model"]
+
+
+@pytest.mark.asyncio
+async def test_agentic_turn_expand_peer_second_call_blocked_by_budget():
+    """Member calls expand_peer twice; second call is filtered out of the
+    schemas the LLM sees → LLM is forced to terminate (no tool_calls)."""
+    responses = iter([
+        # Turn 1: call expand_peer(A) — succeeds, consumes the cap
+        llm.LLMResponse(
+            content="", model="m", input_tokens=1, output_tokens=1,
+            latency_seconds=0.1, finish_reason="tool_calls",
+            tool_calls=[llm.ToolCall(
+                id="tc_1", name="expand_peer",
+                arguments={"member_letter": "A"})],
+        ),
+        # Turn 2: model can no longer see expand_peer in the schemas, so it
+        # produces final analysis instead of another call.
+        llm.LLMResponse(
+            content="Wrapping up after one expansion.",
+            model="m", input_tokens=1, output_tokens=1, latency_seconds=0.1,
+            finish_reason="stop", tool_calls=[],
+        ),
+    ])
+
+    session = BoardSession(
+        session_id="t", user_query="x",
+        stage1_responses=[_resp("strategist", "STRAT FULL.")],
+        stage2_anonymization_map={"A": "strategist"},
+    )
+
+    async def _fake_query(*a, **kw):
+        return next(responses)
+
+    with patch("server.board.deliberation.orchestrator.query_llm",
+               AsyncMock(side_effect=_fake_query)):
+        result = await agentic_member_turn(
+            member=_make_member("critic"),
+            model="m",
+            system_prompt="x",
+            initial_user_message="Peer review.",
+            tools=[tools.TOOLS["expand_peer"]],
+            budget=ToolBudget.for_mode("standard"),
+            session=session,
+            stage=2,
+            on_event=lambda e: None,
+        )
+
+    assert result.content == "Wrapping up after one expansion."
+    # Exactly one call landed.
+    assert sum(
+        1 for r in session.tool_call_results if r["tool_name"] == "expand_peer"
+    ) == 1
