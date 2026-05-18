@@ -178,5 +178,50 @@ class SkillBodyCapTest(unittest.TestCase):
         self.assertEqual(TRUNCATION_MARKER, "[…truncated…]")
 
 
+class SkillLoaderOrderTest(unittest.TestCase):
+    def test_load_skills_returns_request_order(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            _make_skill(library, "first", "1st", "first body")
+            _make_skill(library, "second", "2nd", "second body")
+            _make_skill(library, "third", "3rd", "third body")
+
+            skills = load_skills(
+                ["third", "first", "second"],
+                library_dir=library,
+            )
+
+            self.assertEqual([s.name for s in skills], ["third", "first", "second"])
+
+    def test_unknown_interleaved_skips_only_unknown(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            _make_skill(library, "alpha", "a", "abody")
+            _make_skill(library, "gamma", "g", "gbody")
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING"):
+                skills = load_skills(
+                    ["alpha", "beta", "gamma", "delta"],
+                    library_dir=library,
+                )
+
+            self.assertEqual([s.name for s in skills], ["alpha", "gamma"])
+
+    def test_empty_names_returns_empty_list_no_warnings(self):
+        from server.harness.skills.loader import load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            library.mkdir(parents=True, exist_ok=True)
+
+            skills = load_skills([], library_dir=library)
+
+            self.assertEqual(skills, [])
+
+
 if __name__ == "__main__":
     unittest.main()
