@@ -130,3 +130,28 @@ async def dispatch_pre_hooks(ctx: HookContext) -> HookVerdict:
             return verdict
         merged_metadata = {**merged_metadata, **verdict.metadata}
     return HookVerdict(action="allow", reason=None, metadata=merged_metadata)
+
+
+async def _await_if_needed_post(fn: PostHook, ctx: HookContext, result: dict) -> None:
+    out = fn(ctx, result)
+    if inspect.isawaitable(out):
+        await asyncio.wait_for(out, timeout=_HOOK_TIMEOUT_SECONDS)
+
+
+async def dispatch_post_hooks(ctx: HookContext, result: dict) -> None:
+    """Fire every post-hook registered for ctx.tool_name. No short-circuit.
+
+    Exceptions and timeouts are logged via logging.exception and dropped;
+    the call already happened, so the dispatcher cannot meaningfully fail.
+    """
+    for fn in _post_hooks.get(ctx.tool_name, []):
+        try:
+            await _await_if_needed_post(fn, ctx, result)
+        except asyncio.TimeoutError:
+            _logger.exception(
+                "Post-hook %r timed out for tool %s", fn, ctx.tool_name
+            )
+        except Exception:  # noqa: BLE001
+            _logger.exception(
+                "Post-hook %r crashed for tool %s", fn, ctx.tool_name
+            )

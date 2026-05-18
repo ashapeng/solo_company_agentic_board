@@ -377,3 +377,111 @@ async def test_dispatch_pre_hooks_sync_hook_never_times_out(fresh_registry, monk
 
     assert verdict.action == "allow"
     assert verdict.metadata == {"ran": True}
+
+
+# ─── T7: dispatch_post_hooks ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_post_hooks_no_hooks_is_noop(fresh_registry):
+    from server.harness.hooks import HookContext, dispatch_post_hooks
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    # Must not raise.
+    await dispatch_post_hooks(ctx, {"ok": True})
+
+
+@pytest.mark.asyncio
+async def test_dispatch_post_hooks_all_fire(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, dispatch_post_hooks, register_post_hook,
+    )
+
+    calls: list[str] = []
+
+    def hook_a(ctx, result):
+        calls.append("a")
+
+    def hook_b(ctx, result):
+        calls.append("b")
+
+    register_post_hook("web_search", hook_a)
+    register_post_hook("web_search", hook_b)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    await dispatch_post_hooks(ctx, {"results": []})
+
+    assert calls == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_post_hooks_supports_async(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, dispatch_post_hooks, register_post_hook,
+    )
+
+    calls: list[str] = []
+
+    async def hook(ctx, result):
+        calls.append("ran")
+
+    register_post_hook("web_search", hook)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    await dispatch_post_hooks(ctx, {"results": []})
+
+    assert calls == ["ran"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_post_hooks_exception_is_logged_not_raised(fresh_registry, caplog):
+    import logging
+    from server.harness.hooks import (
+        HookContext, dispatch_post_hooks, register_post_hook,
+    )
+
+    def crashy(ctx, result):
+        raise ValueError("post kaboom")
+
+    calls: list[str] = []
+
+    def later(ctx, result):
+        calls.append("later")
+
+    register_post_hook("web_search", crashy)
+    register_post_hook("web_search", later)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    with caplog.at_level(logging.ERROR, logger="server.harness.hooks"):
+        await dispatch_post_hooks(ctx, {"results": []})
+
+    assert calls == ["later"], "later hook must still fire after earlier crash"
+    assert any("post kaboom" in str(rec.exc_info) or "post kaboom" in rec.message
+               for rec in caplog.records), "crash traceback should be logged"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_post_hooks_timeout_is_logged_not_raised(fresh_registry, monkeypatch):
+    import asyncio
+    from server.harness import hooks as hooks_mod
+    from server.harness.hooks import (
+        HookContext, dispatch_post_hooks, register_post_hook,
+    )
+
+    monkeypatch.setattr(hooks_mod, "_HOOK_TIMEOUT_SECONDS", 0.05)
+
+    async def slow(ctx, result):
+        await asyncio.sleep(1.0)
+
+    calls: list[str] = []
+
+    def later(ctx, result):
+        calls.append("later")
+
+    register_post_hook("web_search", slow)
+    register_post_hook("web_search", later)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    await dispatch_post_hooks(ctx, {"results": []})
+
+    assert calls == ["later"], "timeout in earlier hook must not block later hooks"
