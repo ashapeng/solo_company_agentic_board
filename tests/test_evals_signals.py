@@ -297,3 +297,129 @@ def test_board_session_to_dict_includes_tool_call_results_roundtrip():
     d = session.to_dict()
     assert "tool_call_results" in d
     assert d["tool_call_results"] == [entry]
+
+
+def test_extract_signals_populates_validate_claim_verdicts_from_session():
+    """When session.tool_call_results carries validate_claim entries,
+    extract_signals surfaces them on ObservedSignals.validate_claim_verdicts
+    in the shape the checker expects (claim, verdict, rationale)."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        tool_call_results=[
+            {
+                "member_id": "strategist", "stage": 1,
+                "tool_name": "validate_claim", "tool_call_id": "tc_1",
+                "arguments": {"claim": "average conversion rate from AI demo signup to paid is 8%"},
+                "summary": "validate_claim: UNVERIFIED",
+                "content_for_model": "VERDICT: SUPPORTED ... [SOURCE-AUTHORITY DOWNGRADE] ...",
+                "verdict": "UNVERIFIED",
+                "error": None, "elapsed_seconds": 1.0,
+                "timestamp": "2026-05-17T00:00:00+00:00",
+            },
+        ],
+    )
+    signals = extract_signals(session)
+    assert len(signals.validate_claim_verdicts) == 1
+    entry = signals.validate_claim_verdicts[0]
+    assert entry["claim"] == "average conversion rate from AI demo signup to paid is 8%"
+    assert entry["verdict"] == "UNVERIFIED"
+    assert "validate_claim" in entry["rationale"] or entry["rationale"] != ""
+
+
+def test_extract_signals_skips_non_validate_claim_tool_results():
+    """web_search / fetch_url / open_browser entries on tool_call_results
+    are NOT surfaced as validate_claim_verdicts."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        tool_call_results=[
+            {"member_id": "x", "stage": 1, "tool_name": "web_search",
+             "tool_call_id": "tc_1", "arguments": {"query": "q"},
+             "summary": "web_search 'q' → 3 results",
+             "content_for_model": "...", "verdict": None, "error": None,
+             "elapsed_seconds": 0.5, "timestamp": "2026-05-17T00:00:00+00:00"},
+            {"member_id": "x", "stage": 1, "tool_name": "fetch_url",
+             "tool_call_id": "tc_2", "arguments": {"url": "https://x"},
+             "summary": "fetched", "content_for_model": "...",
+             "verdict": None, "error": None,
+             "elapsed_seconds": 0.5, "timestamp": "2026-05-17T00:00:00+00:00"},
+        ],
+    )
+    signals = extract_signals(session)
+    assert signals.validate_claim_verdicts == []
+
+
+def test_extract_signals_validate_claim_verdicts_empty_when_field_absent():
+    """Sessions without tool_call_results (e.g. from older saved JSONs)
+    fall back to []. No crash."""
+    session = BoardSession(session_id="board_test", user_query="x",
+                            metrics=SessionMetrics())
+    delattr(session, "tool_call_results")
+    signals = extract_signals(session)
+    assert signals.validate_claim_verdicts == []
+
+
+def test_extract_signals_validate_claim_verdicts_handles_missing_claim_arg():
+    """Defensive: if arguments lacks 'claim' (malformed record), the
+    extractor must not crash. Surfaces an empty string claim and lets the
+    checker decline to match."""
+    session = BoardSession(
+        session_id="board_test", user_query="x",
+        metrics=SessionMetrics(),
+        tool_call_results=[
+            {"member_id": "x", "stage": 1, "tool_name": "validate_claim",
+             "tool_call_id": "tc", "arguments": {},  # no 'claim' key
+             "summary": "validate_claim: UNVERIFIED",
+             "content_for_model": "...", "verdict": "UNVERIFIED",
+             "error": None, "elapsed_seconds": 0.5,
+             "timestamp": "2026-05-17T00:00:00+00:00"},
+        ],
+    )
+    signals = extract_signals(session)
+    assert len(signals.validate_claim_verdicts) == 1
+    assert signals.validate_claim_verdicts[0]["claim"] == ""
+
+
+def test_source_quality_trap_checker_passes_when_signal_built_from_session():
+    """End-to-end signal flow: session carries a downgraded validate_claim
+    record → extract_signals populates validate_claim_verdicts → the
+    _check_source_quality_trap checker passes.
+
+    This is the session-driven companion to the existing P3a regression-guard
+    tests (which constructed ObservedSignals directly). It exercises the
+    full path this plan unlocks."""
+    from evals.corpus import EvalPrompt
+    from evals.metrics import check_signal_for_prompt
+
+    prompt = EvalPrompt(
+        id="source-001",
+        category="source_quality_trap",
+        query="What's the conversion rate for AI demos?",
+        tier="heavy",
+        planted={"kind": "numeric"},
+        expected_outcome={
+            "claim_substring": "conversion rate",
+            "validate_claim_verdict_not_supported": True,
+        },
+    )
+
+    session = BoardSession(
+        session_id="board_test", user_query=prompt.query,
+        metrics=SessionMetrics(),
+        tool_call_results=[
+            {"member_id": "strategist", "stage": 1,
+             "tool_name": "validate_claim", "tool_call_id": "tc_v",
+             "arguments": {"claim": "average conversion rate from AI demo signup is 8%"},
+             "summary": "validate_claim: UNVERIFIED",
+             "content_for_model": (
+                 "VERDICT: SUPPORTED\nRATIONALE: ok\n"
+                 "[SOURCE-AUTHORITY DOWNGRADE] insufficient source authority."
+             ),
+             "verdict": "UNVERIFIED", "error": None, "elapsed_seconds": 1.0,
+             "timestamp": "2026-05-17T00:00:00+00:00"},
+        ],
+    )
+
+    signals = extract_signals(session)
+    assert check_signal_for_prompt(prompt, signals) is True
