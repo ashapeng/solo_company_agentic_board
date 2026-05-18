@@ -394,6 +394,77 @@ def _is_expired(entry: SotbEntry) -> bool:
     return dt < datetime.now(timezone.utc)
 
 
+def _append_entries_to_md(md: str, entries: list[SotbEntry]) -> str:
+    """Append new bullets under their `## <Section>` heading. Existing
+    content is NEVER mutated (DC2 log-only). When a section heading is
+    missing, append it at the end. Skips entries whose bullet already
+    appears in `md` (idempotency)."""
+    if not entries:
+        return md
+    # Build a quick lookup of (section, text) tuples already present.
+    existing_pairs = set(_parse_markdown_entries(md))
+
+    # Group new entries by section, preserving plan order.
+    by_section: dict[str, list[SotbEntry]] = {}
+    for e in entries:
+        if (e.section, e.text) in existing_pairs:
+            continue
+        by_section.setdefault(e.section, []).append(e)
+    if not by_section:
+        return md
+
+    lines = md.splitlines()
+    trailing_newline = md.endswith("\n")
+
+    # Map heading name -> index of the heading line, plus index where its
+    # section ends (next H2 or EOF).
+    heading_idx: dict[str, int] = {}
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("## "):
+            name = s[3:].strip().rstrip(":")
+            if name in _VALID_SECTIONS and name not in heading_idx:
+                heading_idx[name] = i
+
+    def _section_end(start: int) -> int:
+        for j in range(start + 1, len(lines)):
+            if lines[j].strip().startswith("## "):
+                return j
+            if lines[j].strip().startswith("# "):
+                return j
+        return len(lines)
+
+    # Process sections in reverse order of their heading position so
+    # inserts don't shift earlier indices.
+    section_inserts = sorted(
+        ((heading_idx[s], s) for s in by_section if s in heading_idx),
+        key=lambda x: -x[0],
+    )
+    for idx, section in section_inserts:
+        end = _section_end(idx)
+        # Strip trailing empty lines inside the section.
+        insert_at = end
+        while insert_at - 1 > idx and lines[insert_at - 1].strip() == "":
+            insert_at -= 1
+        new_bullets = [f"- {e.text}" for e in by_section[section]]
+        lines[insert_at:insert_at] = new_bullets
+
+    # Append sections that don't have an existing heading.
+    for section, ents in by_section.items():
+        if section in heading_idx:
+            continue
+        if lines and lines[-1].strip() != "":
+            lines.append("")
+        lines.append(f"## {section}")
+        for e in ents:
+            lines.append(f"- {e.text}")
+
+    out = "\n".join(lines)
+    if trailing_newline and not out.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def _remove_entry_from_md(md: str, entry: SotbEntry) -> str:
     """Remove the `- <text>` bullet matching `entry.text` from `md`.
     Conservative: only drops the FIRST exact match to avoid collateral
@@ -557,3 +628,145 @@ async def read_sotb_governed(
         )
 
     return new_md, health
+
+
+_CONTRADICTION_JUDGE_PROMPT = """\
+Two SOTB entries from a board's institutional memory may be in conflict.
+Compare them and judge whether they contradict each other.
+
+EXISTING entry (section: {section_a}):
+{text_a}
+
+NEW entry (section: {section_b}):
+{text_b}
+
+Return a JSON object EXACTLY like:
+{{"verdict": "CONTRADICTORY" | "CONSISTENT", "rationale": "<1 sentence>"}}
+
+Do not include any other text.
+"""
+
+
+def _find_overlapping(new_entry: SotbEntry, existing: list[SotbEntry]) -> SotbEntry | None:
+    """DC2-cheap overlap heuristic: same section + substring overlap on
+    normalized text. Returns the first overlap or None. (A future P4.1 can
+    upgrade to embedding similarity.)"""
+    new_norm = re.sub(r"\W+", " ", new_entry.text.lower()).strip()
+    new_tokens = set(new_norm.split())
+    if len(new_tokens) < 3:
+        return None
+    for e in existing:
+        if e.section != new_entry.section:
+            continue
+        e_norm = re.sub(r"\W+", " ", e.text.lower()).strip()
+        e_tokens = set(e_norm.split())
+        if not e_tokens:
+            continue
+        # Use min(|new|, |existing|) as denominator so overlap is symmetric
+        # and triggers when either entry is largely contained in the other.
+        # (max() denominator under-fires on short existing entries — e.g.
+        # 3-token "sunset feature X" vs 6-token "invest in feature X next
+        # quarter" with 2 shared tokens gives 0.33 against |new| but 0.67
+        # against min, matching the spec test's contradiction expectation.)
+        overlap = len(new_tokens & e_tokens) / max(min(len(new_tokens), len(e_tokens)), 1)
+        if overlap >= 0.4:  # at least 40% token overlap
+            return e
+    return None
+
+
+async def _contradiction_judge(
+    existing: SotbEntry, new_entry: SotbEntry, *, model: str,
+) -> tuple[bool, str]:
+    """Returns `(contradictory: bool, rationale: str)`. Never raises —
+    provider errors return `(False, "judge_failed: ...")`."""
+    prompt = _CONTRADICTION_JUDGE_PROMPT.format(
+        section_a=existing.section, text_a=existing.text[:500],
+        section_b=new_entry.section, text_b=new_entry.text[:500],
+    )
+    try:
+        resp = await query_llm(
+            model, messages=[{"role": "user", "content": prompt}], max_tokens=200,
+        )
+    except Exception as exc:
+        logger.warning("sotb_governance: contradiction judge failed: %s", exc)
+        return False, f"judge_failed: {exc}"
+
+    obj = _extract_json_object(resp.content or "")
+    if not isinstance(obj, dict):
+        return False, "judge_returned_no_json"
+    verdict = str(obj.get("verdict", "")).strip().upper()
+    rationale = str(obj.get("rationale", "")).strip()
+    return verdict == "CONTRADICTORY", rationale
+
+
+async def apply_sotb_update_governed(
+    *, update_text: str, session_id: str, verify: bool,
+    source_member: str = "chairperson",
+    md_path: Path | None = None,
+    index_path: Path | None = None,
+) -> SotbHealth:
+    """§8.3 LOG-ONLY mode (per DC2). Parses the chair's update, runs the
+    contradiction judge per new entry against any overlapping existing
+    entry (when verify AND flag), logs conflicts to
+    `SotbHealth.conflicts_logged` and the harness ledger, and appends ALL
+    new entries to the index (no supersession in P4).
+
+    Auto-resolve / move-to-Resolved / markdown rewrite is deferred to P4.1.
+    Returns a `SotbHealth` with `conflicts_logged` populated.
+    """
+    health = SotbHealth()
+    new_entries = parse_entries_from_update(
+        update_text, session_id=session_id, source_member=source_member,
+    )
+    if not new_entries:
+        return health
+
+    mp = md_path or _SOTB_PATH
+    ip = index_path or _INDEX_PATH
+
+    existing = read_sotb_index(md_path=mp, index_path=ip)
+    cfg = get_config()
+    judge_enabled = bool(cfg.hardening.get("sotb_judge_enabled", False))
+    judge_model = (
+        cfg.hardening.get("sotb_judge_model")
+        or cfg.hardening.get("atomizer_model", "qwen/qwen3.6-max-preview")
+    )
+
+    if verify and judge_enabled:
+        for new_e in new_entries:
+            overlap = _find_overlapping(new_e, existing)
+            if overlap is None:
+                continue
+            contradictory, rationale = await _contradiction_judge(
+                overlap, new_e, model=judge_model,
+            )
+            if contradictory:
+                health.conflicts_logged.append({
+                    "existing_entry_id": overlap.entry_id,
+                    "existing_text": overlap.text,
+                    "new_entry_id": new_e.entry_id,
+                    "new_text": new_e.text,
+                    "rationale": rationale,
+                    "session_id": session_id,
+                    "logged_at": _now_iso(),
+                })
+                logger.warning(
+                    "sotb_governance: conflict logged (P4 log-only mode)",
+                    extra={
+                        "existing_entry_id": overlap.entry_id,
+                        "new_entry_id": new_e.entry_id,
+                        "rationale": rationale[:200],
+                    },
+                )
+
+    # DC2: write all new entries regardless of conflict verdict.
+    # Append-only markdown patch so the next read_sotb_index reconcile
+    # treats them as canonical (existing content is never mutated; that's
+    # the log-only contract).
+    md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
+    new_md = _append_entries_to_md(md_text, new_entries)
+    if new_md != md_text:
+        mp.write_text(new_md, encoding="utf-8")
+
+    write_sotb_index(existing + new_entries, path=ip)
+    return health

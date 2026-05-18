@@ -607,5 +607,187 @@ def _cfg(**overrides):
     return cfg
 
 
+class ApplySotbUpdateGovernedTest(unittest.TestCase):
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def _setup(self, td: str, *, existing_md: str = "", existing_entries: list | None = None):
+        from server.memory.sotb_governance import write_sotb_index
+        md_path = Path(td) / "sotb.md"
+        idx_path = Path(td) / "sotb_index.jsonl"
+        md_path.write_text(existing_md, encoding="utf-8")
+        if existing_entries:
+            write_sotb_index(existing_entries, path=idx_path)
+        return md_path, idx_path
+
+    def test_new_entries_appended_to_index(self):
+        from server.memory.sotb_governance import (
+            apply_sotb_update_governed, read_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            md_path, idx_path = self._setup(td, existing_md="## Active Decisions\n")
+            update = "## Active Decisions\n- ship MVP friday.\n"
+            with patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=False)):
+                health = self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s1", verify=False,
+                    source_member="chairperson",
+                    md_path=md_path, index_path=idx_path,
+                ))
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            texts = [e.text for e in entries]
+            self.assertIn("ship MVP friday.", texts)
+            self.assertEqual(health.conflicts_logged, [])
+
+    def test_judge_says_contradicts_logs_conflict_keeps_both_entries(self):
+        """DC2: log-only — both entries persist; no markdown rewrite."""
+        from server.memory.sotb_governance import (
+            SotbEntry, apply_sotb_update_governed, read_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            existing = SotbEntry(
+                entry_id=SotbEntry.compute_entry_id("Active Decisions",
+                                                   "sunset feature X"),
+                section="Active Decisions", text="sunset feature X",
+                created_at="t", updated_at="t", confidence=0.9,
+                expires_at=None, provenance={},
+            )
+            md_path, idx_path = self._setup(
+                td,
+                existing_md="## Active Decisions\n- sunset feature X\n",
+                existing_entries=[existing],
+            )
+            update = "## Active Decisions\n- invest in feature X next quarter.\n"
+            judge_resp = _llm_resp(
+                '{"verdict": "CONTRADICTORY", "rationale": '
+                '"new says invest; old says sunset."}'
+            )
+            with patch("server.memory.sotb_governance.query_llm",
+                       new=AsyncMock(return_value=judge_resp)), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True,
+                                         sotb_judge_model="qwen/test")):
+                health = self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s2", verify=True,
+                    source_member="chairperson",
+                    md_path=md_path, index_path=idx_path,
+                ))
+            self.assertEqual(len(health.conflicts_logged), 1)
+            log = health.conflicts_logged[0]
+            self.assertEqual(log["existing_entry_id"], existing.entry_id)
+            self.assertIn("invest", log["new_text"])
+            self.assertIn("sunset", log["rationale"])
+            # Both entries persist — DC2 log-only.
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            texts = sorted(e.text for e in entries)
+            self.assertEqual(
+                texts,
+                ["invest in feature X next quarter.", "sunset feature X"],
+            )
+
+    def test_judge_says_compatible_no_conflict_logged(self):
+        """When the judge says compatible, both entries persist with no log."""
+        from server.memory.sotb_governance import (
+            SotbEntry, apply_sotb_update_governed,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            existing = SotbEntry(
+                entry_id=SotbEntry.compute_entry_id("Active Decisions", "ship MVP"),
+                section="Active Decisions", text="ship MVP",
+                created_at="t", updated_at="t", confidence=0.9,
+                expires_at=None, provenance={},
+            )
+            md_path, idx_path = self._setup(
+                td, existing_md="## Active Decisions\n- ship MVP\n",
+                existing_entries=[existing],
+            )
+            update = "## Active Decisions\n- focus marketing on enterprise.\n"
+            judge_resp = _llm_resp('{"verdict": "CONSISTENT", "rationale": "unrelated."}')
+            with patch("server.memory.sotb_governance.query_llm",
+                       new=AsyncMock(return_value=judge_resp)), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True,
+                                         sotb_judge_model="qwen/test")):
+                health = self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s3", verify=True,
+                    source_member="chairperson",
+                    md_path=md_path, index_path=idx_path,
+                ))
+            self.assertEqual(health.conflicts_logged, [])
+
+    def test_judge_not_called_when_flag_disabled_or_light_tier(self):
+        """DC6 gate: judge gated on verify AND flag. New entries added unconditionally."""
+        from server.memory.sotb_governance import apply_sotb_update_governed
+        with tempfile.TemporaryDirectory() as td:
+            md_path, idx_path = self._setup(td, existing_md="## Active Decisions\n")
+            update = "## Active Decisions\n- something.\n"
+            mock = AsyncMock()
+            # Case A: verify=False
+            with patch("server.memory.sotb_governance.query_llm", new=mock), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True)):
+                self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s", verify=False,
+                    source_member="m", md_path=md_path, index_path=idx_path,
+                ))
+            mock.assert_not_awaited()
+
+            # Case B: verify=True but flag=False
+            with patch("server.memory.sotb_governance.query_llm", new=mock), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=False)):
+                self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s", verify=True,
+                    source_member="m", md_path=md_path, index_path=idx_path,
+                ))
+            mock.assert_not_awaited()
+
+    def test_empty_update_is_noop(self):
+        from server.memory.sotb_governance import (
+            apply_sotb_update_governed, read_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            md_path, idx_path = self._setup(td, existing_md="## Active Decisions\n")
+            with patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=False)):
+                health = self._run(apply_sotb_update_governed(
+                    update_text="", session_id="s", verify=True,
+                    source_member="m", md_path=md_path, index_path=idx_path,
+                ))
+            self.assertEqual(health.conflicts_logged, [])
+            self.assertEqual(read_sotb_index(md_path=md_path, index_path=idx_path), [])
+
+    def test_judge_provider_error_does_not_block_write(self):
+        """Defensive: if the judge LLM call fails, the new entry is still
+        added (silent log of judge failure; chair sees both entries next read)."""
+        from server.memory.sotb_governance import (
+            SotbEntry, apply_sotb_update_governed, read_sotb_index,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            existing = SotbEntry(
+                entry_id=SotbEntry.compute_entry_id("Active Decisions", "X"),
+                section="Active Decisions", text="X",
+                created_at="t", updated_at="t", confidence=0.9,
+                expires_at=None, provenance={},
+            )
+            md_path, idx_path = self._setup(
+                td, existing_md="## Active Decisions\n- X\n",
+                existing_entries=[existing],
+            )
+            update = "## Active Decisions\n- Y\n"
+            with patch("server.memory.sotb_governance.query_llm",
+                       new=AsyncMock(side_effect=RuntimeError("provider down"))), \
+                 patch("server.memory.sotb_governance.get_config",
+                       return_value=_cfg(sotb_judge_enabled=True,
+                                         sotb_judge_model="qwen/test")):
+                health = self._run(apply_sotb_update_governed(
+                    update_text=update, session_id="s", verify=True,
+                    source_member="m", md_path=md_path, index_path=idx_path,
+                ))
+            self.assertEqual(health.conflicts_logged, [])
+            entries = read_sotb_index(md_path=md_path, index_path=idx_path)
+            self.assertIn("Y", [e.text for e in entries])
+
+
 if __name__ == "__main__":
     unittest.main()
