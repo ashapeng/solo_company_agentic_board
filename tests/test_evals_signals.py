@@ -452,3 +452,68 @@ def test_extract_signals_sotb_health_warnings_defaults_zero_when_missing():
     # Don't touch session.sotb_health (default None).
     signals = extract_signals(session)
     assert signals.sotb_health_warnings == 0
+
+
+def test_observed_signals_p5b_defaults():
+    s = ObservedSignals()
+    assert s.auto_promoted_rebuttals_count == 0
+    assert s.auto_promoted_resolutions == []
+    assert s.disagreement_score == 0
+
+
+def test_observed_signals_p5b_to_json_round_trip():
+    s = ObservedSignals(
+        auto_promoted_rebuttals_count=2,
+        auto_promoted_resolutions=["PARTIAL", "RESOLVED"],
+        disagreement_score=7,
+    )
+    d = s.to_json()
+    assert d["auto_promoted_rebuttals_count"] == 2
+    assert d["auto_promoted_resolutions"] == ["PARTIAL", "RESOLVED"]
+    assert d["disagreement_score"] == 7
+    back = ObservedSignals.from_dict(d)
+    assert back.auto_promoted_rebuttals_count == 2
+    assert back.auto_promoted_resolutions == ["PARTIAL", "RESOLVED"]
+    assert back.disagreement_score == 7
+
+
+def test_extract_signals_reads_p5b_fields_from_session():
+    s = BoardSession(
+        session_id="t", user_query="x",
+        disagreement_score=5,
+        auto_promoted_rebuttals=[
+            {"pair_member_ids": ["strategist", "product"],
+             "resolution": "PARTIAL", "summary": "..."},
+            {"pair_member_ids": ["critic", "architect"],
+             "resolution": "RESOLVED", "summary": "..."},
+            {"pair_member_ids": ["x", "y"],
+             "resolution": None, "summary": "(bad parse)"},  # excluded from list
+        ],
+    )
+    sig = extract_signals(s)
+    assert sig.disagreement_score == 5
+    assert sig.auto_promoted_rebuttals_count == 3   # raw count
+    # Only non-None resolutions surfaced
+    assert sig.auto_promoted_resolutions == ["PARTIAL", "RESOLVED"]
+
+
+def test_extract_signals_back_compat_with_session_missing_p5b_fields():
+    """A SimpleNamespace mimicking pre-P5b session shape (no new fields)
+    must return defaults, not raise."""
+    from types import SimpleNamespace
+    from server.board.metrics import SessionMetrics
+    legacy = SimpleNamespace(
+        session_id="t", user_query="x",
+        verification=None,
+        clarification={},
+        stage3_synthesis=None,
+        contradictions=[],
+        sotb_health=None,
+        tool_call_results=[],
+        metrics=SessionMetrics(),
+        total_elapsed=0.0,
+    )
+    sig = extract_signals(legacy)
+    assert sig.disagreement_score == 0
+    assert sig.auto_promoted_rebuttals_count == 0
+    assert sig.auto_promoted_resolutions == []

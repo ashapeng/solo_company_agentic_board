@@ -40,6 +40,12 @@ class ObservedSignals:
     # instead, the verifier may pass the well-formed deferral but the eval
     # should still treat that as a success.
     synthesis_unverified_count: int = 0
+    # P5b: Auto-promote-to-live (spec §9.2). Always 0 / empty pre-P5b.
+    # disagreement_score is populated even when the flag is dark, so this
+    # signal lights up immediately and can be used to tune the threshold.
+    auto_promoted_rebuttals_count: int = 0
+    auto_promoted_resolutions: list[str] = field(default_factory=list)
+    disagreement_score: int = 0
     # Cost + latency
     total_cost_usd: float = 0.0
     total_latency_seconds: float = 0.0
@@ -57,6 +63,9 @@ class ObservedSignals:
             "contradictions_surfaced": self.contradictions_surfaced,
             "sotb_health_warnings": self.sotb_health_warnings,
             "synthesis_unverified_count": self.synthesis_unverified_count,
+            "auto_promoted_rebuttals_count": self.auto_promoted_rebuttals_count,
+            "auto_promoted_resolutions": list(self.auto_promoted_resolutions),
+            "disagreement_score": self.disagreement_score,
             "total_cost_usd": self.total_cost_usd,
             "total_latency_seconds": self.total_latency_seconds,
             "total_tokens": self.total_tokens,
@@ -75,6 +84,9 @@ class ObservedSignals:
             contradictions_surfaced=int(d.get("contradictions_surfaced", 0)),
             sotb_health_warnings=int(d.get("sotb_health_warnings", 0)),
             synthesis_unverified_count=int(d.get("synthesis_unverified_count", 0)),
+            auto_promoted_rebuttals_count=int(d.get("auto_promoted_rebuttals_count", 0)),
+            auto_promoted_resolutions=list(d.get("auto_promoted_resolutions") or []),
+            disagreement_score=int(d.get("disagreement_score", 0)),
             total_cost_usd=float(d.get("total_cost_usd", 0.0)),
             total_latency_seconds=float(d.get("total_latency_seconds", 0.0)),
             total_tokens=int(d.get("total_tokens", 0)),
@@ -140,6 +152,13 @@ def extract_signals(session: BoardSession) -> ObservedSignals:
             (getattr(session, "sotb_health", None) or {}).get("warnings_count", 0)
         ),
         synthesis_unverified_count=synthesis_unverified_count,
+        auto_promoted_rebuttals_count=len(getattr(session, "auto_promoted_rebuttals", []) or []),
+        auto_promoted_resolutions=[
+            r["resolution"]
+            for r in (getattr(session, "auto_promoted_rebuttals", []) or [])
+            if r.get("resolution")
+        ],
+        disagreement_score=int(getattr(session, "disagreement_score", 0) or 0),
         total_cost_usd=float(metrics.total_cost_estimate()) if metrics else 0.0,
         total_latency_seconds=float(session.total_elapsed or 0.0),
         total_tokens=total_tokens,
