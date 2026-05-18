@@ -55,3 +55,77 @@ def test_hook_verdict_deny_carries_reason():
     assert v.action == "deny"
     assert v.reason == "cap exceeded"
     assert v.metadata == {"count": 21}
+
+
+# ─── T2: registry ──────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def fresh_registry():
+    """Snapshot + restore the registry so tests run in isolation."""
+    from server.harness.hooks import _snapshot_registry, _restore_registry
+    snapshot = _snapshot_registry()
+    yield
+    _restore_registry(snapshot)
+
+
+def test_register_pre_hook_stores_callable_for_tool(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, register_pre_hook, _list_pre_hooks_for_tests,
+    )
+
+    def hook(ctx: HookContext) -> HookVerdict:
+        return HookVerdict(action="allow", reason=None, metadata={})
+
+    register_pre_hook("web_search", hook)
+    hooks = _list_pre_hooks_for_tests("web_search")
+    assert len(hooks) == 1
+    assert hooks[0] is hook
+
+
+def test_register_pre_hook_preserves_registration_order(fresh_registry):
+    from server.harness.hooks import (
+        HookVerdict, register_pre_hook, _list_pre_hooks_for_tests,
+    )
+
+    def a(ctx):
+        return HookVerdict("allow", None, {})
+
+    def b(ctx):
+        return HookVerdict("allow", None, {})
+
+    def c(ctx):
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("web_search", a)
+    register_pre_hook("web_search", b)
+    register_pre_hook("web_search", c)
+    hooks = _list_pre_hooks_for_tests("web_search")
+    assert hooks == [a, b, c]
+
+
+def test_register_post_hook_stores_callable_for_tool(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, register_post_hook, _list_post_hooks_for_tests,
+    )
+
+    def hook(ctx: HookContext, result: dict) -> None:
+        return None
+
+    register_post_hook("delegated_task", hook)
+    hooks = _list_post_hooks_for_tests("delegated_task")
+    assert len(hooks) == 1
+    assert hooks[0] is hook
+
+
+def test_register_isolates_by_tool_name(fresh_registry):
+    from server.harness.hooks import (
+        HookVerdict, register_pre_hook, _list_pre_hooks_for_tests,
+    )
+
+    def hook(ctx):
+        return HookVerdict("allow", None, {})
+
+    register_pre_hook("web_search", hook)
+    assert len(_list_pre_hooks_for_tests("web_search")) == 1
+    assert _list_pre_hooks_for_tests("delegated_task") == []

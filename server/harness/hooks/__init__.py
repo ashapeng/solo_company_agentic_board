@@ -43,3 +43,49 @@ class HookVerdict:
 
 PreHook = Callable[[HookContext], Union[HookVerdict, Awaitable[HookVerdict]]]
 PostHook = Callable[[HookContext, dict], Union[None, Awaitable[None]]]
+
+
+# ─── Registry ──────────────────────────────────────────────────────────────
+
+_pre_hooks: dict[str, list[PreHook]] = {}
+_post_hooks: dict[str, list[PostHook]] = {}
+
+
+def register_pre_hook(tool_name: str, fn: PreHook) -> None:
+    """Append a pre-hook for `tool_name`. Idempotent per (tool, fn) pair."""
+    bucket = _pre_hooks.setdefault(tool_name, [])
+    if fn not in bucket:
+        bucket.append(fn)
+
+
+def register_post_hook(tool_name: str, fn: PostHook) -> None:
+    """Append a post-hook for `tool_name`. Idempotent per (tool, fn) pair."""
+    bucket = _post_hooks.setdefault(tool_name, [])
+    if fn not in bucket:
+        bucket.append(fn)
+
+
+# ─── Test-only helpers (underscore = private; never call from production) ─
+
+def _snapshot_registry() -> tuple[dict, dict]:
+    """Deep-ish snapshot for test fixture restoration."""
+    return (
+        {k: list(v) for k, v in _pre_hooks.items()},
+        {k: list(v) for k, v in _post_hooks.items()},
+    )
+
+
+def _restore_registry(snapshot: tuple[dict, dict]) -> None:
+    pre, post = snapshot
+    _pre_hooks.clear()
+    _pre_hooks.update({k: list(v) for k, v in pre.items()})
+    _post_hooks.clear()
+    _post_hooks.update({k: list(v) for k, v in post.items()})
+
+
+def _list_pre_hooks_for_tests(tool_name: str) -> list[PreHook]:
+    return list(_pre_hooks.get(tool_name, []))
+
+
+def _list_post_hooks_for_tests(tool_name: str) -> list[PostHook]:
+    return list(_post_hooks.get(tool_name, []))
