@@ -129,3 +129,76 @@ def test_register_isolates_by_tool_name(fresh_registry):
     register_pre_hook("web_search", hook)
     assert len(_list_pre_hooks_for_tests("web_search")) == 1
     assert _list_pre_hooks_for_tests("delegated_task") == []
+
+
+# ─── T3: dispatch_pre_hooks happy path ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_no_hooks_returns_allow(fresh_registry):
+    from server.harness.hooks import HookContext, dispatch_pre_hooks
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+    assert verdict.action == "allow"
+    assert verdict.reason is None
+    assert verdict.metadata == {}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_all_allow_returns_allow(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def hook_a(ctx):
+        return HookVerdict("allow", None, {"a": 1})
+
+    def hook_b(ctx):
+        return HookVerdict("allow", None, {"b": 2})
+
+    register_pre_hook("web_search", hook_a)
+    register_pre_hook("web_search", hook_b)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+    assert verdict.action == "allow"
+    assert verdict.reason is None
+    assert verdict.metadata == {"a": 1, "b": 2}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_supports_async_hooks(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    async def hook(ctx):
+        return HookVerdict("allow", None, {"async": True})
+
+    register_pre_hook("web_search", hook)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+    assert verdict.action == "allow"
+    assert verdict.metadata == {"async": True}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pre_hooks_later_hook_overwrites_metadata_key(fresh_registry):
+    from server.harness.hooks import (
+        HookContext, HookVerdict, dispatch_pre_hooks, register_pre_hook,
+    )
+
+    def hook_a(ctx):
+        return HookVerdict("allow", None, {"shared": "first"})
+
+    def hook_b(ctx):
+        return HookVerdict("allow", None, {"shared": "second"})
+
+    register_pre_hook("web_search", hook_a)
+    register_pre_hook("web_search", hook_b)
+
+    ctx = HookContext("web_search", 1, "s", None, {"query": "x"})
+    verdict = await dispatch_pre_hooks(ctx)
+    assert verdict.metadata == {"shared": "second"}

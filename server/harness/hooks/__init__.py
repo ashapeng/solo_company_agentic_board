@@ -89,3 +89,42 @@ def _list_pre_hooks_for_tests(tool_name: str) -> list[PreHook]:
 
 def _list_post_hooks_for_tests(tool_name: str) -> list[PostHook]:
     return list(_post_hooks.get(tool_name, []))
+
+
+# ─── Dispatch ──────────────────────────────────────────────────────────────
+
+import inspect
+
+_HOOK_TIMEOUT_SECONDS: float = 5.0
+
+
+async def _await_if_needed_pre(fn: PreHook, ctx: HookContext) -> HookVerdict:
+    """Call a pre-hook; await if it returned a coroutine.
+
+    Sync hooks execute inline (no thread). Async hooks are wrapped in
+    asyncio.wait_for with the module-level timeout.
+    """
+    import asyncio  # local import keeps the module's top section visible
+
+    result = fn(ctx)
+    if inspect.isawaitable(result):
+        result = await asyncio.wait_for(result, timeout=_HOOK_TIMEOUT_SECONDS)
+    return result
+
+
+async def dispatch_pre_hooks(ctx: HookContext) -> HookVerdict:
+    """Run every pre-hook registered for ctx.tool_name in registration order.
+
+    On all-allow: returns one verdict with merged metadata (later hook
+    overwrites earlier on key collision).
+    On first-deny: short-circuit and return that verdict.  (Implemented in T4.)
+    On hook crash: convert to deny.  (Implemented in T5.)
+    On hook timeout: convert to deny.  (Implemented in T6.)
+    """
+    merged_metadata: dict = {}
+    for fn in _pre_hooks.get(ctx.tool_name, []):
+        verdict = await _await_if_needed_pre(fn, ctx)
+        if verdict.action == "deny":
+            return verdict  # short-circuit (test in T4)
+        merged_metadata = {**merged_metadata, **verdict.metadata}
+    return HookVerdict(action="allow", reason=None, metadata=merged_metadata)
