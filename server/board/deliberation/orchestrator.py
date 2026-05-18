@@ -1271,6 +1271,7 @@ class BoardOrchestrator:
         sotb: str = "",
         query_type: str | None = None,
         complexity: str | None = None,
+        rebuttal_outcomes: list[dict] | None = None,
     ) -> MemberResponse:
         self._fire(self._on_stage_start, 3, "Chairman Synthesis")
 
@@ -1285,6 +1286,15 @@ class BoardOrchestrator:
             stage2_responses=_format_identified_responses(compacted_s2),
             sotb=sotb,
         )
+
+        # P5b: prepend REBUTTAL OUTCOME block(s) when the auto-promote sub-pipeline
+        # fired (spec §9.2.6). Empty/None → no-op; format_rebuttal_outcomes_block
+        # returns "" which short-circuits the join.
+        if rebuttal_outcomes:
+            from server.board.deliberation.auto_promote import format_rebuttal_outcomes_block
+            rebuttal_block = format_rebuttal_outcomes_block(rebuttal_outcomes)
+            if rebuttal_block:
+                prompt = rebuttal_block + "\n\n" + prompt
 
         messages = [{"role": "user", "content": prompt}]
         cfg = get_config()
