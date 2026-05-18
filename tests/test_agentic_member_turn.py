@@ -57,6 +57,32 @@ def test_tool_budget_sub_cap_exhausts_for_that_tool_only():
     assert b.can_call("web_search")          # other tool still ok
 
 
+def test_tool_budget_expand_peer_max_fast_is_zero():
+    """LIGHT tier (fast mode) does NOT surface expand_peer — budget is 0."""
+    b = orchestrator.ToolBudget.for_mode("fast")
+    assert b.expand_peer_max == 0
+
+
+def test_tool_budget_expand_peer_max_standard_is_one():
+    b = orchestrator.ToolBudget.for_mode("standard", member_role="member")
+    assert b.expand_peer_max == 1
+
+
+def test_tool_budget_expand_peer_max_deep_is_one():
+    """Spec §9.1: 1 call per stage — same cap at deep tier as standard."""
+    b = orchestrator.ToolBudget.for_mode("deep", member_role="member")
+    assert b.expand_peer_max == 1
+
+
+def test_tool_budget_expand_peer_sub_cap_exhausts_after_one_call():
+    b = orchestrator.ToolBudget.for_mode("standard", member_role="member")
+    assert b.can_call("expand_peer")
+    b.spend("expand_peer", 0.5)
+    assert not b.can_call("expand_peer")
+    # Other sub-caps unaffected
+    assert b.can_call("web_search")
+
+
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 

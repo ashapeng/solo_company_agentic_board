@@ -157,3 +157,34 @@ async def test_expand_peer_no_session_returns_error():
         member_letter="A", session=None, member_id="critic",
     )
     assert result.error is not None
+
+
+# ─── T3: cap enforcement via ToolBudget ──────────────────────────────────────
+
+
+def test_expand_peer_in_sub_caps_by_tool():
+    """Wire-up sanity: SUB_CAPS_BY_TOOL knows the cap attribute."""
+    from server.board.deliberation.orchestrator import ToolBudget
+    assert ToolBudget.SUB_CAPS_BY_TOOL.get("expand_peer") == "expand_peer_max"
+
+
+def test_expand_peer_cap_message_via_budget_filter():
+    """When the budget is exhausted, `_budget_filtered_tools` drops the tool
+    so the LLM never sees it. This is the natural enforcement path — the
+    handler itself never gates."""
+    from server.board.deliberation.orchestrator import (
+        ToolBudget, _budget_filtered_tools,
+    )
+    from server.board import tools as tools_mod
+
+    budget = ToolBudget.for_mode("standard", member_role="member")
+    # Spend the cap
+    budget.spend("expand_peer", 0.5)
+
+    visible = _budget_filtered_tools(
+        [tools_mod.TOOLS["web_search"], tools_mod.TOOLS["expand_peer"]],
+        budget,
+    )
+    names = [t["function"]["name"] for t in visible]
+    assert "web_search" in names
+    assert "expand_peer" not in names

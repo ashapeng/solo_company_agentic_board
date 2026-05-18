@@ -66,6 +66,7 @@ class ToolBudget:
     web_search_max: int
     fetch_url_max: int
     ask_user_max: int
+    expand_peer_max: int = 0
     tool_calls_used: int = 0
     wall_seconds_used: float = 0.0
     sub_used: dict[str, int] = field(default_factory=dict)
@@ -75,18 +76,32 @@ class ToolBudget:
         "open_browser": "open_browser_max",
         "fetch_url": "fetch_url_max",
         "ask_user_clarifying_question": "ask_user_max",
+        "expand_peer": "expand_peer_max",
     }
 
     @classmethod
     def for_mode(cls, mode: str, *, member_role: str = "member") -> "ToolBudget":
         if mode == "fast":
-            return cls(0, 60, 240.0, 0, 0, 0, 1 if member_role == "chair" else 0)
+            return cls(
+                tool_calls_max=0, wall_seconds_max=60, per_call_timeout=240.0,
+                open_browser_max=0, web_search_max=0, fetch_url_max=0,
+                ask_user_max=1 if member_role == "chair" else 0,
+                expand_peer_max=0,
+            )
         if mode == "standard":
-            return cls(3, 180, 240.0, 1, 3, 2,
-                        2 if member_role == "chair" else 0)
+            return cls(
+                tool_calls_max=3, wall_seconds_max=180, per_call_timeout=240.0,
+                open_browser_max=1, web_search_max=3, fetch_url_max=2,
+                ask_user_max=2 if member_role == "chair" else 0,
+                expand_peer_max=1,
+            )
         if mode == "deep":
-            return cls(8, 480, 240.0, 3, 6, 4,
-                        3 if member_role == "chair" else 1)
+            return cls(
+                tool_calls_max=8, wall_seconds_max=480, per_call_timeout=240.0,
+                open_browser_max=3, web_search_max=6, fetch_url_max=4,
+                ask_user_max=3 if member_role == "chair" else 1,
+                expand_peer_max=1,
+            )
         raise ValueError(f"unknown mode {mode!r}; expected fast|standard|deep")
 
     def can_call(self, name: str) -> bool:
