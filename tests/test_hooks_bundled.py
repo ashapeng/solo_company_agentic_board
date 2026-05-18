@@ -13,6 +13,7 @@ def tmp_db(tmp_path: Path, monkeypatch):
     from server.harness import ledger as ledger_mod
     db_path = tmp_path / "ledger.db"
     monkeypatch.setattr(ledger_mod, "_DEFAULT_DB_PATH", db_path)
+    ledger_mod.init_db(db_path)
     return db_path
 
 
@@ -221,3 +222,34 @@ def test_rate_limit_delegated_registered_at_import():
         rate_limit_delegated_tasks,
     )
     assert rate_limit_delegated_tasks in _list_pre_hooks_for_tests("delegated_task")
+
+
+# ─── T13: web_search writes hook events ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_web_search_records_allow_event(tmp_db, fresh_registry, monkeypatch):
+    """When no denying hook is registered, web_search runs and writes an allow event."""
+    monkeypatch.setenv("AGENTIC_BOARD_WEB_SEARCH_SESSION_CAP", "20")
+    from server.execution import evidence as ev
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        old = ev._EVIDENCE_DIR
+        ev._EVIDENCE_DIR = Path(tmpdir)
+        try:
+            from server.execution.web_search import web_search
+            await web_search("test query", provider="fake", session_id="s_t13")
+        finally:
+            ev._EVIDENCE_DIR = old
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        rows = conn.execute(
+            "SELECT action, tool_name FROM hook_events WHERE session_id = ? "
+            "ORDER BY ts ASC",
+            ("s_t13",),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert any(r[0] == "allow" and r[1] == "web_search" for r in rows)

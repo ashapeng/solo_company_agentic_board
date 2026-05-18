@@ -22,6 +22,7 @@ from .tasks import (
 )
 from .units import ExecutionUnit, list_execution_units
 from .web_search import WebSearchError, web_search
+from server.harness.hooks import HookDeniedError
 
 _DEFAULT_DB_PATH: Path | None = _tasks.DEFAULT_DB_PATH
 _EVIDENCE_DIR = _evidence._EVIDENCE_DIR
@@ -87,6 +88,7 @@ __all__ = [
     "ExecutionAgent",
     "ExecutionError",
     "ExecutionUnit",
+    "HookDeniedError",
     "WebSearchError",
     "SubAgentTemplate",
     "Subtask",

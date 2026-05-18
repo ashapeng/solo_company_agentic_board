@@ -88,18 +88,50 @@ async def web_search(
     provider: str | None = None,
     max_results: int = 5,
     session_id: str | None = None,
+    stage: int = 0,
+    member_id: str | None = None,
 ) -> dict[str, Any]:
     """Search the web from execution workflows and persist an evidence packet."""
+    from server.harness.hooks import (
+        HookContext, HookDeniedError, dispatch_pre_hooks, dispatch_post_hooks,
+    )
+    from server.harness.ledger import record_hook_event
+
+    hook_ctx = HookContext(
+        tool_name="web_search",
+        stage=stage,
+        session_id=session_id or "anon",
+        member_id=member_id,
+        request={
+            "query": query,
+            "provider": provider,
+            "max_results": max_results,
+        },
+    )
+    pre_verdict = await dispatch_pre_hooks(hook_ctx)
+    record_hook_event(
+        session_id=hook_ctx.session_id,
+        tool_name="web_search",
+        action=pre_verdict.action,
+        reason=pre_verdict.reason,
+        metadata=pre_verdict.metadata,
+    )
+    if pre_verdict.action == "deny":
+        raise HookDeniedError(pre_verdict.reason or "web_search denied")
+
     selected = (provider or os.getenv("WEB_SEARCH_PROVIDER") or "tavily").lower()
 
     if selected in {"", "disabled", "none"}:
-        return _disabled_result(query)
+        disabled_response = _disabled_result(query)
+        await dispatch_post_hooks(hook_ctx, disabled_response)
+        return disabled_response
 
     # Cache probe BEFORE rate limit — cache hits cost zero provider calls.
     normalized_query = unicodedata.normalize("NFC", query).strip().lower()
     cache_key = (normalized_query, selected, max_results)
     cached = _cache.get(cache_key)
     if cached is not None:
+        await dispatch_post_hooks(hook_ctx, cached)
         return cached
 
     # Per-session rate limit.
@@ -120,13 +152,15 @@ async def web_search(
         while bucket and bucket[0] <= now - window:
             bucket.popleft()
         if len(bucket) >= limit:
-            return {
+            rate_limited_response = {
                 "query": query,
                 "provider": selected,
                 "results": [],
                 "evidence_packet": None,
                 "warnings": [f"session rate limit: {limit}/{window}s"],
             }
+            await dispatch_post_hooks(hook_ctx, rate_limited_response)
+            return rate_limited_response
         bucket.append(now)
 
     if selected == "fake":
@@ -140,13 +174,15 @@ async def web_search(
     elif selected in {"duckduckgo", "ddg"}:
         results = await _duckduckgo_search(query, max_results=max_results)
     else:
-        return {
+        unknown_response = {
             "query": query,
             "provider": selected,
             "results": [],
             "evidence_packet": None,
             "warnings": [f"Web search provider '{selected}' is unavailable."],
         }
+        await dispatch_post_hooks(hook_ctx, unknown_response)
+        return unknown_response
 
     packet = evidence.create_evidence_packet(
         topic=f"Web search: {query}",
@@ -172,6 +208,7 @@ async def web_search(
         "warnings": [],
     }
     _cache.put(cache_key, response)
+    await dispatch_post_hooks(hook_ctx, response)
     return response
 
 
