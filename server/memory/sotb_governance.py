@@ -90,6 +90,35 @@ class SotbEntry:
         )
 
 
+@dataclass
+class SotbHealth:
+    """Result of read-time freshness + conflict checks (§8.2).
+
+    `expired`, `low_confidence`, `stale` are populated by the pure
+    `compute_freshness`. `query_conflicts` and `conflicts_logged` are
+    populated by the LLM-judge paths (T5 read-side, T7 write-side) and
+    stay empty when the judges are disabled.
+    """
+    expired: list[SotbEntry] = field(default_factory=list)
+    low_confidence: list[SotbEntry] = field(default_factory=list)
+    stale: list[SotbEntry] = field(default_factory=list)
+    query_conflicts: list[dict] = field(default_factory=list)
+    conflicts_logged: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "expired": [e.to_dict() for e in self.expired],
+            "low_confidence": [e.to_dict() for e in self.low_confidence],
+            "stale": [e.to_dict() for e in self.stale],
+            "query_conflicts": list(self.query_conflicts),
+            "conflicts_logged": list(self.conflicts_logged),
+            "warnings_count": (
+                len(self.expired) + len(self.low_confidence) + len(self.stale)
+                + len(self.query_conflicts) + len(self.conflicts_logged)
+            ),
+        }
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -336,3 +365,65 @@ def read_sotb_index(
     if len(merged) != len(raw) or set(e.entry_id for e in merged) != set(by_id.keys()):
         write_sotb_index(merged, path=ip)
     return merged
+
+
+_LOW_CONFIDENCE_THRESHOLD = 0.5
+_STALE_FLAGGED_SECTIONS = frozenset(("Risk Register", "Open Questions"))
+
+
+def _age_days(created_at_iso: str) -> int:
+    try:
+        dt = datetime.fromisoformat(created_at_iso)
+    except (ValueError, TypeError):
+        return 0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).days
+
+
+def _is_expired(entry: SotbEntry) -> bool:
+    if not entry.expires_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(entry.expires_at)
+    except (ValueError, TypeError):
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt < datetime.now(timezone.utc)
+
+
+def _remove_entry_from_md(md: str, entry: SotbEntry) -> str:
+    """Remove the `- <text>` bullet matching `entry.text` from `md`.
+    Conservative: only drops the FIRST exact match to avoid collateral
+    damage on duplicates."""
+    target = f"- {entry.text}"
+    lines = md.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == target:
+            lines.pop(i)
+            return "\n".join(lines) + ("\n" if md.endswith("\n") else "")
+    return md
+
+
+def compute_freshness(
+    *, md: str, entries: list[SotbEntry], stale_days: int = 90,
+) -> tuple[str, SotbHealth]:
+    """§8.2 non-LLM portion. Pure (modulo the wall clock). Returns the
+    (possibly-trimmed) markdown plus a `SotbHealth` with three populated
+    lists (LLM-populated lists stay empty here)."""
+    health = SotbHealth()
+    new_md = md
+
+    for entry in entries:
+        if _is_expired(entry):
+            health.expired.append(entry)
+            new_md = _remove_entry_from_md(new_md, entry)
+            continue
+        if entry.confidence < _LOW_CONFIDENCE_THRESHOLD:
+            health.low_confidence.append(entry)
+            # don't continue — an entry can be both low-confidence AND stale.
+        if entry.section in _STALE_FLAGGED_SECTIONS and _age_days(entry.created_at) > stale_days:
+            health.stale.append(entry)
+
+    return new_md, health

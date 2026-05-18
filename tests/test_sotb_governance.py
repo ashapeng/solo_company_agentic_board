@@ -278,5 +278,115 @@ class SotbIndexIOTest(unittest.TestCase):
             self.assertFalse((idx_path.parent / (idx_path.name + ".tmp")).exists())
 
 
+from datetime import datetime, timedelta, timezone
+
+
+class SotbHealthTest(unittest.TestCase):
+    def _now_iso(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _past_iso(self, days_ago: int) -> str:
+        return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+    def _future_iso(self, days_ahead: int) -> str:
+        return (datetime.now(timezone.utc) + timedelta(days=days_ahead)).isoformat()
+
+    def test_health_empty_when_all_entries_fresh(self):
+        from server.memory.sotb_governance import SotbEntry, compute_freshness
+        entries = [SotbEntry(
+            entry_id="a" * 12, section="Active Decisions", text="X",
+            created_at=self._now_iso(), updated_at=self._now_iso(),
+            confidence=0.9, expires_at=self._future_iso(30), provenance={},
+        )]
+        md = "## Active Decisions\n- X\n"
+        new_md, health = compute_freshness(md=md, entries=entries, stale_days=90)
+        self.assertEqual(health.expired, [])
+        self.assertEqual(health.low_confidence, [])
+        self.assertEqual(health.stale, [])
+        self.assertEqual(new_md, md)
+
+    def test_expired_entry_is_dropped_from_md_and_recorded(self):
+        from server.memory.sotb_governance import SotbEntry, compute_freshness
+        entries = [SotbEntry(
+            entry_id="b" * 12, section="Active Decisions", text="OLD",
+            created_at=self._past_iso(400), updated_at=self._past_iso(400),
+            confidence=0.9, expires_at=self._past_iso(1), provenance={},
+        )]
+        md = "## Active Decisions\n- OLD\n- KEEP\n"
+        new_md, health = compute_freshness(md=md, entries=entries, stale_days=90)
+        self.assertEqual(len(health.expired), 1)
+        self.assertEqual(health.expired[0].text, "OLD")
+        self.assertNotIn("- OLD", new_md)
+        self.assertIn("- KEEP", new_md)
+
+    def test_low_confidence_entry_is_flagged_not_dropped(self):
+        from server.memory.sotb_governance import SotbEntry, compute_freshness
+        entries = [SotbEntry(
+            entry_id="c" * 12, section="Active Decisions", text="MEH",
+            created_at=self._now_iso(), updated_at=self._now_iso(),
+            confidence=0.3, expires_at=None, provenance={},
+        )]
+        md = "## Active Decisions\n- MEH\n"
+        new_md, health = compute_freshness(md=md, entries=entries, stale_days=90)
+        self.assertEqual(len(health.low_confidence), 1)
+        self.assertEqual(health.low_confidence[0].text, "MEH")
+        self.assertIn("- MEH", new_md)  # NOT dropped
+
+    def test_stale_warning_on_risk_register_after_threshold(self):
+        from server.memory.sotb_governance import SotbEntry, compute_freshness
+        entries = [SotbEntry(
+            entry_id="d" * 12, section="Risk Register", text="STALE_RISK",
+            created_at=self._past_iso(120), updated_at=self._past_iso(120),
+            confidence=0.8, expires_at=self._future_iso(60), provenance={},
+        )]
+        md = "## Risk Register\n- STALE_RISK\n"
+        new_md, health = compute_freshness(md=md, entries=entries, stale_days=90)
+        self.assertEqual(len(health.stale), 1)
+        self.assertEqual(health.stale[0].text, "STALE_RISK")
+        self.assertIn("- STALE_RISK", new_md)  # NOT dropped, just flagged
+
+    def test_stale_warning_only_for_risk_and_open_sections(self):
+        """Active Decisions / Established Positions are not staleness-flagged."""
+        from server.memory.sotb_governance import SotbEntry, compute_freshness
+        entries = [SotbEntry(
+            entry_id="e" * 12, section="Active Decisions", text="OLD_DEC",
+            created_at=self._past_iso(200), updated_at=self._past_iso(200),
+            confidence=0.8, expires_at=None, provenance={},
+        )]
+        md = "## Active Decisions\n- OLD_DEC\n"
+        _, health = compute_freshness(md=md, entries=entries, stale_days=90)
+        self.assertEqual(health.stale, [])
+
+    def test_health_to_dict_serializes_lists_of_dicts(self):
+        from server.memory.sotb_governance import SotbEntry, SotbHealth
+        h = SotbHealth(
+            expired=[SotbEntry(entry_id="x" * 12, section="Active Decisions",
+                               text="t", created_at="t", updated_at="t",
+                               confidence=0.5, expires_at=None, provenance={})],
+            low_confidence=[], stale=[], query_conflicts=[], conflicts_logged=[],
+        )
+        d = h.to_dict()
+        self.assertEqual(len(d["expired"]), 1)
+        self.assertEqual(d["expired"][0]["entry_id"], "x" * 12)
+        self.assertEqual(d["low_confidence"], [])
+        self.assertEqual(d["warnings_count"], 1)
+
+    def test_warnings_count_sums_all_four_lists(self):
+        from server.memory.sotb_governance import SotbEntry, SotbHealth
+        def _e(t):
+            return SotbEntry(entry_id=SotbEntry.compute_entry_id("Active Decisions", t),
+                              section="Active Decisions", text=t,
+                              created_at="t", updated_at="t", confidence=0.5,
+                              expires_at=None, provenance={})
+        h = SotbHealth(
+            expired=[_e("a")],
+            low_confidence=[_e("b"), _e("c")],
+            stale=[_e("d")],
+            query_conflicts=[{"note": "x"}, {"note": "y"}],
+            conflicts_logged=[{"note": "z"}],
+        )
+        self.assertEqual(h.to_dict()["warnings_count"], 1 + 2 + 1 + 2 + 1)
+
+
 if __name__ == "__main__":
     unittest.main()
