@@ -136,5 +136,47 @@ class SkillLoaderMalformedTest(unittest.TestCase):
             self.assertTrue(any("name" in line.lower() for line in cm.output))
 
 
+class SkillBodyCapTest(unittest.TestCase):
+    def test_body_within_cap_is_unchanged(self):
+        from server.harness.skills.loader import MAX_SKILL_BODY_CHARS, load_skills
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            short_body = "a" * (MAX_SKILL_BODY_CHARS - 10)
+            _make_skill(library, "small", "small skill", short_body)
+
+            skills = load_skills(["small"], library_dir=library)
+
+            self.assertEqual(len(skills), 1)
+            self.assertEqual(skills[0].body, short_body)
+            self.assertNotIn("truncated", skills[0].body.lower())
+
+    def test_body_over_cap_is_truncated_with_marker(self):
+        from server.harness.skills.loader import (
+            MAX_SKILL_BODY_CHARS,
+            TRUNCATION_MARKER,
+            load_skills,
+        )
+
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "_library"
+            oversize_body = "b" * (MAX_SKILL_BODY_CHARS + 500)
+            _make_skill(library, "big", "big skill", oversize_body)
+
+            with self.assertLogs("server.harness.skills.loader", level="WARNING") as cm:
+                skills = load_skills(["big"], library_dir=library)
+
+            self.assertEqual(len(skills), 1)
+            body = skills[0].body
+            self.assertTrue(body.endswith(TRUNCATION_MARKER))
+            self.assertEqual(len(body), MAX_SKILL_BODY_CHARS + len(TRUNCATION_MARKER))
+            self.assertTrue(any("truncating" in line.lower() for line in cm.output))
+
+    def test_truncation_marker_uses_unicode_ellipsis(self):
+        from server.harness.skills.loader import TRUNCATION_MARKER
+
+        self.assertEqual(TRUNCATION_MARKER, "[…truncated…]")
+
+
 if __name__ == "__main__":
     unittest.main()
