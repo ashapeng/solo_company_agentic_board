@@ -168,3 +168,65 @@ def test_xref_suppressed_shelved_member_emits_warning():
     warning_codes = [issue.code for issue in report.warnings]
     assert "xref.member_unknown" not in error_codes
     assert "xref.member_shelved" in warning_codes
+
+
+def test_xref_per_query_type_key_unknown_warns():
+    """Unknown query_type keys warn (might be a typo) but don't block."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {"non_existent_qt": {}}
+    report = validate_config(cfg)
+    warning_codes = [issue.code for issue in report.warnings]
+    assert "xref.query_type_unknown" in warning_codes
+
+
+def test_xref_per_query_type_known_key_passes():
+    """Real decision types from roster.yaml pass."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {"strategic": {}}
+    report = validate_config(cfg)
+    warning_codes = [issue.code for issue in report.warnings]
+    assert "xref.query_type_unknown" not in warning_codes
+
+
+def test_xref_stage1_sections_unknown_fails():
+    """Unknown stage1 compaction section is an error."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {
+            "compaction": {"stage1_sections": ["confidence", "made_up_section"]},
+        },
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.stage1_section_unknown" in codes
+
+
+def test_xref_stage1_sections_all_known_passes():
+    """Valid stage1 sections pass."""
+    cfg = HarnessConfig()
+    cfg.per_query_type = {
+        "strategic": {"compaction": {"stage1_sections": ["confidence", "tldr"]}},
+    }
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.stage1_section_unknown" not in codes
+
+
+def test_xref_hardening_model_unknown_fails():
+    """Unknown hardening.<x>_model rejects."""
+    cfg = HarnessConfig()
+    cfg.hardening["atomizer_model"] = "fakeprovider/bogus"
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.hardening_model_unknown" in codes
+
+
+def test_xref_hardening_model_none_passes():
+    """None falls back to atomizer_model — not an error."""
+    cfg = HarnessConfig()
+    cfg.hardening["contradiction_judge_model"] = None
+    cfg.hardening["sotb_judge_model"] = None
+    cfg.hardening["auto_promote_summarizer_model"] = None
+    report = validate_config(cfg)
+    codes = [issue.code for issue in report.errors]
+    assert "xref.hardening_model_unknown" not in codes

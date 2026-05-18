@@ -74,6 +74,9 @@ def validate_config(candidate: HarnessConfig | dict) -> ValidationReport:
     _check_schema(config, errors)
     _check_model_preferences(config, errors)
     _check_suppressed_members(config, errors, warnings)
+    _check_query_type_keys(config, warnings)
+    _check_stage1_sections(config, errors)
+    _check_hardening_models(config, errors)
 
     readiness = _compute_readiness(errors, warnings)
     return ValidationReport(
@@ -347,3 +350,101 @@ def _check_suppressed_members(
                     ),
                     severity="error",
                 ))
+
+
+_HARDENING_MODEL_FIELDS = (
+    "atomizer_model",
+    "contradiction_judge_model",
+    "sotb_judge_model",
+    "auto_promote_summarizer_model",
+)
+
+
+def _known_query_types() -> set[str]:
+    """Decision types enumerated in roster.yaml — the classifier output schema."""
+    try:
+        from server.board.roster import load_roster
+        roster = load_roster()
+    except Exception:
+        return set()
+    decision_types = roster.get("decision_types") or {}
+    return set(decision_types.keys())
+
+
+def _check_query_type_keys(
+    config: HarnessConfig, warnings: list[ValidationIssue],
+) -> None:
+    known = _known_query_types()
+    if not known:
+        return
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type in per_qt:
+        if query_type not in known:
+            warnings.append(ValidationIssue(
+                code="xref.query_type_unknown",
+                path=f"per_query_type.{query_type}",
+                message=(
+                    f"query_type {query_type!r} is not in roster.yaml "
+                    f"decision_types (known: {sorted(known)})"
+                ),
+                severity="warning",
+            ))
+
+
+def _check_stage1_sections(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    from .config import _VALID_STAGE1_COMPACTION_SECTIONS
+    per_qt = config.per_query_type if isinstance(config.per_query_type, dict) else {}
+    for query_type, qt_config in per_qt.items():
+        if not isinstance(qt_config, dict):
+            continue
+        compaction = qt_config.get("compaction")
+        if not isinstance(compaction, dict):
+            continue
+        for sub_key in ("stage1_sections", "stage1_detail_sections"):
+            sections = compaction.get(sub_key)
+            if not isinstance(sections, list):
+                continue
+            for section in sections:
+                if not isinstance(section, str):
+                    errors.append(ValidationIssue(
+                        code="xref.stage1_section_unknown",
+                        path=f"per_query_type.{query_type}.compaction.{sub_key}",
+                        message=f"non-string section entry {section!r}",
+                        severity="error",
+                    ))
+                    continue
+                normalized = section.lower()
+                if normalized == "tl;dr":
+                    normalized = "tldr"
+                if normalized not in _VALID_STAGE1_COMPACTION_SECTIONS:
+                    errors.append(ValidationIssue(
+                        code="xref.stage1_section_unknown",
+                        path=f"per_query_type.{query_type}.compaction.{sub_key}",
+                        message=(
+                            f"section {section!r} is not valid (allowed: "
+                            f"{sorted(_VALID_STAGE1_COMPACTION_SECTIONS)})"
+                        ),
+                        severity="error",
+                    ))
+
+
+def _check_hardening_models(
+    config: HarnessConfig, errors: list[ValidationIssue],
+) -> None:
+    hardening = config.hardening if isinstance(config.hardening, dict) else {}
+    for field_name in _HARDENING_MODEL_FIELDS:
+        value = hardening.get(field_name)
+        if value is None:
+            continue  # None falls back to atomizer_model per spec §4.2
+        if not _model_is_resolvable(value):
+            errors.append(ValidationIssue(
+                code="xref.hardening_model_unknown",
+                path=f"hardening.{field_name}",
+                message=(
+                    f"hardening.{field_name} = {value!r} does not resolve: "
+                    f"not in allowed set and prefix not in {sorted(_known_prefixes())}"
+                ),
+                severity="error",
+            ))
