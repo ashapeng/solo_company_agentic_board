@@ -259,5 +259,31 @@ class SkillListTest(unittest.TestCase):
             self.assertEqual(list_skills(library_dir=missing), [])
 
 
+class BundledSkillsTest(unittest.TestCase):
+    def test_pricing_research_skill_loads(self):
+        from server.harness.skills.loader import load_skills
+
+        skills = load_skills(["pricing_research"])  # uses real _library
+
+        self.assertEqual(len(skills), 1, "pricing_research skill must ship in the library")
+        skill = skills[0]
+        self.assertEqual(skill.name, "pricing_research")
+        self.assertTrue(skill.description)
+        self.assertTrue(skill.body)
+        self.assertIn("Westendorp", skill.body, "must reference the canonical method")
+
+    def test_jtbd_interview_skill_loads(self):
+        from server.harness.skills.loader import load_skills
+
+        skills = load_skills(["jtbd_interview"])  # uses real _library
+
+        self.assertEqual(len(skills), 1, "jtbd_interview skill must ship in the library")
+        skill = skills[0]
+        self.assertEqual(skill.name, "jtbd_interview")
+        self.assertTrue(skill.description)
+        self.assertTrue(skill.body)
+        self.assertIn("Jobs to be Done", skill.body)
+
+
 if __name__ == "__main__":
     unittest.main()
