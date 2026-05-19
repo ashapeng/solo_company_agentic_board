@@ -43,7 +43,15 @@ from ..llm import query_llm, LLMResponse, ToolCall
 from ..tools import Tool, ToolResult, execute_tool
 from ..metrics import CallMetrics, SessionMetrics
 from ..projection import project_board_decision, verification_to_dict
-from .prompts import format_stage1, format_stage2, format_stage3, format_stage4, format_standalone_secretary_brief
+from .prompts import (
+    compose_system_prompt,
+    format_stage1,
+    format_stage2,
+    format_stage3,
+    format_stage4,
+    format_standalone_secretary_brief,
+)
+from server.harness.skills import load_skills as _load_skills_for_member
 from .shortcut import ShortcutType, detect_shortcut
 
 logger = logging.getLogger(__name__)
@@ -1071,10 +1079,25 @@ class BoardOrchestrator:
             config=cfg,
         )
 
-        system_prompt = member.system_prompt
+        base_prompt = member.system_prompt
         addendum = getattr(self, "_evidence_addenda", {}).get(member.id)
         if stage == 1 and addendum:
-            system_prompt = f"{member.system_prompt}\n\n{addendum}"
+            base_prompt = f"{member.system_prompt}\n\n{addendum}"
+
+        # Spec §6.4: append member-declared skill bodies at Stage 1 and Stage 2.
+        skill_bodies: list[str] = []
+        if stage in (1, 2) and getattr(member, "skills", []):
+            skill_cache = getattr(self, "_skill_cache", None)
+            if skill_cache is None:
+                skill_cache = {}
+                self._skill_cache = skill_cache  # type: ignore[attr-defined]
+            cached = skill_cache.get(member.id)
+            if cached is None:
+                cached = _load_skills_for_member(list(member.skills))
+                skill_cache[member.id] = cached
+            skill_bodies = [s.body for s in cached]
+
+        system_prompt = compose_system_prompt(base_prompt, skill_bodies)
 
         self._fire(self._on_member_started, stage, member)
 
