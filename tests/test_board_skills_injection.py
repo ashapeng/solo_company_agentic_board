@@ -145,5 +145,68 @@ class Stage1SkillInjectionTest(unittest.TestCase):
             self.assertNotIn("---", system_prompt)
 
 
+class Stage2SkillInjectionTest(unittest.TestCase):
+    def test_query_member_appends_skill_body_to_system_prompt_at_stage_2(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from server.board.config import BoardMember
+
+        member = BoardMember(
+            id="researcher",
+            title="Researcher",
+            role="Voice of Customer",
+            expertise=[],
+            system_prompt="RESEARCHER BASE",
+            skills=["jtbd_interview"],
+        )
+
+        board = _make_orchestrator(member)
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm:
+            mock_llm.return_value = _make_fake_llm_resp()
+            asyncio.run(board._query_member(member, prompt="PROMPT", stage=2))
+
+            kwargs = mock_llm.call_args.kwargs
+            system_prompt = kwargs["system"]
+            self.assertIn("RESEARCHER BASE", system_prompt)
+            self.assertIn("Jobs to be Done", system_prompt,
+                          "jtbd_interview body must be appended at Stage 2")
+
+    def test_stage_3_and_4_do_not_inject_skills(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from server.board.config import BoardMember
+
+        member = BoardMember(
+            id="strategist",
+            title="Strategist",
+            role="CSO",
+            expertise=[],
+            system_prompt="STRATEGIST BASE",
+            skills=["pricing_research"],
+        )
+
+        board = _make_orchestrator(member)
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm:
+            mock_llm.return_value = _make_fake_llm_resp()
+            # Stage 3 / 4 prompts are sent via different methods, but the helper
+            # _query_member is the gate that controls injection. We pass stage=3
+            # directly to verify the conditional excludes non-1/2 stages.
+            asyncio.run(board._query_member(member, prompt="PROMPT", stage=3))
+
+            kwargs = mock_llm.call_args.kwargs
+            self.assertEqual(kwargs["system"], "STRATEGIST BASE")
+            self.assertNotIn("---", kwargs["system"])
+
+
 if __name__ == "__main__":
     unittest.main()
