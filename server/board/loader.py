@@ -157,6 +157,17 @@ def load_members(
         else:
             tags = []
 
+        # Build skills list (spec §6.2). Accept list, single string, null, or absent.
+        skills_raw = frontmatter.get("skills", [])
+        if skills_raw is None:
+            skills = []
+        elif isinstance(skills_raw, str):
+            skills = [skills_raw.strip()] if skills_raw.strip() else []
+        elif isinstance(skills_raw, list):
+            skills = [str(s).strip() for s in skills_raw if str(s).strip()]
+        else:
+            skills = []
+
         # Handle model_override (YAML null -> None)
         model_override = frontmatter.get("model_override")
         if model_override is None or model_override == "null":
@@ -174,6 +185,7 @@ def load_members(
             tags=tags,
             intake=_parse_member_intake(frontmatter.get("intake")),
             evidence_required=bool(frontmatter.get("evidence_required", False)),
+            skills=skills,
         )
         # Intake frontmatter is required for active council members (not shelved, not chairperson).
         # Shelved members that are explicitly activated also must satisfy the intake requirement.

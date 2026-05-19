@@ -70,6 +70,7 @@ class BoardMember:
     tags: list[str] = field(default_factory=list)
     intake: MemberIntake | None = None  # optional structured feedback intake
     evidence_required: bool = False    # whether member requires evidence inputs
+    skills: list[str] = field(default_factory=list)  # declared harness skill names (spec §6.2)
 
 
 # ---------------------------------------------------------------------------

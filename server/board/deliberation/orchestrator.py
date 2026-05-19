@@ -43,7 +43,15 @@ from ..llm import query_llm, LLMResponse, ToolCall
 from ..tools import Tool, ToolResult, execute_tool
 from ..metrics import CallMetrics, SessionMetrics
 from ..projection import project_board_decision, verification_to_dict
-from .prompts import format_stage1, format_stage2, format_stage3, format_stage4, format_standalone_secretary_brief
+from .prompts import (
+    compose_system_prompt,
+    format_stage1,
+    format_stage2,
+    format_stage3,
+    format_stage4,
+    format_standalone_secretary_brief,
+)
+from server.harness.skills import load_skills as _load_skills_for_member
 from .shortcut import ShortcutType, detect_shortcut
 
 logger = logging.getLogger(__name__)
@@ -522,6 +530,11 @@ class BoardSession:
     # elapsed_seconds, closed_early. Populated only when the flag is on AND
     # HEAVY tier AND disagreement >= threshold AND pick_top_pairs found pairs.
     auto_promoted_rebuttals: list[dict] = field(default_factory=list)
+    # Phase 3 skills (spec §6). Populated by the orchestrator at __init__ from
+    # each member's declared skills list. Shape:
+    #   {"used": {member_id: [skill_names_successfully_loaded]},
+    #    "missing": {member_id: [skill_names_not_found_or_malformed]}}
+    skills: dict = field(default_factory=lambda: {"used": {}, "missing": {}})
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -562,6 +575,7 @@ class BoardSession:
             "stage2_anonymization_map": self.stage2_anonymization_map,
             "disagreement_score": self.disagreement_score,
             "auto_promoted_rebuttals": self.auto_promoted_rebuttals,
+            "skills": self.skills,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
@@ -1071,10 +1085,38 @@ class BoardOrchestrator:
             config=cfg,
         )
 
-        system_prompt = member.system_prompt
+        base_prompt = member.system_prompt
         addendum = getattr(self, "_evidence_addenda", {}).get(member.id)
         if stage == 1 and addendum:
-            system_prompt = f"{member.system_prompt}\n\n{addendum}"
+            base_prompt = f"{member.system_prompt}\n\n{addendum}"
+
+        # Spec §6.4: append member-declared skill bodies at Stage 1 and Stage 2.
+        skill_bodies: list[str] = []
+        if stage in (1, 2) and getattr(member, "skills", []):
+            skill_cache = getattr(self, "_skill_cache", None)
+            if skill_cache is None:
+                skill_cache = {}
+                self._skill_cache = skill_cache  # type: ignore[attr-defined]
+            cached = skill_cache.get(member.id)
+            if cached is None:
+                cached = _load_skills_for_member(list(member.skills))
+                skill_cache[member.id] = cached
+                # Spec §6.3 / §6.6: record used and missing onto the session
+                # so they round-trip via BoardSession.to_dict() and feed the
+                # ledger `skills_used` column.
+                session = getattr(self, "_session", None) or getattr(self, "session", None)
+                if session is not None and hasattr(session, "skills"):
+                    loaded_names = [s.name for s in cached]
+                    if loaded_names:
+                        session.skills.setdefault("used", {})[member.id] = loaded_names
+                    missing_names = [
+                        n for n in member.skills if n not in set(loaded_names)
+                    ]
+                    if missing_names:
+                        session.skills.setdefault("missing", {})[member.id] = missing_names
+            skill_bodies = [s.body for s in cached]
+
+        system_prompt = compose_system_prompt(base_prompt, skill_bodies)
 
         self._fire(self._on_member_started, stage, member)
 

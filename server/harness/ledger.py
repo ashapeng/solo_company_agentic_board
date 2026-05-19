@@ -149,6 +149,9 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
         answers_count = 0
     delegation_tasks = delegation_plan.get("tasks", []) if isinstance(delegation_plan, dict) else []
 
+    skills_record = getattr(session, "skills", None) or {}
+    skills_used_map = skills_record.get("used", {}) if isinstance(skills_record, dict) else {}
+
     conn = _connect(db_path)
     try:
         conn.execute(
@@ -167,8 +170,9 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 clarification_questions_count, clarification_answers_count,
                 delegation_task_count,
                 harness_config_version,
-                verifier_model, verifier_provider, chairman_provider, applied_review_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                verifier_model, verifier_provider, chairman_provider, applied_review_id,
+                skills_used
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -204,6 +208,7 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 verification.get("verifier_provider"),
                 verification.get("chairman_provider"),
                 _active_review_id(conn),
+                json.dumps(skills_used_map),
             ),
         )
         conn.commit()
@@ -290,6 +295,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "applied_review_id": "TEXT",
         "routing_misses": "TEXT",
         "validation_warnings": "TEXT DEFAULT '[]'",
+        "skills_used": "TEXT",
     }
     for column, column_type in additions.items():
         if column not in existing:
