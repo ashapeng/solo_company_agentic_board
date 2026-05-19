@@ -55,6 +55,11 @@ def list_links(*args, **kwargs):
     return _store.list_links(*args, **kwargs)
 
 
+def list_linked_session_ids(*args, **kwargs):
+    kwargs.setdefault("db_path", _DEFAULT_DB_PATH)
+    return _store.list_linked_session_ids(*args, **kwargs)
+
+
 def delete_link(*args, **kwargs):
     kwargs.setdefault("db_path", _DEFAULT_DB_PATH)
     return _store.delete_link(*args, **kwargs)
@@ -90,6 +95,7 @@ __all__ = [
     "get_closeout",
     "get_initiative",
     "list_initiatives",
+    "list_linked_session_ids",
     "list_links",
     "update_initiative",
 ]

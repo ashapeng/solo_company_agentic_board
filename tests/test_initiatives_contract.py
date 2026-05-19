@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from typing import get_args
 
 import server.initiatives as initiative_store
+import server.execution as execution_store
 from server.initiatives import (
     ApprovalState,
     CarryoverDecisionValue,
@@ -371,6 +372,59 @@ class InitiativeApiContractTest(unittest.TestCase):
             initiatives.get_initiative("init_missing")
         self.assertEqual(404, exc.exception.status_code)
 
+    def test_linked_sessions_and_delegated_tasks_routes(self):
+        from server.api.routes import initiatives
+        from server.api.schemas import InitiativeCreateRequest, InitiativeLinkRequest
+
+        created = initiatives.create_initiative(
+            InitiativeCreateRequest(
+                title="Coordinate launch evidence",
+                objective="Keep board sessions and delegated tasks tied to launch work.",
+            )
+        )
+
+        initiatives.create_link(
+            created["id"],
+            InitiativeLinkRequest(
+                target_type="board_session",
+                target_id="board_session_123",
+                relationship="context",
+            ),
+        )
+
+        self.assertEqual(
+            {"initiative_id": created["id"], "session_ids": ["board_session_123"]},
+            initiatives.list_initiative_sessions(created["id"]),
+        )
+        self.assertEqual(
+            {"initiative_id": created["id"], "tasks": []},
+            initiatives.list_initiative_tasks(created["id"]),
+        )
+
+        execution_store.save_delegated_task(
+            {
+                "id": "task_launch_evidence",
+                "title": "Collect launch evidence",
+                "objective": "Gather the board evidence packet.",
+                "session_id": "board_session_123",
+                "initiative_id": created["id"],
+                "execution_unit_id": "engineering",
+                "manager_agent_id": "technical_lead",
+            }
+        )
+
+        tasks_response = initiatives.list_initiative_tasks(created["id"])
+        self.assertEqual(created["id"], tasks_response["initiative_id"])
+        self.assertEqual(["task_launch_evidence"], [task["id"] for task in tasks_response["tasks"]])
+
+        with self.assertRaises(HTTPException) as exc:
+            initiatives.list_initiative_sessions("init_missing")
+        self.assertEqual(404, exc.exception.status_code)
+
+        with self.assertRaises(HTTPException) as exc:
+            initiatives.list_initiative_tasks("init_missing")
+        self.assertEqual(404, exc.exception.status_code)
+
     def setUp(self):
         import tempfile
         from pathlib import Path
@@ -378,10 +432,13 @@ class InitiativeApiContractTest(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self._tmpdir.name)
         self._previous_db_path = initiative_store._DEFAULT_DB_PATH
+        self._previous_execution_db_path = execution_store._DEFAULT_DB_PATH
         initiative_store._DEFAULT_DB_PATH = self.tmp_path / "ledger.db"
+        execution_store._DEFAULT_DB_PATH = self.tmp_path / "ledger.db"
 
     def tearDown(self):
         initiative_store._DEFAULT_DB_PATH = self._previous_db_path
+        execution_store._DEFAULT_DB_PATH = self._previous_execution_db_path
         self._tmpdir.cleanup()
 
 

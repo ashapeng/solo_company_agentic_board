@@ -273,6 +273,11 @@ def list_links(initiative_id: str, *, db_path: Path | None = None) -> list[dict[
     return [_link_from_row(row).to_dict() for row in rows]
 
 
+def list_linked_session_ids(initiative_id: str, *, db_path: Path | None = None) -> list[str]:
+    links = list_links(initiative_id, db_path=db_path)
+    return [str(link["target_id"]) for link in links if link.get("target_type") == "board_session"]
+
+
 def delete_link(initiative_id: str, link_id: str, *, db_path: Path | None = None) -> dict[str, Any]:
     _load_required(initiative_id, db_path=db_path)
     conn = _connect(db_path)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from server import initiatives as initiative_store
+from server.execution import get_delegated_tasks_for_initiative
 from server.initiatives import InitiativeError
 
 from ..schemas import (
@@ -91,6 +92,25 @@ def list_links(initiative_id: str):
         return initiative_store.list_links(initiative_id)
     except InitiativeError as e:
         raise HTTPException(404, detail=str(e)) from e
+
+
+@router.get("/initiatives/{initiative_id}/sessions")
+def list_initiative_sessions(initiative_id: str):
+    try:
+        session_ids = initiative_store.list_linked_session_ids(initiative_id)
+    except InitiativeError as e:
+        raise HTTPException(404, detail=str(e)) from e
+    return {"initiative_id": initiative_id, "session_ids": session_ids}
+
+
+@router.get("/initiatives/{initiative_id}/tasks")
+def list_initiative_tasks(initiative_id: str):
+    if not initiative_store.get_initiative(initiative_id):
+        raise HTTPException(404, detail=f"Initiative not found: {initiative_id}")
+    return {
+        "initiative_id": initiative_id,
+        "tasks": get_delegated_tasks_for_initiative(initiative_id),
+    }
 
 
 @router.delete("/initiatives/{initiative_id}/links/{link_id}")
