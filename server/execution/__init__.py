@@ -53,6 +53,16 @@ def approve_delegated_task(*args, **kwargs):
     return _tasks.approve_delegated_task(*args, **kwargs)
 
 
+def get_delegated_tasks_for_initiative(*args, **kwargs):
+    kwargs.setdefault("db_path", _DEFAULT_DB_PATH)
+    return _tasks.get_delegated_tasks_for_initiative(*args, **kwargs)
+
+
+def approve_external_action(*args, **kwargs):
+    kwargs.setdefault("db_path", _DEFAULT_DB_PATH)
+    return _tasks.approve_external_action(*args, **kwargs)
+
+
 def plan_delegated_task(*args, **kwargs):
     kwargs.setdefault("db_path", _DEFAULT_DB_PATH)
     return _tasks.plan_delegated_task(*args, **kwargs)
@@ -94,10 +104,12 @@ __all__ = [
     "Subtask",
     "SubtaskPlan",
     "approve_delegated_task",
+    "approve_external_action",
     "attach_task_artifact",
     "create_evidence_packet",
     "default_subtask_plan",
     "get_delegated_task",
+    "get_delegated_tasks_for_initiative",
     "get_delegation_plan",
     "get_evidence_packet",
     "get_execution_agent",

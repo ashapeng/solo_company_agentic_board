@@ -1597,6 +1597,7 @@ class BoardOrchestrator:
         user_query: str,
         synthesis_content: str,
         session_id: str,
+        initiative_id: str | None = None,
         query_type: str | None = None,
         complexity: str | None = None,
     ) -> dict[str, Any]:
@@ -1623,6 +1624,7 @@ class BoardOrchestrator:
         plan = parse_delegation_plan(
             _wrap_delegation_json(first.content),
             session_id=session_id,
+            initiative_id=initiative_id,
         )
         if plan.get("tasks") and not plan.get("structured_output_failed"):
             return plan
@@ -1653,6 +1655,7 @@ class BoardOrchestrator:
         repaired = parse_delegation_plan(
             _wrap_delegation_json(repair.content),
             session_id=session_id,
+            initiative_id=initiative_id,
         )
         repaired.setdefault("warnings", [])
         repaired["warnings"] = [*plan.get("warnings", []), *repaired["warnings"]]
@@ -2085,12 +2088,14 @@ class BoardOrchestrator:
                     user_query=effective_query,
                     synthesis_content=session.stage3_synthesis.content,
                     session_id=session_id,
+                    initiative_id=session.initiative_id,
                     query_type=query_type,
                     complexity=complexity,
                 )
             else:
                 session.delegation_plan = {
                     "session_id": session_id,
+                    "initiative_id": session.initiative_id,
                     "tasks": [],
                     "warnings": ["No delegation-worthy action section found in chair synthesis."],
                     "requires_approval": True,

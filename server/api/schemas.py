@@ -66,6 +66,10 @@ class TaskApprovalRequest(BaseModel):
     approve: bool = True
 
 
+class ExternalActionApprovalRequest(BaseModel):
+    approve: bool = True
+
+
 class TaskPlanRequest(BaseModel):
     manager_agent_id: str | None = None
     subtask_plan: dict | None = None

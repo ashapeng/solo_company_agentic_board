@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.execution import (
     ExecutionError,
     approve_delegated_task,
+    approve_external_action,
     attach_task_artifact,
     create_evidence_packet,
     get_delegated_task,
@@ -23,6 +24,7 @@ from server.execution import (
 
 from ..schemas import (
     EvidencePacketRequest,
+    ExternalActionApprovalRequest,
     TaskApprovalRequest,
     TaskArtifactRequest,
     TaskPlanRequest,
@@ -64,6 +66,14 @@ async def delegated_task(task_id: str):
 async def approve_task(task_id: str, req: TaskApprovalRequest):
     try:
         return approve_delegated_task(task_id, approve=req.approve)
+    except ExecutionError as e:
+        raise HTTPException(422, detail=str(e))
+
+
+@router.post("/delegated-tasks/{task_id}/approve-external-action")
+async def approve_task_external_action(task_id: str, req: ExternalActionApprovalRequest):
+    try:
+        return approve_external_action(task_id, approve=req.approve)
     except ExecutionError as e:
         raise HTTPException(422, detail=str(e))
 

@@ -19,6 +19,7 @@ from .routes.board import (
 from .routes.board import feedback as _feedback
 from .routes.execution import (
     approve_task,
+    approve_task_external_action,
     attach_artifact,
     create_evidence,
     delegated_task,
@@ -42,6 +43,7 @@ from .schemas import (
     AdjournRequest,
     ContinueRequest,
     EvidencePacketRequest,
+    ExternalActionApprovalRequest,
     FeedbackRequest,
     HarnessReviewApprovalRequest,
     HarnessReviewRunRequest,
@@ -72,6 +74,7 @@ __all__ = [
     "BoardOrchestrator",
     "ContinueRequest",
     "EvidencePacketRequest",
+    "ExternalActionApprovalRequest",
     "FeedbackRequest",
     "HarnessReviewApprovalRequest",
     "HarnessReviewRunRequest",
@@ -90,6 +93,7 @@ __all__ = [
     "apply_harness_review_endpoint",
     "approve_harness_review_endpoint",
     "approve_task",
+    "approve_task_external_action",
     "attach_artifact",
     "create_evidence",
     "delegated_task",

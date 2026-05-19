@@ -5,8 +5,10 @@ from pathlib import Path
 from server.execution import (
     ExecutionError,
     approve_delegated_task,
+    approve_external_action,
     create_evidence_packet,
     get_delegated_task,
+    get_delegated_tasks_for_initiative,
     get_delegation_plan,
     get_evidence_packet,
     list_execution_agents,
@@ -78,6 +80,74 @@ class DelegationPlanContractTest(unittest.TestCase):
         self.assertEqual("technical_lead", task["manager_agent_id"])
         self.assertEqual("proposed", task["status"])
         self.assertTrue(task["approval_required"])
+
+    def test_parse_delegation_plan_threads_initiative_and_external_action_fields(self):
+        plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [
+    {
+      "id": "publish_release_note",
+      "title": "Publish release note",
+      "objective": "Publish the engineering update after approval.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead",
+      "external_action_required": true,
+      "external_action_type": "publish",
+      "external_action_approved": true
+    },
+    {
+      "id": "invalid_external_action",
+      "title": "Prepare deploy checklist",
+      "objective": "Prepare deployment checklist for the engineering slice.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead",
+      "external_action_type": "not-real"
+    }
+  ]
+}
+```
+""",
+            session_id="board_exec_test",
+            initiative_id="init_task4",
+        )
+
+        self.assertEqual("init_task4", plan["initiative_id"])
+        publish_task = plan["tasks"][0]
+        self.assertEqual("init_task4", publish_task["initiative_id"])
+        self.assertTrue(publish_task["external_action_required"])
+        self.assertEqual("publish", publish_task["external_action_type"])
+        self.assertTrue(publish_task["external_action_approved"])
+        checklist_task = plan["tasks"][1]
+        self.assertEqual("init_task4", checklist_task["initiative_id"])
+        self.assertFalse(checklist_task["external_action_required"])
+        self.assertEqual("none", checklist_task["external_action_type"])
+        self.assertFalse(checklist_task["external_action_approved"])
+
+    def test_external_action_string_booleans_are_normalized(self):
+        plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "id": "string_false_external_action",
+    "title": "Prepare internal checklist",
+    "objective": "Prepare an internal engineering checklist.",
+    "execution_unit_id": "engineering",
+    "manager_agent_id": "technical_lead",
+    "external_action_required": "false",
+    "external_action_approved": "false"
+  }]
+}
+```
+""",
+            session_id="board_exec_test",
+        )
+        task = plan["tasks"][0]
+
+        self.assertFalse(task["external_action_required"])
+        self.assertFalse(task["external_action_approved"])
 
     def test_malformed_delegation_plan_warns_without_failing(self):
         plan = parse_delegation_plan(
@@ -201,6 +271,106 @@ class DelegatedTaskLifecycleContractTest(unittest.TestCase):
         plan = get_delegation_plan("board_exec_test", db_path=self.db_path)
 
         self.assertEqual("approved", plan["tasks"][0]["status"])
+
+    def test_initiative_and_external_action_fields_persist_and_filter(self):
+        plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [
+    {
+      "id": "task_for_init_a",
+      "title": "Deploy engineering slice",
+      "objective": "Deploy the validated engineering change.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead",
+      "external_action_type": "deploy"
+    }
+  ]
+}
+```
+""",
+            session_id="initiative_filter_session",
+            initiative_id="init_a",
+        )
+        record_delegation_plan(plan, db_path=self.db_path)
+        other_plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [
+    {
+      "id": "task_for_init_b",
+      "title": "Document engineering slice",
+      "objective": "Write the technical handoff.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead",
+      "external_action_required": false
+    }
+  ]
+}
+```
+""",
+            session_id="initiative_filter_session",
+            initiative_id="init_b",
+        )
+        record_delegation_plan(other_plan, db_path=self.db_path)
+
+        reloaded = get_delegation_plan("initiative_filter_session", db_path=self.db_path)
+        self.assertEqual("init_a", reloaded["initiative_id"])
+        self.assertEqual("init_a", reloaded["tasks"][0]["initiative_id"])
+        self.assertEqual("deploy", reloaded["tasks"][0]["external_action_type"])
+        self.assertTrue(reloaded["tasks"][0]["external_action_required"])
+        self.assertFalse(reloaded["tasks"][0]["external_action_approved"])
+
+        filtered = get_delegated_tasks_for_initiative("init_a", db_path=self.db_path)
+        self.assertEqual(["task_for_init_a"], [task["id"] for task in filtered])
+
+    def test_external_action_approval_requires_external_action(self):
+        plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [
+    {
+      "id": "external_publish_task",
+      "title": "Publish engineering update",
+      "objective": "Publish the technical release update.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead",
+      "external_action_type": "publish"
+    },
+    {
+      "id": "internal_planning_task",
+      "title": "Plan engineering update",
+      "objective": "Plan the technical release update.",
+      "execution_unit_id": "engineering",
+      "manager_agent_id": "technical_lead"
+    }
+  ]
+}
+```
+""",
+            session_id="external_action_session",
+            initiative_id="init_external",
+        )
+        record_delegation_plan(plan, db_path=self.db_path)
+
+        approved = approve_external_action(
+            "external_publish_task",
+            approve=True,
+            db_path=self.db_path,
+        )
+        self.assertTrue(approved["external_action_approved"])
+        rejected = approve_external_action(
+            "external_publish_task",
+            approve=False,
+            db_path=self.db_path,
+        )
+        self.assertFalse(rejected["external_action_approved"])
+
+        with self.assertRaises(ExecutionError):
+            approve_external_action("internal_planning_task", db_path=self.db_path)
 
 
 class EvidencePacketContractTest(unittest.TestCase):

@@ -104,6 +104,7 @@ DEFAULT_DB_PATH = Path("data/harness_ledger.db")
 TASK_STATUSES = {"proposed", "approved", "running", "completed", "blocked", "rejected"}
 SUBTASK_STATUSES = {"planned", "running", "completed", "blocked", "failed"}
 PRIORITIES = {"p0", "p1", "p2"}
+EXTERNAL_ACTION_TYPES = {"outreach", "publish", "deploy", "spend", "none"}
 
 TASK_SCHEMA = """
 CREATE TABLE IF NOT EXISTS delegated_tasks (
@@ -183,6 +184,10 @@ class DelegatedTask:
     source: str = "board_synthesis"
     result_summary: str = ""
     status_detail: str = ""
+    initiative_id: str | None = None
+    external_action_required: bool = False
+    external_action_type: str = "none"
+    external_action_approved: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -191,6 +196,7 @@ class DelegatedTask:
 @dataclass
 class DelegationPlan:
     session_id: str
+    initiative_id: str | None = None
     tasks: list[DelegatedTask] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     requires_approval: bool = True
@@ -200,6 +206,7 @@ class DelegationPlan:
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "initiative_id": self.initiative_id,
             "tasks": [task.to_dict() for task in self.tasks],
             "warnings": self.warnings,
             "requires_approval": self.requires_approval,
@@ -212,6 +219,7 @@ def parse_delegation_plan(
     synthesis_content: str | None,
     *,
     session_id: str,
+    initiative_id: str | None = None,
 ) -> dict[str, Any]:
     """Parse a chairman Delegation Plan section into a stable task contract."""
     warnings: list[str] = []
@@ -219,6 +227,7 @@ def parse_delegation_plan(
     if not section:
         return DelegationPlan(
             session_id=session_id,
+            initiative_id=initiative_id,
             warnings=["No Delegation Plan section found in chair synthesis."],
         ).to_dict()
 
@@ -227,6 +236,7 @@ def parse_delegation_plan(
         truncated = _looks_truncated_json(section)
         return DelegationPlan(
             session_id=session_id,
+            initiative_id=initiative_id,
             warnings=["Delegation Plan section did not contain parseable JSON."],
             structured_output_failed=True,
             truncated=truncated,
@@ -236,6 +246,7 @@ def parse_delegation_plan(
     if not isinstance(raw_tasks, list):
         return DelegationPlan(
             session_id=session_id,
+            initiative_id=initiative_id,
             warnings=["Delegation Plan JSON must be an object with tasks or a task array."],
             structured_output_failed=True,
         ).to_dict()
@@ -245,7 +256,12 @@ def parse_delegation_plan(
         if not isinstance(raw_task, dict):
             warnings.append(f"Skipped delegation task {index + 1}: not an object.")
             continue
-        task = _normalize_delegated_task(raw_task, session_id=session_id, index=index)
+        task = _normalize_delegated_task(
+            raw_task,
+            session_id=session_id,
+            initiative_id=initiative_id,
+            index=index,
+        )
         if task is None:
             warnings.append(f"Skipped delegation task {index + 1}: missing title and objective.")
             continue
@@ -254,7 +270,14 @@ def parse_delegation_plan(
     if not tasks:
         warnings.append("Delegation Plan contained no valid tasks.")
 
-    return DelegationPlan(session_id=session_id, tasks=tasks, warnings=warnings).to_dict()
+    plan = DelegationPlan(
+        session_id=session_id,
+        initiative_id=initiative_id,
+        tasks=tasks,
+        warnings=warnings,
+    ).to_dict()
+    plan["initiative_id"] = initiative_id
+    return plan
 
 
 def default_subtask_plan(task: dict[str, Any]) -> dict[str, Any]:
@@ -376,12 +399,33 @@ def get_delegation_plan(session_id: str, *, db_path: Path | None = None) -> dict
         ).fetchall()
     finally:
         conn.close()
+    tasks = [json.loads(row["payload"]) for row in rows]
     return {
         "session_id": session_id,
-        "tasks": [json.loads(row["payload"]) for row in rows],
+        "initiative_id": _initiative_id_for_tasks(tasks),
+        "tasks": tasks,
         "warnings": [],
         "requires_approval": True,
     }
+
+
+def get_delegated_tasks_for_initiative(
+    initiative_id: str,
+    *,
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    conn = _connect_tasks(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT payload FROM delegated_tasks ORDER BY created_at, task_id",
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        task
+        for row in rows
+        if (task := json.loads(row["payload"])).get("initiative_id") == initiative_id
+    ]
 
 
 def approve_delegated_task(
@@ -394,6 +438,19 @@ def approve_delegated_task(
     if task["status"] not in {"proposed", "approved", "rejected"}:
         raise ExecutionError(f"Task cannot be approved from status: {task['status']}")
     task["status"] = "approved" if approve else "rejected"
+    return save_delegated_task(task, db_path=db_path)
+
+
+def approve_external_action(
+    task_id: str,
+    *,
+    approve: bool = True,
+    db_path: Path | None = None,
+) -> dict[str, Any]:
+    task = _load_required_task(task_id, db_path=db_path)
+    if not _coerce_bool(task.get("external_action_required"), default=False):
+        raise ExecutionError("Task does not require an external action.")
+    task["external_action_approved"] = bool(approve)
     return save_delegated_task(task, db_path=db_path)
 
 
@@ -497,7 +554,13 @@ def attach_task_artifact(
     return save_delegated_task(task, db_path=db_path)
 
 
-def _normalize_delegated_task(raw: dict[str, Any], *, session_id: str, index: int) -> DelegatedTask | None:
+def _normalize_delegated_task(
+    raw: dict[str, Any],
+    *,
+    session_id: str,
+    initiative_id: str | None,
+    index: int,
+) -> DelegatedTask | None:
     title = str(raw.get("title") or raw.get("task") or "").strip()
     objective = str(raw.get("objective") or raw.get("description") or "").strip()
     if not title and not objective:
@@ -528,6 +591,16 @@ def _normalize_delegated_task(raw: dict[str, Any], *, session_id: str, index: in
     if not accountable:
         accountable = BOARD_MEMBER_BY_UNIT.get(unit_id, "chairperson")
 
+    external_type = str(raw.get("external_action_type") or "none").strip().lower()
+    if external_type not in EXTERNAL_ACTION_TYPES:
+        external_type = "none"
+    external_required = _coerce_bool(
+        raw.get("external_action_required"),
+        default=external_type != "none",
+    )
+    external_approved = _coerce_bool(raw.get("external_action_approved"), default=False)
+    task_initiative_id = initiative_id or raw.get("initiative_id")
+
     return DelegatedTask(
         id=task_id,
         session_id=session_id,
@@ -543,6 +616,10 @@ def _normalize_delegated_task(raw: dict[str, Any], *, session_id: str, index: in
         approval_required=bool(raw.get("approval_required", agent.default_approval_required)),
         artifacts=_string_list(raw.get("artifacts")),
         source="board_synthesis",
+        initiative_id=str(task_initiative_id) if task_initiative_id else None,
+        external_action_required=external_required,
+        external_action_type=external_type,
+        external_action_approved=external_approved,
     )
 
 
@@ -659,6 +736,30 @@ def _connect_tasks(db_path: Path | None = None) -> sqlite3.Connection:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _initiative_id_for_tasks(tasks: list[dict[str, Any]]) -> str | None:
+    for task in tasks:
+        initiative_id = task.get("initiative_id")
+        if initiative_id:
+            return str(initiative_id)
+    return None
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    return bool(value)
 
 
 def _string_list(value: Any) -> list[str]:

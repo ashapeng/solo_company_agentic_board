@@ -27,8 +27,10 @@ from server.api import (
     plan_task,
     review_sotb,
     TaskApprovalRequest,
+    ExternalActionApprovalRequest,
     TaskPlanRequest,
     TaskStatusRequest,
+    approve_task_external_action,
     update_task_status,
 )
 from server.execution import parse_delegation_plan, record_delegation_plan
@@ -306,6 +308,41 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.task_id, plan["tasks"][0]["id"])
         self.assertTrue(plan["requires_approval"])
+
+    async def test_external_action_approval_route_approves_and_maps_execution_errors(self):
+        external_plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "id": "route_external_publish_task",
+    "title": "Publish engineering note",
+    "objective": "Publish the approved engineering note.",
+    "execution_unit_id": "engineering",
+    "manager_agent_id": "technical_lead",
+    "external_action_type": "publish"
+  }]
+}
+```
+""",
+            session_id="board_1700000002",
+            initiative_id="init_route_external",
+        )
+        record_delegation_plan(external_plan)
+
+        approved = await approve_task_external_action(
+            "route_external_publish_task",
+            ExternalActionApprovalRequest(),
+        )
+        self.assertTrue(approved["external_action_approved"])
+
+        with self.assertRaises(HTTPException) as raised:
+            await approve_task_external_action(
+                self.task_id,
+                ExternalActionApprovalRequest(),
+            )
+
+        self.assertEqual(422, raised.exception.status_code)
 
     async def test_web_search_route_rate_limits_requests(self):
         from unittest.mock import MagicMock
