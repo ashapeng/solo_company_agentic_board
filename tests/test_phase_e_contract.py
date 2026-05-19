@@ -296,11 +296,21 @@ class PhaseEModelAssignmentContractTest(unittest.IsolatedAsyncioTestCase):
                         with patch.object(orchestrator, "stage3", new=AsyncMock(return_value=synthesis)):
                             with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
                                 with patch("server.board.deliberation.orchestrator._record_to_ledger"):
-                                    mock_classify.return_value = classification
-                                    await orchestrator.deliberate(
-                                        "Should we launch?",
-                                        session_id="model_preference",
-                                    )
+                                    with patch.object(
+                                        orchestrator,
+                                        "_collect_member_evidence",
+                                        new=AsyncMock(return_value=("", {})),
+                                    ):
+                                        with patch.object(
+                                            orchestrator,
+                                            "stage4_secretary_brief",
+                                            new=AsyncMock(return_value=None),
+                                        ):
+                                            mock_classify.return_value = classification
+                                            await orchestrator.deliberate(
+                                                "Should we launch?",
+                                                session_id="model_preference",
+                                            )
 
         self.assertEqual("model-b", orchestrator.model_assignments["strategist"])
 

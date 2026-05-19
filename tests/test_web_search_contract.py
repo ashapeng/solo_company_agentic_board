@@ -9,7 +9,7 @@ from server.execution import web_search
 
 class WebSearchContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_provider_returns_unavailable_warning(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"AGENTIC_BOARD_WEB_SEARCH_SESSION_CAP": "1000"}, clear=True):
             result = await web_search("ai product photography", provider="disabled")
 
         self.assertEqual([], result["results"])

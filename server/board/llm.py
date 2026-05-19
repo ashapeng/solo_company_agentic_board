@@ -416,7 +416,7 @@ async def _send_kimi(
         raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
 
     api_key = _read_required_env("MOONSHOT_API_KEY", "Kimi/Moonshot")
-    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1")
+    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1")
     _, provider_model = _split_model_id(model)
     full_messages = _full_messages(messages, system)
 
@@ -1087,7 +1087,7 @@ async def _stream_kimi(
         raise RuntimeError("openai is not installed. Run `uv add openai`.") from e
 
     api_key = _read_required_env("MOONSHOT_API_KEY", "Kimi/Moonshot")
-    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1")
+    base_url = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1")
     _, provider_model = _split_model_id(model)
     kwargs: dict[str, Any] = {
         "model": provider_model,

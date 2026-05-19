@@ -403,7 +403,7 @@ def _llm_resp(content: str):
 
 class DetectQueryConflictsTest(unittest.TestCase):
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_judge_says_contradicts_returns_one_conflict_entry(self):
         from server.memory.sotb_governance import (
@@ -501,7 +501,7 @@ class DetectQueryConflictsTest(unittest.TestCase):
 
 class ReadSotbGovernedTest(unittest.TestCase):
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_returns_md_and_empty_health_for_empty_index(self):
         from server.memory.sotb_governance import read_sotb_governed
@@ -609,7 +609,7 @@ def _cfg(**overrides):
 
 class ApplySotbUpdateGovernedTest(unittest.TestCase):
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def _setup(self, td: str, *, existing_md: str = "", existing_entries: list | None = None):
         from server.memory.sotb_governance import write_sotb_index

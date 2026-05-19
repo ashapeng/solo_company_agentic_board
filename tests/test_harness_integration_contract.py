@@ -79,17 +79,19 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
         """verify_synthesis should use config's verification_threshold."""
         with patch("server.board.deliberation.verification.get_config") as mock_cfg:
             mock_cfg.return_value = HarnessConfig(verification_threshold=9.0)
-            with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
-                mock_llm.return_value = LLMResponse(
-                    content='{"score": 8, "deficiencies": [], "suggestions": []}',
-                    model="verifier", input_tokens=1, output_tokens=1,
-                    latency_seconds=0.1,
-                )
+            with patch("server.board.deliberation.verification.atomize", new_callable=AsyncMock) as mock_atomize:
+                with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
+                    mock_atomize.return_value = []
+                    mock_llm.return_value = LLMResponse(
+                        content='{"score": 8, "deficiencies": [], "suggestions": []}',
+                        model="verifier", input_tokens=1, output_tokens=1,
+                        latency_seconds=0.1,
+                    )
 
-                result = await verify_synthesis("summary", "peer review", "query")
+                    result = await verify_synthesis("summary", "peer review", "query")
 
-                # Score 8 < threshold 9 → should NOT pass
-                self.assertFalse(result.passed)
+                    # Score 8 < threshold 9 -> should NOT pass
+                    self.assertFalse(result.passed)
 
     async def test_verification_uses_tuned_query_type_threshold(self):
         with patch("server.board.deliberation.verification.get_config") as mock_cfg:
@@ -97,19 +99,21 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                 verification_threshold=7.0,
                 per_query_type={"strategic": {"verification_threshold": 9.0}},
             )
-            with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
-                mock_llm.return_value = LLMResponse(
-                    content='{"score": 8, "deficiencies": [], "suggestions": []}',
-                    model="verifier", input_tokens=1, output_tokens=1,
-                    latency_seconds=0.1,
-                )
+            with patch("server.board.deliberation.verification.atomize", new_callable=AsyncMock) as mock_atomize:
+                with patch("server.board.deliberation.verification.query_llm", new_callable=AsyncMock) as mock_llm:
+                    mock_atomize.return_value = []
+                    mock_llm.return_value = LLMResponse(
+                        content='{"score": 8, "deficiencies": [], "suggestions": []}',
+                        model="verifier", input_tokens=1, output_tokens=1,
+                        latency_seconds=0.1,
+                    )
 
-                result = await verify_synthesis(
-                    "summary",
-                    "peer review",
-                    "query",
-                    query_type="strategic",
-                )
+                    result = await verify_synthesis(
+                        "summary",
+                        "peer review",
+                        "query",
+                        query_type="strategic",
+                    )
 
         self.assertFalse(result.passed)
 
@@ -126,6 +130,11 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
             relevant_member_ids=["strategist", "chairperson"],
             reasoning="Strategic launch decision.",
         )
+        sotb_health = type(
+            "SotbHealth",
+            (),
+            {"to_dict": lambda self: {"warnings_count": 0}},
+        )()
 
         with patch("server.board.deliberation.classifier.classify_query", new_callable=AsyncMock) as mock_classify:
             with patch.object(orchestrator, "stage1", new=AsyncMock(return_value=[])):
@@ -134,19 +143,35 @@ class ConfigWiringAsyncContractTest(unittest.IsolatedAsyncioTestCase):
                         with patch("server.board.deliberation.verification.verify_synthesis", new_callable=AsyncMock) as mock_verify:
                             with patch.object(BoardSession, "save", return_value=Path("/tmp/s.json")):
                                 with patch("server.board.deliberation.orchestrator._record_to_ledger"):
-                                    mock_classify.return_value = classification
-                                    mock_verify.return_value = VerificationResult(
-                                        score=8,
-                                        passed=True,
-                                        deficiencies=[],
-                                        suggestions=[],
-                                    )
+                                    with patch.object(
+                                        orchestrator,
+                                        "_collect_member_evidence",
+                                        new=AsyncMock(return_value=("", {})),
+                                    ):
+                                        with patch(
+                                            "server.board.deliberation.orchestrator.read_sotb_governed",
+                                            new=AsyncMock(
+                                                return_value=("# State of the Board\n", sotb_health),
+                                            ),
+                                        ):
+                                            with patch.object(
+                                                orchestrator,
+                                                "stage4_secretary_brief",
+                                                new=AsyncMock(return_value=None),
+                                            ):
+                                                mock_classify.return_value = classification
+                                                mock_verify.return_value = VerificationResult(
+                                                    score=8,
+                                                    passed=True,
+                                                    deficiencies=[],
+                                                    suggestions=[],
+                                                )
 
-                                    await orchestrator.deliberate(
-                                        "Should we launch?",
-                                        verify=True,
-                                        session_id="verification_query_type",
-                                    )
+                                                await orchestrator.deliberate(
+                                                    "Should we launch?",
+                                                    verify=True,
+                                                    session_id="verification_query_type",
+                                                )
 
         self.assertEqual("strategic", mock_verify.await_args.kwargs["query_type"])
 
