@@ -279,5 +279,126 @@ class SkillCacheScopeTest(unittest.TestCase):
                              "skills must be loaded once per orchestrator per member")
 
 
+class SessionSkillsRecordTest(unittest.TestCase):
+    def test_used_skills_recorded_on_session_after_query(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from pathlib import Path
+
+        from server.board.config import BoardMember
+        from server.board.deliberation.orchestrator import BoardSession
+        from server.harness.skills import Skill
+
+        member = BoardMember(
+            id="strategist",
+            title="Strategist",
+            role="CSO",
+            expertise=[],
+            system_prompt="BASE",
+            skills=["pricing_research"],
+        )
+        session = BoardSession(session_id="s-x", user_query="q")
+
+        board = _make_orchestrator(member)
+        board._session = session  # type: ignore[attr-defined]
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm, patch(
+            "server.board.deliberation.orchestrator._load_skills_for_member"
+        ) as mock_load:
+            mock_llm.return_value = _make_fake_llm_resp()
+            mock_load.return_value = [
+                Skill(name="pricing_research", description="d",
+                      body="body", path=Path("/tmp/p")),
+            ]
+
+            asyncio.run(board._query_member(member, prompt="P", stage=1))
+
+            self.assertEqual(
+                session.skills["used"],
+                {"strategist": ["pricing_research"]},
+            )
+            self.assertEqual(session.skills["missing"], {})
+
+    def test_missing_skills_recorded_on_session(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from pathlib import Path
+
+        from server.board.config import BoardMember
+        from server.board.deliberation.orchestrator import BoardSession
+        from server.harness.skills import Skill
+
+        member = BoardMember(
+            id="strategist",
+            title="Strategist",
+            role="CSO",
+            expertise=[],
+            system_prompt="BASE",
+            skills=["pricing_research", "ghost_skill"],
+        )
+        session = BoardSession(session_id="s-y", user_query="q")
+
+        board = _make_orchestrator(member)
+        board._session = session  # type: ignore[attr-defined]
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm, patch(
+            "server.board.deliberation.orchestrator._load_skills_for_member"
+        ) as mock_load:
+            mock_llm.return_value = _make_fake_llm_resp()
+            # Loader returns only the resolvable skill; the other is "missing".
+            mock_load.return_value = [
+                Skill(name="pricing_research", description="d",
+                      body="body", path=Path("/tmp/p")),
+            ]
+
+            asyncio.run(board._query_member(member, prompt="P", stage=1))
+
+            self.assertEqual(
+                session.skills["used"],
+                {"strategist": ["pricing_research"]},
+            )
+            self.assertEqual(
+                session.skills["missing"],
+                {"strategist": ["ghost_skill"]},
+            )
+
+    def test_member_without_skills_writes_nothing_to_session(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from server.board.config import BoardMember
+        from server.board.deliberation.orchestrator import BoardSession
+
+        member = BoardMember(
+            id="critic",
+            title="Critic",
+            role="Red Team",
+            expertise=[],
+            system_prompt="BASE",
+            skills=[],
+        )
+        session = BoardSession(session_id="s-z", user_query="q")
+
+        board = _make_orchestrator(member)
+        board._session = session  # type: ignore[attr-defined]
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm:
+            mock_llm.return_value = _make_fake_llm_resp()
+
+            asyncio.run(board._query_member(member, prompt="P", stage=1))
+
+            self.assertEqual(session.skills["used"], {})
+            self.assertEqual(session.skills["missing"], {})
+
+
 if __name__ == "__main__":
     unittest.main()

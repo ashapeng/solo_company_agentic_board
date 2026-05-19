@@ -1101,6 +1101,19 @@ class BoardOrchestrator:
             if cached is None:
                 cached = _load_skills_for_member(list(member.skills))
                 skill_cache[member.id] = cached
+                # Spec §6.3 / §6.6: record used and missing onto the session
+                # so they round-trip via BoardSession.to_dict() and feed the
+                # ledger `skills_used` column.
+                session = getattr(self, "_session", None) or getattr(self, "session", None)
+                if session is not None and hasattr(session, "skills"):
+                    loaded_names = [s.name for s in cached]
+                    if loaded_names:
+                        session.skills.setdefault("used", {})[member.id] = loaded_names
+                    missing_names = [
+                        n for n in member.skills if n not in set(loaded_names)
+                    ]
+                    if missing_names:
+                        session.skills.setdefault("missing", {})[member.id] = missing_names
             skill_bodies = [s.body for s in cached]
 
         system_prompt = compose_system_prompt(base_prompt, skill_bodies)
