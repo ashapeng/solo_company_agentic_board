@@ -208,5 +208,76 @@ class Stage2SkillInjectionTest(unittest.TestCase):
             self.assertNotIn("---", kwargs["system"])
 
 
+class SkillCacheScopeTest(unittest.TestCase):
+    def test_skill_cache_is_per_orchestrator_instance(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from server.board.config import BoardMember
+
+        member = BoardMember(
+            id="strategist",
+            title="Strategist",
+            role="CSO",
+            expertise=[],
+            system_prompt="BASE",
+            skills=["pricing_research"],
+        )
+
+        board_a = _make_orchestrator(member)
+        board_b = _make_orchestrator(member)
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm:
+            mock_llm.return_value = _make_fake_llm_resp()
+            asyncio.run(board_a._query_member(member, prompt="P", stage=1))
+            asyncio.run(board_b._query_member(member, prompt="P", stage=1))
+
+            self.assertIsNotNone(getattr(board_a, "_skill_cache", None))
+            self.assertIsNotNone(getattr(board_b, "_skill_cache", None))
+            self.assertIsNot(board_a._skill_cache, board_b._skill_cache)
+
+    def test_skill_cache_repeat_call_does_not_reload(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from server.board.config import BoardMember
+
+        member = BoardMember(
+            id="strategist",
+            title="Strategist",
+            role="CSO",
+            expertise=[],
+            system_prompt="BASE",
+            skills=["pricing_research"],
+        )
+
+        board = _make_orchestrator(member)
+
+        with patch(
+            "server.board.deliberation.orchestrator.query_llm",
+            new_callable=AsyncMock,
+        ) as mock_llm, patch(
+            "server.board.deliberation.orchestrator._load_skills_for_member"
+        ) as mock_load:
+            mock_llm.return_value = _make_fake_llm_resp()
+            # Build a real Skill object so the cache stores a usable entry.
+            from server.harness.skills import Skill
+            from pathlib import Path
+            mock_load.return_value = [
+                Skill(name="pricing_research", description="d",
+                      body="van Westendorp body", path=Path("/tmp/p")),
+            ]
+
+            asyncio.run(board._query_member(member, prompt="P", stage=1))
+            asyncio.run(board._query_member(member, prompt="P", stage=2))
+            asyncio.run(board._query_member(member, prompt="P", stage=1))
+
+            self.assertEqual(mock_load.call_count, 1,
+                             "skills must be loaded once per orchestrator per member")
+
+
 if __name__ == "__main__":
     unittest.main()
