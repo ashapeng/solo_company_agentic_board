@@ -463,6 +463,8 @@ class BoardSession:
     """Full record of a board deliberation session."""
     session_id: str
     user_query: str
+    initiative_id: str | None = None
+    initiative_mode: str = "ad_hoc"
     stage1_responses: list[MemberResponse] = field(default_factory=list)
     stage2_responses: list[MemberResponse] = field(default_factory=list)
     stage3_synthesis: MemberResponse | None = None
@@ -552,6 +554,8 @@ class BoardSession:
         result = {
             "session_id": self.session_id,
             "user_query": self.user_query,
+            "initiative_id": self.initiative_id,
+            "initiative_mode": self.initiative_mode,
             "stage1": [_resp(r) for r in self.stage1_responses],
             "stage2": [_resp(r) for r in self.stage2_responses],
             "stage3": _resp(self.stage3_synthesis) if self.stage3_synthesis else None,
@@ -1440,6 +1444,8 @@ class BoardOrchestrator:
         user_query: str,
         *,
         session_id: str | None = None,
+        initiative_id: str | None = None,
+        initiative_mode: str = "ad_hoc",
     ) -> BoardSession:
         """Produce a secretary executive brief **without** running Stages 1–3.
 
@@ -1451,7 +1457,12 @@ class BoardOrchestrator:
         first principles.
         """
         sid = session_id or f"board_{int(time.time())}"
-        session = BoardSession(session_id=sid, user_query=user_query)
+        session = BoardSession(
+            session_id=sid,
+            user_query=user_query,
+            initiative_id=initiative_id,
+            initiative_mode=initiative_mode,
+        )
         session.metrics = self.metrics
         session.status = "completed"
 
@@ -1660,6 +1671,8 @@ class BoardOrchestrator:
         skip_classify: bool = False,
         verify: bool = False,
         session_id: str | None = None,
+        initiative_id: str | None = None,
+        initiative_mode: str = "ad_hoc",
         clarification_answers: dict[str, Any] | None = None,
     ) -> BoardSession:
         """Run the full 3-stage board deliberation.
@@ -1678,7 +1691,12 @@ class BoardOrchestrator:
             Optional session identifier.
         """
         session_id = session_id or f"board_{int(time.time())}"
-        session = BoardSession(session_id=session_id, user_query=user_query)
+        session = BoardSession(
+            session_id=session_id,
+            user_query=user_query,
+            initiative_id=initiative_id,
+            initiative_mode=initiative_mode,
+        )
         session.metrics = self.metrics
 
         # ── Shortcut detection  (intent-based routing BEFORE full pipeline) ──
@@ -1699,6 +1717,8 @@ class BoardOrchestrator:
                 return await self.run_secretary_shortcut(
                     user_query,
                     session_id=session_id,
+                    initiative_id=initiative_id,
+                    initiative_mode=initiative_mode,
                 )
             # Future shortcut types can be added here.
 
@@ -2081,6 +2101,8 @@ class BoardOrchestrator:
                 if "parse" in warning.lower() or session.delegation_plan.get("structured_output_failed"):
                     session.structured_output_warnings.append(warning)
                     self._fire(self._on_structured_output_warning, warning)
+            if session.initiative_id:
+                session.delegation_plan["initiative_id"] = session.initiative_id
             self._fire(self._on_phase, "memory", "Proposing SOTB memory update for CEO approval.")
             session.memory = propose_memory_update(
                 session.stage3_synthesis.content,

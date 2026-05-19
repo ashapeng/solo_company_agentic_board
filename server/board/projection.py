@@ -126,6 +126,8 @@ def adapt_session_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "session_id": record.get("session_id"),
         "user_query": record.get("user_query"),
+        "initiative_id": record.get("initiative_id"),
+        "initiative_mode": record.get("initiative_mode", "ad_hoc"),
         "classification": record.get("classification"),
         "participation": record.get("participation", []),
         "decision": record.get("decision") or project_board_decision(synthesis),

@@ -148,6 +148,16 @@ class ApiCliContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(8, payload["verification"]["score"])
         self.assertTrue(payload["memory"]["requires_approval"])
 
+    def test_query_request_accepts_initiative_fields(self):
+        req = QueryRequest(
+            query="Should we pivot?",
+            initiative_id="init_123",
+            initiative_mode="attach",
+        )
+
+        self.assertEqual("init_123", req.initiative_id)
+        self.assertEqual("attach", req.initiative_mode)
+
 
 class ApiLocalOnlyContractTest(unittest.IsolatedAsyncioTestCase):
     async def test_api_rejects_non_local_request_when_remote_is_disabled(self):

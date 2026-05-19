@@ -153,6 +153,8 @@ async def deliberate(req: QueryRequest, request: Request):
                 skip_classify=req.full_board,
                 verify=req.verify,
                 session_id=req.session_id,
+                initiative_id=req.initiative_id,
+                initiative_mode=req.initiative_mode,
                 clarification_answers=req.clarification_answers,
             )
         except BoardDeliberationError as e:
@@ -168,6 +170,8 @@ async def deliberate(req: QueryRequest, request: Request):
             skip_classify=req.full_board,
             verify=req.verify,
             session_id=req.session_id,
+            initiative_id=req.initiative_id,
+            initiative_mode=req.initiative_mode,
             clarification_answers=req.clarification_answers,
         )
     except BoardDeliberationError as e:
@@ -260,6 +264,8 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                     skip_classify=req.full_board,
                     verify=req.verify,
                     session_id=req.session_id,
+                    initiative_id=req.initiative_id,
+                    initiative_mode=req.initiative_mode,
                     clarification_answers=req.clarification_answers,
                 )
             )
@@ -284,6 +290,8 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                     skip_classify=req.full_board,
                     verify=req.verify,
                     session_id=req.session_id,
+                    initiative_id=req.initiative_id,
+                    initiative_mode=req.initiative_mode,
                     clarification_answers=req.clarification_answers,
                 )
             )
@@ -366,6 +374,8 @@ async def continue_meeting(
         )
 
     session = BoardSession(session_id=data["session_id"], user_query=data["user_query"])
+    session.initiative_id = data.get("initiative_id")
+    session.initiative_mode = data.get("initiative_mode", "ad_hoc")
     session.continuation_count = int(data.get("continuation_count", 0))
     session.secretary_briefs = [
         _resp_from_dict(b) for b in (data.get("secretary_briefs") or []) if b is not None

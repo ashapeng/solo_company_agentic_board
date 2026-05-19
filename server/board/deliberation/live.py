@@ -241,6 +241,8 @@ class LiveBoardConversation:
         skip_classify: bool = False,
         verify: bool = False,  # kept for endpoint symmetry; live verification is deferred
         session_id: str | None = None,
+        initiative_id: str | None = None,
+        initiative_mode: str = "ad_hoc",
         clarification_answers: dict[str, Any] | None = None,  # reserved for parity
         existing_session: BoardSession | None = None,
     ) -> BoardSession:
@@ -249,6 +251,13 @@ class LiveBoardConversation:
         if existing_session is not None:
             session = existing_session
             session_id = session.session_id
+            if not getattr(session, "initiative_id", None) and initiative_id:
+                session.initiative_id = initiative_id
+            if (
+                getattr(session, "initiative_mode", "ad_hoc") == "ad_hoc"
+                and initiative_mode != "ad_hoc"
+            ):
+                session.initiative_mode = initiative_mode
             # Cap check before doing any work.
             if session.continuation_count >= self.max_continuations:
                 self._emit({
@@ -275,7 +284,12 @@ class LiveBoardConversation:
             })
         else:
             session_id = session_id or f"board_{int(time.time())}"
-            session = BoardSession(session_id=session_id, user_query=user_query)
+            session = BoardSession(
+                session_id=session_id,
+                user_query=user_query,
+                initiative_id=initiative_id,
+                initiative_mode=initiative_mode,
+            )
             session.metrics = self.metrics
             session.status = "running"
             self._current_round = 0
@@ -304,7 +318,12 @@ class LiveBoardConversation:
                     ),
                     on_stage_done=lambda s, rs: self._emit({"event": "stage_done", "stage": s, "count": 1}),
                 )
-                result = await tmp_orch.run_secretary_shortcut(user_query, session_id=session_id)
+                result = await tmp_orch.run_secretary_shortcut(
+                    user_query,
+                    session_id=session_id,
+                    initiative_id=session.initiative_id,
+                    initiative_mode=session.initiative_mode,
+                )
                 result.status = "completed"
                 return result
 

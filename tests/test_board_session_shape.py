@@ -1,7 +1,9 @@
 """Contract tests for BoardSession multi-round fields."""
 
+import asyncio
 import unittest
 
+from server.board.projection import adapt_session_record
 from server.board.deliberation.orchestrator import BoardSession, MemberResponse
 
 
@@ -39,6 +41,68 @@ class BoardSessionShapeTest(unittest.TestCase):
         self.assertEqual(as_dict["secretary_briefs"][0]["content"], "b")
         # Back-compat: secretary_brief still surfaces the latest entry.
         self.assertEqual(as_dict["secretary_brief"]["content"], "b")
+
+    def test_to_dict_serializes_initiative_fields(self) -> None:
+        session = BoardSession(
+            session_id="board_1",
+            user_query="Q",
+            initiative_id="init_123",
+            initiative_mode="attach",
+        )
+
+        as_dict = session.to_dict()
+
+        self.assertEqual(as_dict["initiative_id"], "init_123")
+        self.assertEqual(as_dict["initiative_mode"], "attach")
+
+    def test_projection_exposes_initiative_fields_with_default_mode(self) -> None:
+        projected = adapt_session_record({
+            "session_id": "board_1",
+            "user_query": "Q",
+            "initiative_id": "init_123",
+        })
+
+        self.assertEqual(projected["initiative_id"], "init_123")
+        self.assertEqual(projected["initiative_mode"], "ad_hoc")
+
+    def test_live_existing_session_applies_missing_initiative_fields(self) -> None:
+        from server.board.deliberation.live import LiveBoardConversation
+
+        session = BoardSession(session_id="board_3", user_query="Q")
+        conversation = LiveBoardConversation(max_turns=1)
+        session.continuation_count = conversation.max_continuations
+
+        resumed = asyncio.run(conversation.discuss(
+            "continue",
+            existing_session=session,
+            initiative_id="init_123",
+            initiative_mode="attach",
+        ))
+
+        self.assertEqual(resumed.initiative_id, "init_123")
+        self.assertEqual(resumed.initiative_mode, "attach")
+
+    def test_live_existing_session_preserves_existing_initiative_fields(self) -> None:
+        from server.board.deliberation.live import LiveBoardConversation
+
+        session = BoardSession(
+            session_id="board_4",
+            user_query="Q",
+            initiative_id="init_existing",
+            initiative_mode="attach",
+        )
+        conversation = LiveBoardConversation(max_turns=1)
+        session.continuation_count = conversation.max_continuations
+
+        resumed = asyncio.run(conversation.discuss(
+            "continue",
+            existing_session=session,
+            initiative_id="init_other",
+            initiative_mode="create_draft",
+        ))
+
+        self.assertEqual(resumed.initiative_id, "init_existing")
+        self.assertEqual(resumed.initiative_mode, "attach")
 
     def test_status_can_be_adjourned(self) -> None:
         session = BoardSession(session_id="board_1", user_query="Q")
