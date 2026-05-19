@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -79,6 +79,44 @@ class TaskStatusRequest(BaseModel):
 
 class TaskArtifactRequest(BaseModel):
     artifact: str
+
+
+class InitiativeCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    objective: str = Field(min_length=1, max_length=2000)
+    success_criteria: list[str] = Field(default_factory=list)
+    departments: list[str] = Field(default_factory=list)
+    created_from: Literal["manual", "founder_command", "board_suggestion"] = "manual"
+    source_session_id: str | None = None
+    timebox_start: str | None = None
+    timebox_end: str | None = None
+
+
+class InitiativeUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    objective: str | None = Field(default=None, min_length=1, max_length=2000)
+    success_criteria: list[str] | None = None
+    departments: list[str] | None = None
+    timebox_start: str | None = None
+    timebox_end: str | None = None
+
+
+class InitiativeActivateRequest(BaseModel):
+    approve: bool = True
+
+
+class InitiativeLinkRequest(BaseModel):
+    target_type: Literal["sotb_entry", "initiative", "board_session", "delegated_task", "artifact"]
+    target_id: str = Field(min_length=1, max_length=300)
+    relationship: Literal["context", "output", "carryover", "evidence", "artifact"]
+
+
+class InitiativeCloseoutRequest(BaseModel):
+    founder_outcome: Literal["success", "failure", "mixed"]
+    founder_notes: str = ""
+    retrospective_session_id: str | None = None
+    memory_proposals: list[str] = Field(default_factory=list)
+    carryover_decisions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EvidencePacketRequest(BaseModel):

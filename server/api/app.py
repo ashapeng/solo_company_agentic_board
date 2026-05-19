@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .routes import board, execution, harness, memory, system
+from .routes import board, execution, harness, initiatives, memory, system
 from .state import UI_DIST_ASSETS
 
 
@@ -32,7 +32,7 @@ app.add_middleware(
         "*",  # Allow all origins for remote access
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["content-type", "authorization"],
 )
 
@@ -73,6 +73,7 @@ async def enforce_local_only(request: Request, call_next):
 
 
 app.include_router(system.router)
+app.include_router(initiatives.router)
 app.include_router(board.router)
 app.include_router(execution.router)
 app.include_router(memory.router)

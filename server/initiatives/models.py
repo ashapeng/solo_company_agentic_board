@@ -65,6 +65,7 @@ class Initiative:
     status: InitiativeStatus = "draft"
     approval_state: ApprovalState = "draft"
     created_from: CreatedFrom = "manual"
+    source_session_id: str | None = None
     created_at: str = ""
     updated_at: str = ""
     closeout: dict[str, Any] | None = None
@@ -95,7 +96,7 @@ class InitiativeCloseout:
     initiative_id: str
     founder_outcome: str
     founder_notes: str
-    retrospective_session_id: str
+    retrospective_session_id: str | None = None
     memory_proposals: list[str] = field(default_factory=list)
     carryover_decisions: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = ""

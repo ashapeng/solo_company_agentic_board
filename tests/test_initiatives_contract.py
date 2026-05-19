@@ -1,6 +1,8 @@
 import unittest
+from fastapi import HTTPException
 from typing import get_args
 
+import server.initiatives as initiative_store
 from server.initiatives import (
     ApprovalState,
     CarryoverDecisionValue,
@@ -175,6 +177,131 @@ class InitiativeStoreContractTest(unittest.TestCase):
         with self.assertRaises(InitiativeError):
             delete_link(initiative["id"], link["id"], db_path=db_path)
 
+    def test_legacy_closeout_schema_accepts_nullable_retrospective_session(self):
+        import sqlite3
+
+        db_path = self._db_path()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE initiatives (
+                    initiative_id    TEXT PRIMARY KEY,
+                    title            TEXT NOT NULL,
+                    objective        TEXT NOT NULL,
+                    status           TEXT NOT NULL,
+                    approval_state   TEXT NOT NULL,
+                    created_from     TEXT NOT NULL,
+                    success_criteria TEXT NOT NULL,
+                    departments      TEXT NOT NULL,
+                    timebox_start    TEXT NOT NULL,
+                    timebox_end      TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at       TEXT NOT NULL,
+                    updated_at       TEXT NOT NULL
+                );
+                CREATE TABLE initiative_closeouts (
+                    initiative_id             TEXT PRIMARY KEY,
+                    founder_outcome           TEXT NOT NULL,
+                    founder_notes             TEXT NOT NULL,
+                    retrospective_session_id  TEXT NOT NULL,
+                    memory_proposals          TEXT NOT NULL,
+                    carryover_decisions       TEXT NOT NULL,
+                    created_at                TEXT NOT NULL
+                );
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        initiative = create_initiative(
+            title="Close legacy initiative",
+            objective="Verify nullable closeout migration.",
+            db_path=db_path,
+        )
+
+        closed = close_initiative(
+            initiative["id"],
+            founder_outcome="mixed",
+            founder_notes="No retrospective session was created.",
+            retrospective_session_id=None,
+            memory_proposals=[],
+            carryover_decisions=[],
+            db_path=db_path,
+        )
+
+        self.assertIsNone(closed["closeout"]["retrospective_session_id"])
+
+    def test_interrupted_closeout_migration_recovers_legacy_rows(self):
+        import sqlite3
+
+        db_path = self._db_path()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE initiatives (
+                    initiative_id    TEXT PRIMARY KEY,
+                    title            TEXT NOT NULL,
+                    objective        TEXT NOT NULL,
+                    status           TEXT NOT NULL,
+                    approval_state   TEXT NOT NULL,
+                    created_from     TEXT NOT NULL,
+                    success_criteria TEXT NOT NULL,
+                    departments      TEXT NOT NULL,
+                    timebox_start    TEXT NOT NULL,
+                    timebox_end      TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at       TEXT NOT NULL,
+                    updated_at       TEXT NOT NULL
+                );
+                CREATE TABLE initiative_closeouts (
+                    initiative_id             TEXT PRIMARY KEY,
+                    founder_outcome           TEXT NOT NULL,
+                    founder_notes             TEXT NOT NULL,
+                    retrospective_session_id  TEXT,
+                    memory_proposals          TEXT NOT NULL,
+                    carryover_decisions       TEXT NOT NULL,
+                    created_at                TEXT NOT NULL
+                );
+                CREATE TABLE initiative_closeouts_legacy (
+                    initiative_id             TEXT PRIMARY KEY,
+                    founder_outcome           TEXT NOT NULL,
+                    founder_notes             TEXT NOT NULL,
+                    retrospective_session_id  TEXT NOT NULL,
+                    memory_proposals          TEXT NOT NULL,
+                    carryover_decisions       TEXT NOT NULL,
+                    created_at                TEXT NOT NULL
+                );
+                INSERT INTO initiatives (
+                    initiative_id, title, objective, status, approval_state,
+                    created_from, success_criteria, departments, timebox_start,
+                    timebox_end, source_session_id, created_at, updated_at
+                ) VALUES (
+                    'init_legacy', 'Recovered initiative', 'Recover closeout rows.',
+                    'closed', 'draft', 'manual', '[]', '[]', '2026-05-19',
+                    '2026-05-26', NULL, '2026-05-19T00:00:00+00:00',
+                    '2026-05-19T00:00:00+00:00'
+                );
+                INSERT INTO initiative_closeouts_legacy (
+                    initiative_id, founder_outcome, founder_notes,
+                    retrospective_session_id, memory_proposals,
+                    carryover_decisions, created_at
+                ) VALUES (
+                    'init_legacy', 'success', 'Recovered from legacy table.',
+                    'board_legacy', '[]', '[]', '2026-05-19T00:00:00+00:00'
+                );
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        recovered = get_initiative("init_legacy", db_path=db_path)
+
+        self.assertEqual("board_legacy", recovered["closeout"]["retrospective_session_id"])
+
     def _db_path(self):
         return self.tmp_path / "ledger.db"
 
@@ -186,6 +313,75 @@ class InitiativeStoreContractTest(unittest.TestCase):
         self.tmp_path = Path(self._tmpdir.name)
 
     def tearDown(self):
+        self._tmpdir.cleanup()
+
+
+class InitiativeApiContractTest(unittest.TestCase):
+    def test_create_activate_link_closeout_and_missing_get_routes(self):
+        from server.api.routes import initiatives
+        from server.api.schemas import (
+            InitiativeActivateRequest,
+            InitiativeCloseoutRequest,
+            InitiativeCreateRequest,
+            InitiativeLinkRequest,
+        )
+
+        created = initiatives.create_initiative(
+            InitiativeCreateRequest(
+                title="Launch customer onboarding",
+                objective="Validate the founder-led onboarding loop.",
+                success_criteria=["First customer completes setup"],
+                departments=["product", "engineering"],
+                source_session_id="board_source_1",
+            )
+        )
+
+        self.assertEqual("draft", created["status"])
+        self.assertEqual("board_source_1", created["source_session_id"])
+
+        activated = initiatives.activate_initiative(
+            created["id"],
+            InitiativeActivateRequest(),
+        )
+        self.assertEqual("active", activated["status"])
+
+        link = initiatives.create_link(
+            created["id"],
+            InitiativeLinkRequest(
+                target_type="board_session",
+                target_id="session_123",
+                relationship="context",
+            ),
+        )
+        self.assertEqual("board_session", link["target_type"])
+
+        closed = initiatives.close_initiative(
+            created["id"],
+            InitiativeCloseoutRequest(
+                founder_outcome="success",
+                retrospective_session_id="session_retrospective",
+                memory_proposals=[],
+                carryover_decisions=[],
+            ),
+        )
+        self.assertEqual("closed", closed["status"])
+        self.assertEqual("success", closed["closeout"]["founder_outcome"])
+
+        with self.assertRaises(HTTPException) as exc:
+            initiatives.get_initiative("init_missing")
+        self.assertEqual(404, exc.exception.status_code)
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self._tmpdir.name)
+        self._previous_db_path = initiative_store._DEFAULT_DB_PATH
+        initiative_store._DEFAULT_DB_PATH = self.tmp_path / "ledger.db"
+
+    def tearDown(self):
+        initiative_store._DEFAULT_DB_PATH = self._previous_db_path
         self._tmpdir.cleanup()
 
 

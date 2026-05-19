@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS initiatives (
     departments      TEXT NOT NULL,
     timebox_start    TEXT NOT NULL,
     timebox_end      TEXT NOT NULL,
+    source_session_id TEXT,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS initiative_closeouts (
     initiative_id             TEXT PRIMARY KEY,
     founder_outcome           TEXT NOT NULL,
     founder_notes             TEXT NOT NULL,
-    retrospective_session_id  TEXT NOT NULL,
+    retrospective_session_id  TEXT,
     memory_proposals          TEXT NOT NULL,
     carryover_decisions       TEXT NOT NULL,
     created_at                TEXT NOT NULL,
@@ -89,6 +90,7 @@ def create_initiative(
     timebox_start: str | None = None,
     timebox_end: str | None = None,
     created_from: str = "manual",
+    source_session_id: str | None = None,
     db_path: Path | None = None,
 ) -> dict[str, Any]:
     title = _required_text(title, "Title")
@@ -107,6 +109,7 @@ def create_initiative(
         status="draft",
         approval_state="draft",
         created_from=created_from,
+        source_session_id=source_session_id,
         created_at=now,
         updated_at=now,
     )
@@ -117,8 +120,8 @@ def create_initiative(
             """INSERT INTO initiatives (
                 initiative_id, title, objective, status, approval_state,
                 created_from, success_criteria, departments, timebox_start,
-                timebox_end, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                timebox_end, source_session_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             _initiative_values(initiative),
         )
         conn.commit()
@@ -300,7 +303,7 @@ def close_initiative(
     initiative_id: str,
     founder_outcome: str,
     founder_notes: str,
-    retrospective_session_id: str,
+    retrospective_session_id: str | None,
     memory_proposals: list[str],
     carryover_decisions: list[dict[str, Any]],
     *,
@@ -315,7 +318,7 @@ def close_initiative(
         initiative_id=initiative_id,
         founder_outcome=founder_outcome,
         founder_notes=str(founder_notes or ""),
-        retrospective_session_id=_required_text(retrospective_session_id, "Retrospective session id"),
+        retrospective_session_id=str(retrospective_session_id) if retrospective_session_id else None,
         memory_proposals=_string_list(memory_proposals),
         carryover_decisions=carryover_decisions,
         created_at=utc_now(),
@@ -329,7 +332,8 @@ def close_initiative(
             """UPDATE initiatives SET
                 title = ?, objective = ?, status = ?, approval_state = ?,
                 created_from = ?, success_criteria = ?, departments = ?,
-                timebox_start = ?, timebox_end = ?, created_at = ?, updated_at = ?
+                timebox_start = ?, timebox_end = ?, source_session_id = ?,
+                created_at = ?, updated_at = ?
             WHERE initiative_id = ?""",
             (
                 initiative["title"],
@@ -341,6 +345,7 @@ def close_initiative(
                 json_list(initiative["departments"]),
                 initiative["timebox_start"],
                 initiative["timebox_end"],
+                initiative.get("source_session_id"),
                 initiative["created_at"],
                 initiative["updated_at"],
                 initiative["id"],
@@ -374,8 +379,75 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _ensure_schema_migrations(conn)
     conn.commit()
     return conn
+
+
+def _ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+    initiative_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(initiatives)").fetchall()
+    }
+    if "source_session_id" not in initiative_columns:
+        conn.execute("ALTER TABLE initiatives ADD COLUMN source_session_id TEXT")
+
+    _recover_legacy_closeouts(conn)
+
+    closeout_columns = conn.execute("PRAGMA table_info(initiative_closeouts)").fetchall()
+    retrospective_column = next(
+        (row for row in closeout_columns if row["name"] == "retrospective_session_id"),
+        None,
+    )
+    if retrospective_column is not None and retrospective_column["notnull"]:
+        _rebuild_closeouts_with_nullable_retrospective(conn)
+
+
+def _recover_legacy_closeouts(conn: sqlite3.Connection) -> None:
+    legacy_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("initiative_closeouts_legacy",),
+    ).fetchone()
+    if not legacy_exists:
+        return
+    conn.execute(
+        """INSERT OR IGNORE INTO initiative_closeouts (
+            initiative_id, founder_outcome, founder_notes, retrospective_session_id,
+            memory_proposals, carryover_decisions, created_at
+        )
+        SELECT
+            initiative_id, founder_outcome, founder_notes, retrospective_session_id,
+            memory_proposals, carryover_decisions, created_at
+        FROM initiative_closeouts_legacy"""
+    )
+    conn.execute("DROP TABLE initiative_closeouts_legacy")
+
+
+def _rebuild_closeouts_with_nullable_retrospective(conn: sqlite3.Connection) -> None:
+    conn.execute("ALTER TABLE initiative_closeouts RENAME TO initiative_closeouts_legacy")
+    conn.execute(
+        """CREATE TABLE initiative_closeouts (
+            initiative_id             TEXT PRIMARY KEY,
+            founder_outcome           TEXT NOT NULL,
+            founder_notes             TEXT NOT NULL,
+            retrospective_session_id  TEXT,
+            memory_proposals          TEXT NOT NULL,
+            carryover_decisions       TEXT NOT NULL,
+            created_at                TEXT NOT NULL,
+            FOREIGN KEY (initiative_id) REFERENCES initiatives(initiative_id)
+        )"""
+    )
+    conn.execute(
+        """INSERT INTO initiative_closeouts (
+            initiative_id, founder_outcome, founder_notes, retrospective_session_id,
+            memory_proposals, carryover_decisions, created_at
+        )
+        SELECT
+            initiative_id, founder_outcome, founder_notes, retrospective_session_id,
+            memory_proposals, carryover_decisions, created_at
+        FROM initiative_closeouts_legacy"""
+    )
+    conn.execute("DROP TABLE initiative_closeouts_legacy")
 
 
 def _initiative_values(initiative: Initiative) -> tuple[Any, ...]:
@@ -390,6 +462,7 @@ def _initiative_values(initiative: Initiative) -> tuple[Any, ...]:
         json_list(initiative.departments),
         initiative.timebox_start,
         initiative.timebox_end,
+        initiative.source_session_id,
         initiative.created_at,
         initiative.updated_at,
     )
@@ -407,6 +480,7 @@ def _initiative_from_row(
         status=row["status"],
         approval_state=row["approval_state"],
         created_from=row["created_from"],
+        source_session_id=row["source_session_id"],
         success_criteria=_string_list(parse_json_list(row["success_criteria"])),
         departments=_string_list(parse_json_list(row["departments"])),
         timebox_start=row["timebox_start"],
@@ -458,7 +532,8 @@ def _save_initiative(initiative: dict[str, Any], *, db_path: Path | None = None)
             """UPDATE initiatives SET
                 title = ?, objective = ?, status = ?, approval_state = ?,
                 created_from = ?, success_criteria = ?, departments = ?,
-                timebox_start = ?, timebox_end = ?, created_at = ?, updated_at = ?
+                timebox_start = ?, timebox_end = ?, source_session_id = ?,
+                created_at = ?, updated_at = ?
             WHERE initiative_id = ?""",
             (
                 initiative["title"],
@@ -470,6 +545,7 @@ def _save_initiative(initiative: dict[str, Any], *, db_path: Path | None = None)
                 json_list(initiative["departments"]),
                 initiative["timebox_start"],
                 initiative["timebox_end"],
+                initiative.get("source_session_id"),
                 initiative["created_at"],
                 initiative["updated_at"],
                 initiative["id"],
