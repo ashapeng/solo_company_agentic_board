@@ -128,6 +128,7 @@ BOARD_MEMBER_BY_UNIT = {
     "engineering": "architect",
     "security": "guardian",
     "operations": "operator",
+    "marketing": "strategist",
     "finance": "chairperson",
     "legal": "critic",
 }
@@ -681,6 +682,7 @@ def _infer_execution_unit(text: str) -> str:
         ("operations", ["release", "monitoring", "runbook", "incident", "deploy"]),
         ("research", ["research", "interview", "evidence", "customer", "source"]),
         ("product", ["mvp", "roadmap", "feature", "product", "pmf"]),
+        ("marketing", ["marketing", "campaign", "outreach", "content", "distribution", "launch"]),
         ("strategy", ["market", "strategy", "positioning", "gtm", "competition"]),
         ("engineering", ["build", "implementation", "architecture", "technical", "code"]),
     ]

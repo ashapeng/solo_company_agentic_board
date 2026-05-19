@@ -150,6 +150,28 @@ EXECUTION_AGENTS = [
         benchmark_queries=["What has to exist before this can run safely?"],
     ),
     ExecutionAgent(
+        id="marketing_lead",
+        title="Marketing Lead Agent",
+        execution_unit_id="marketing",
+        role="Owns campaign planning, outreach drafts, distribution experiments, and result analysis.",
+        capabilities=[
+            "campaign_planning",
+            "outreach_drafts",
+            "content_planning",
+            "distribution_experiments",
+            "marketing_analytics",
+        ],
+        system_prompt="You convert strategy decisions into approval-gated marketing execution work.",
+        allowed_tools=["files", "web_search"],
+        default_approval_required=True,
+        max_parallel_subagents=2,
+        subagent_templates=_templates(
+            ("campaign_planner", "Campaign Planner Agent", "Plan campaign steps and assets.", ["files"], "Campaign plan with channels, assets, and approval gates."),
+            ("distribution_analyst", "Distribution Analyst Agent", "Analyze channels and experiment results.", ["web_search", "files"], "Distribution analysis with next experiment recommendation."),
+        ),
+        benchmark_queries=["What is the smallest marketing experiment that can produce signal?"],
+    ),
+    ExecutionAgent(
         id="finance_lead",
         title="Finance Lead Agent",
         execution_unit_id="finance",

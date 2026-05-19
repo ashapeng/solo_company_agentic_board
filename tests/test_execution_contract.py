@@ -67,6 +67,52 @@ class ExecutionRegistryContractTest(unittest.TestCase):
         self.assertIn("legal", unit_ids)
         self.assertTrue(next(agent for agent in agents if agent["id"] == "technical_lead")["subagent_templates"])
 
+    def test_marketing_agent_unit_and_task_inference_are_registered(self):
+        agents = list_execution_agents()
+        units = list_execution_units()
+
+        marketing_agent = next(agent for agent in agents if agent["id"] == "marketing_lead")
+        self.assertEqual("marketing", marketing_agent["execution_unit_id"])
+        self.assertIn("campaign_planning", marketing_agent["capabilities"])
+        self.assertIn("marketing", {unit["id"] for unit in units})
+
+        explicit_plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "title": "Plan launch campaign",
+    "objective": "Create campaign steps and outreach drafts for launch.",
+    "execution_unit_id": "marketing"
+  }]
+}
+```
+""",
+            session_id="board_marketing_test",
+        )
+        explicit_task = explicit_plan["tasks"][0]
+        self.assertEqual("marketing", explicit_task["execution_unit_id"])
+        self.assertEqual("marketing_lead", explicit_task["manager_agent_id"])
+        self.assertEqual("strategist", explicit_task["accountable_board_member_id"])
+
+        inferred_plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "title": "Draft outreach campaign",
+    "objective": "Prepare launch content and distribution experiments."
+  }]
+}
+```
+""",
+            session_id="board_marketing_inferred_test",
+        )
+        inferred_task = inferred_plan["tasks"][0]
+        self.assertEqual("marketing", inferred_task["execution_unit_id"])
+        self.assertEqual("marketing_lead", inferred_task["manager_agent_id"])
+        self.assertEqual("strategist", inferred_task["accountable_board_member_id"])
+
 
 class DelegationPlanContractTest(unittest.TestCase):
     def test_parses_chair_delegation_plan(self):
