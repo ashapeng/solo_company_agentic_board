@@ -530,6 +530,11 @@ class BoardSession:
     # elapsed_seconds, closed_early. Populated only when the flag is on AND
     # HEAVY tier AND disagreement >= threshold AND pick_top_pairs found pairs.
     auto_promoted_rebuttals: list[dict] = field(default_factory=list)
+    # Phase 3 skills (spec §6). Populated by the orchestrator at __init__ from
+    # each member's declared skills list. Shape:
+    #   {"used": {member_id: [skill_names_successfully_loaded]},
+    #    "missing": {member_id: [skill_names_not_found_or_malformed]}}
+    skills: dict = field(default_factory=lambda: {"used": {}, "missing": {}})
     conversation: dict = field(default_factory=lambda: {
         "messages": [],
         "routing_trace": [],
@@ -570,6 +575,7 @@ class BoardSession:
             "stage2_anonymization_map": self.stage2_anonymization_map,
             "disagreement_score": self.disagreement_score,
             "auto_promoted_rebuttals": self.auto_promoted_rebuttals,
+            "skills": self.skills,
             "conversation": self.conversation,
             "total_elapsed": self.total_elapsed,
             "metrics": self.metrics.summary(),
