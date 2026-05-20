@@ -1,6 +1,8 @@
 import { API } from '../../shared/api';
 import type { BoardSession, DelegatedTask } from '../../shared/types';
 
+export { InitiativeCockpit } from './InitiativeCockpit';
+
 export type InitiativeStatus = 'draft' | 'active' | 'closed';
 export type FounderOutcome = 'success' | 'failure' | 'mixed';
 export type InitiativeLinkTargetType =

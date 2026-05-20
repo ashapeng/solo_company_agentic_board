@@ -27,6 +27,15 @@ import {
   type ExecutionAgent,
 } from './domains/execution';
 import { PerformancePage, loadMetricsSummary, type SessionMetrics } from './domains/harness';
+import {
+  InitiativeCockpit,
+  activateInitiative,
+  closeInitiative,
+  createInitiative,
+  loadInitiatives,
+  type FounderOutcome,
+  type Initiative,
+} from './domains/initiatives';
 import { loadSotb } from './domains/memory';
 import { recordRoutingSignal } from './shared/api';
 import {
@@ -62,6 +71,14 @@ function upsertConversationMessage(
 
 const maxContinuations = Number(import.meta.env.VITE_MAX_CONTINUATIONS ?? 2);
 
+function selectableInitiativeId(items: Initiative[]): string | null {
+  return (
+    items.find((item) => item.status === 'active') ??
+    items.find((item) => item.status !== 'closed') ??
+    null
+  )?.id ?? null;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('governance');
   const [members, setMembers] = useState<BoardMember[]>([]);
@@ -76,6 +93,8 @@ export default function App() {
   const [seatStates, setSeatStates] = useState<Record<string, SeatState>>({});
   const [liveFeed, setLiveFeed] = useState<LiveFeedItem[]>([]);
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [initiatives, setInitiatives] = useState<Initiative[]>([]);
+  const [activeInitiativeId, setActiveInitiativeId] = useState<string | null>(null);
   const [activeStreamMessageId, setActiveStreamMessageId] = useState<string | null>(null);
   const [activePhase, setActivePhase] = useState<string | null>(null);
   const liveFeedCounter = useRef(0);
@@ -146,6 +165,16 @@ export default function App() {
     loadExecutionAgents()
       .then(setExecutionAgents)
       .catch(() => setExecutionAgents([]));
+
+    loadInitiatives()
+      .then((items) => {
+        setInitiatives(items);
+        setActiveInitiativeId(selectableInitiativeId(items));
+      })
+      .catch(() => {
+        setInitiatives([]);
+        setActiveInitiativeId(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -258,12 +287,17 @@ export default function App() {
         : 'The classifier will route the decision to the smallest useful council.',
     });
 
+    const selectedInitiative = initiatives.find((item) => item.id === activeInitiativeId) ?? null;
+    const streamInitiativeId = selectedInitiative?.status !== 'closed' ? selectedInitiative?.id ?? null : null;
+
     try {
       await streamDeliberation({
         query: cleanQuery,
         full_board: fullBoard,
         verify,
         discussion_mode: 'live',
+        initiative_id: streamInitiativeId,
+        initiative_mode: streamInitiativeId ? 'attach' : 'ad_hoc',
         // Chairperson is permanent; only switch to manual-council mode when the
         // user has picked additional members beyond the chairperson.
         member_ids: fullBoard || manualMemberIds.length <= 1 ? undefined : manualMemberIds,
@@ -730,6 +764,57 @@ export default function App() {
     }
   }
 
+  async function createDraftInitiative() {
+    const cleanQuery = query.trim();
+    const title = cleanQuery ? cleanQuery.slice(0, 96) : 'Draft initiative';
+    const objective = cleanQuery || 'Draft initiative created from the current board context.';
+    try {
+      const initiative = await createInitiative({
+        title,
+        objective,
+        created_from: 'founder_command',
+        source_session_id: session?.session_id ?? null,
+      });
+      setInitiatives((current) => [initiative, ...current]);
+      setActiveInitiativeId(initiative.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create initiative.');
+    }
+  }
+
+  async function activateSelectedInitiative(initiativeId: string) {
+    try {
+      const initiative = await activateInitiative(initiativeId);
+      setInitiatives((current) => current.map((item) => (item.id === initiative.id ? initiative : item)));
+      setActiveInitiativeId(initiative.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to activate initiative.');
+    }
+  }
+
+  async function closeSelectedInitiative(initiativeId: string, outcome: FounderOutcome) {
+    try {
+      const memoryProposal = session?.memory?.proposed_sotb_update;
+      const initiative = await closeInitiative(initiativeId, {
+        founder_outcome: outcome,
+        founder_notes: session?.session_id
+          ? `Closed from board session ${session.session_id}.`
+          : 'Closed from initiative cockpit.',
+        retrospective_session_id: session?.session_id ?? null,
+        memory_proposals: memoryProposal ? [memoryProposal] : [],
+      });
+      setInitiatives((current) => {
+        const next = current.map((item) => (item.id === initiative.id ? initiative : item));
+        setActiveInitiativeId((currentId) => (
+          currentId === initiative.id ? selectableInitiativeId(next) : currentId
+        ));
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to close initiative.');
+    }
+  }
+
   async function sendFollowup(text: string) {
     const sessionId = session?.session_id;
     if (!sessionId) return;
@@ -851,6 +936,16 @@ export default function App() {
                 activePhase={activePhase}
                 conversationMessages={conversationMessages}
                 activeStreamMessageId={activeStreamMessageId}
+                initiativeCockpit={(
+                  <InitiativeCockpit
+                    initiatives={initiatives}
+                    activeInitiativeId={activeInitiativeId}
+                    onSelect={setActiveInitiativeId}
+                    onCreateDraft={createDraftInitiative}
+                    onActivate={activateSelectedInitiative}
+                    onClose={closeSelectedInitiative}
+                  />
+                )}
                 awaitingFollowup={
                   tableStatus.label === 'CEO decision' &&
                   (session?.continuation_count ?? 0) < maxContinuations

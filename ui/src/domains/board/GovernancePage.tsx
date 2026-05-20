@@ -153,6 +153,7 @@ export function GovernancePage({
   activeStreamMessageId = null,
   awaitingFollowup = false,
   capReached = false,
+  initiativeCockpit,
 }: {
   members: BoardMember[];
   activeCouncilMembers: BoardMember[];
@@ -183,6 +184,7 @@ export function GovernancePage({
   activeStreamMessageId?: string | null;
   awaitingFollowup?: boolean;
   capReached?: boolean;
+  initiativeCockpit?: ReactNode;
 }) {
   const displayCouncil = activeCouncilMembers.length ? activeCouncilMembers : members;
   const stagePhases = STAGE_PIPS.map((pip) => (
@@ -349,6 +351,8 @@ export function GovernancePage({
               promotedIds={promotedIds}
               promoteSeat={promoteSeat}
             />
+
+            {initiativeCockpit}
 
             <CeoComposer
               query={query}
