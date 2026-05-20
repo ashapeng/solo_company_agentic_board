@@ -370,5 +370,101 @@ class ApiExecutionContractTest(unittest.IsolatedAsyncioTestCase):
             WebSearchRequest(query="market sizing", provider="tavily", max_results=50)
 
 
+class InitiativeVerticalSliceContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmpdir.name) / "ledger.db"
+        import server.execution as execution
+        import server.initiatives as initiatives
+
+        self._old_init_db = initiatives._DEFAULT_DB_PATH
+        self._old_exec_db = execution._DEFAULT_DB_PATH
+        initiatives._DEFAULT_DB_PATH = self.db_path
+        execution._DEFAULT_DB_PATH = self.db_path
+
+    def tearDown(self):
+        import server.execution as execution
+        import server.initiatives as initiatives
+
+        initiatives._DEFAULT_DB_PATH = self._old_init_db
+        execution._DEFAULT_DB_PATH = self._old_exec_db
+        self.tmpdir.cleanup()
+
+    async def test_initiative_api_vertical_slice(self):
+        from server.api.routes import initiatives as initiative_routes
+        from server.api.schemas import (
+            InitiativeActivateRequest,
+            InitiativeCloseoutRequest,
+            InitiativeCreateRequest,
+        )
+
+        created = initiative_routes.create_initiative(
+            InitiativeCreateRequest(
+                title="Launch concierge demand loop",
+                objective="Find and convert the first narrow ICP for a solo-company wedge.",
+                success_criteria=["Ten qualified prospects contacted", "Two booked calls"],
+                departments=["marketing", "engineering"],
+                created_from="founder_command",
+                source_session_id="board_initiative_seed",
+            )
+        )
+
+        activated = initiative_routes.activate_initiative(
+            created["id"],
+            InitiativeActivateRequest(),
+        )
+        self.assertEqual("active", activated["status"])
+
+        plan = parse_delegation_plan(
+            """### Delegation Plan
+```json
+{
+  "tasks": [{
+    "id": "initiative_vertical_slice_outreach",
+    "title": "Run founder-led outreach batch",
+    "objective": "Send approved outreach to the initial ICP list.",
+    "execution_unit_id": "marketing",
+    "external_action_type": "outreach",
+    "acceptance_criteria": ["Outreach copy approved", "Prospect list prepared"]
+  }]
+}
+```
+""",
+            session_id="board_initiative_activation",
+            initiative_id=created["id"],
+        )
+        record_delegation_plan(plan)
+
+        tasks = initiative_routes.list_initiative_tasks(created["id"])
+        self.assertEqual(created["id"], tasks["initiative_id"])
+        self.assertEqual(["initiative_vertical_slice_outreach"], [task["id"] for task in tasks["tasks"]])
+        task = tasks["tasks"][0]
+        self.assertEqual(created["id"], task["initiative_id"])
+        self.assertEqual("marketing", task["execution_unit_id"])
+        self.assertEqual("marketing_lead", task["manager_agent_id"])
+        self.assertEqual("outreach", task["external_action_type"])
+        self.assertTrue(task["external_action_required"])
+
+        closed = initiative_routes.close_initiative(
+            created["id"],
+            InitiativeCloseoutRequest(
+                founder_outcome="mixed",
+                founder_notes="Outreach produced signal, but needs another batch.",
+                retrospective_session_id="board_initiative_retro",
+                memory_proposals=["ICP pain language should be reused in the next outreach batch."],
+                carryover_decisions=[
+                    {"task_id": "initiative_vertical_slice_outreach", "decision": "carry_over"},
+                ],
+            ),
+        )
+
+        self.assertEqual("closed", closed["status"])
+        self.assertEqual("mixed", closed["closeout"]["founder_outcome"])
+        self.assertEqual(
+            "carry_over",
+            closed["closeout"]["carryover_decisions"][0]["decision"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
