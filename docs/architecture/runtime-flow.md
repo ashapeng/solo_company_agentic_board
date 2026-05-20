@@ -1,5 +1,19 @@
 # Runtime Flow
 
+## Initiative-Native Founder Command Loop
+
+```text
+founder command
+  -> initiative route suggestion
+  -> founder override/approval
+  -> board deliberation with initiative_id or ad hoc mode
+  -> linked session JSON
+  -> linked delegation tasks
+  -> external action approvals
+  -> closeout with founder outcome and carryover decisions
+  -> board retrospective memory proposals
+```
+
 ## Deliberation
 
 ```text

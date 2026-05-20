@@ -10,6 +10,7 @@ without reading the full runtime.
 | Board governance | `server/board/` | Members, roster, deliberation stages, chair synthesis, decision projection |
 | Harness learning | `server/harness/` | Tunable config, outcome ledger, token/routing/model/verification tuners, harness reviews |
 | Execution units | `server/execution/` | Manager agents, execution units, delegated task state, evidence packets |
+| Initiatives | `server/initiatives/` | Time-boxed operating cycles, links, closeouts, carryovers |
 | Memory | `server/memory/` | SOTB read helpers, SOTB proposals, reviewable diffs, guarded memory writes |
 | API | `server/api/` | FastAPI app assembly, request models, route modules by domain |
 | Integrations | `hermes/` | Optional Hermes skills and plugin adapters |
@@ -24,6 +25,7 @@ phase. New code should import the domain packages directly.
 | Board UI | `ui/src/domains/board/` | Board session types and board API entrypoints |
 | Execution UI | `ui/src/domains/execution/` | Execution agent/task types and task actions |
 | Harness UI | `ui/src/domains/harness/` | Metrics and harness review entrypoints |
+| Initiatives UI | `ui/src/domains/initiatives/` | Initiative cockpit, initiative API types, closeout controls |
 | Memory UI | `ui/src/domains/memory/` | SOTB and feedback entrypoints |
 | Shared | `ui/src/shared/` | API client primitives and shared TypeScript types |
 

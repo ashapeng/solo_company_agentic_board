@@ -51,6 +51,13 @@ Key system boundaries:
 - **`server/execution/`** handles approval-gated delegated task workflows.
 - **`hermes/`** is an optional operating layer around the board, not a dependency of the Python package.
 
+## Initiatives
+
+Initiatives are the durable operating cycle for the solo-company OS. A board
+session can run ad hoc, attach to an existing initiative, or create a draft
+initiative. Initiative-owned sessions can produce delegated tasks, artifacts,
+memory proposals, and closeout carryovers.
+
 ## Running
 
 ### Local web app
