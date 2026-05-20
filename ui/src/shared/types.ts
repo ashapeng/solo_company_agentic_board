@@ -1,4 +1,4 @@
-export type Tab = 'governance' | 'portfolio' | 'performance';
+export type Tab = 'governance' | 'portfolio' | 'performance' | 'initiatives';
 
 export type BoardMember = {
   id: string;
@@ -133,6 +133,7 @@ export type SubtaskPlan = {
 export type DelegatedTask = {
   id: string;
   session_id: string;
+  initiative_id?: string | null;
   title: string;
   objective: string;
   execution_unit_id: string;
@@ -148,10 +149,15 @@ export type DelegatedTask = {
   source: 'board_synthesis';
   result_summary?: string;
   status_detail?: string;
+  external_action_required?: boolean;
+  external_action_type?: 'outreach' | 'publish' | 'deploy' | 'spend' | 'none';
+  external_action_approved?: boolean;
 };
 
 export type DelegationPlan = {
   session_id: string;
+  initiative_id?: string | null;
+  initiative_mode?: 'ad_hoc' | 'attach' | 'create_draft';
   tasks: DelegatedTask[];
   warnings: string[];
   requires_approval: boolean;
@@ -261,6 +267,8 @@ export type SecretaryLiveEvent =
 export type BoardSession = {
   session_id?: string;
   user_query?: string;
+  initiative_id?: string | null;
+  initiative_mode?: 'ad_hoc' | 'attach' | 'create_draft';
   classification?: Classification;
   decision?: Decision | null;
   delegation_plan?: DelegationPlan | null;

@@ -70,6 +70,8 @@ export async function streamDeliberation(
     verify: boolean;
     member_ids?: string[];
     discussion_mode?: 'staged' | 'live';
+    initiative_id?: string | null;
+    initiative_mode?: 'ad_hoc' | 'attach' | 'create_draft';
   },
   { onEvent }: { onEvent: (event: StreamEvent) => void },
 ) {
