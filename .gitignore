@@ -26,20 +26,6 @@ PROJECT_DESCRIPTION.md
 # Runtime SOTB sidecar (regenerated lazily; never commit)
 server/memory/sotb_index.jsonl
 
-# Override global gitignore for project docs
-!docs/architecture/
-!docs/superpowers/
-!docs/superpowers/plans/
-!docs/superpowers/specs/
-
-# Local-only plan drafts kept out of the repo by user preference
-docs/superpowers/plans/2026-05-16-atomizer-blinded-verifier-p1.md
-docs/superpowers/plans/2026-05-17-contradiction-detector-p2.md
-docs/superpowers/plans/2026-05-17-source-authority-weighting-p3a.md
-docs/superpowers/plans/2026-05-17-tool-error-revision-loop-p3b.md
-docs/superpowers/plans/2026-05-17-tool-call-persistence.md
-docs/superpowers/plans/2026-05-17-sotb-governance-p4.md
-docs/superpowers/plans/2026-05-17-expand-peer-p5a.md
 .worktrees/
 .superpowers/
 .playwright-cli/

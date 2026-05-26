@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Claude Code Playbook for Solving Complex Tasks</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --card: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #5a5a5a;
+    --border: #e3e3dc;
+    --accent: #2a5d8f;
+    --accent-soft: #eaf2f9;
+    --good: #2d6a4f;
+    --good-soft: #e6f3eb;
+    --warn: #b35900;
+    --warn-soft: #fdf2e3;
+    --bad: #a02828;
+    --bad-soft: #fbe9e7;
+    --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.55;
+    color: var(--ink);
+    background: var(--bg);
+    margin: 0;
+    padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header.banner {
+    background: linear-gradient(180deg, #fff 0%, var(--accent-soft) 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+  }
+  header.banner h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.02em; }
+  header.banner .sub { color: var(--muted); font-size: 13.5px; }
+  header.banner .lede {
+    margin-top: 16px;
+    padding: 14px 18px;
+    background: #fff;
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    font-size: 14.5px;
+  }
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 22px;
+    margin-bottom: 22px;
+    font-size: 13.5px;
+  }
+  nav.toc h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+  nav.toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 32px; }
+  nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  section.phase {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 28px;
+    margin-bottom: 20px;
+  }
+  section.phase h2 {
+    margin: 0 0 8px;
+    font-size: 19px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  section.phase h2 .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  section.phase h3 {
+    font-size: 15px;
+    margin: 22px 0 8px;
+    color: var(--ink);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  section.phase h4 {
+    font-size: 13.5px;
+    margin: 14px 0 4px;
+    color: var(--accent);
+  }
+  section.phase p, section.phase li { font-size: 14.5px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 4px;
+    font-size: 13.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f3f3ee; font-weight: 600; }
+  tr:nth-child(even) td { background: #fcfcf9; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: #f0efea;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    background: #1f2329;
+    color: #e7e7e7;
+    padding: 14px 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+
+  .callout {
+    margin: 12px 0;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    border-left: 3px solid;
+  }
+  .callout.good { background: var(--good-soft); border-color: var(--good); }
+  .callout.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .callout.bad  { background: var(--bad-soft); border-color: var(--bad); }
+  .callout strong { display: block; margin-bottom: 4px; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 12px 0;
+  }
+  @media (max-width: 720px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    nav.toc ol { columns: 1; }
+  }
+  .card {
+    background: #fcfcf8;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card h4 { margin: 0 0 6px; font-size: 14px; color: var(--accent); border: none; padding: 0; }
+
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-right: 4px;
+  }
+  .pill.tier-l { background: #e8f5ec; color: #2d6a4f; }
+  .pill.tier-s { background: #fff4d6; color: #8a5a00; }
+  .pill.tier-h { background: #f9dada; color: #8a1f1f; }
+
+  details {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    background: #fbfbf7;
+  }
+  details summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 32px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="banner">
+  <h1>The Claude Code Playbook for Solving Complex Tasks</h1>
+  <div class="sub">Synthesized from <code>docs/superpowers/specs/</code> (5) and <code>docs/superpowers/plans/</code> (24). ~45,000 lines across board-hardening, agentic-research, eval-harness, and harness-cross-cutting workstreams, Apr 15 &ndash; May 18, 2026.</div>
+  <div class="lede">
+    The corpus shows a remarkably consistent operating discipline: <strong>brainstorm &rarr; spec &rarr; plan &rarr; TDD-per-task &rarr; PR &rarr; verify</strong>. Each stage produces a named artifact with a fixed shape. Nothing is ad-hoc; nothing is implicit.
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Phases</h2>
+  <ol>
+    <li><a href="#p1">Interpret the request</a></li>
+    <li><a href="#p2">Analyze the complexity</a></li>
+    <li><a href="#p3">Design the architecture</a></li>
+    <li><a href="#p4">From spec to plan</a></li>
+    <li><a href="#p5">Task-level TDD loop</a></li>
+    <li><a href="#p6">Tool-calling patterns</a></li>
+    <li><a href="#p7">Sub-agent / skill build</a></li>
+    <li><a href="#p8">Error handling</a></li>
+    <li><a href="#p9">Observability (ledger discipline)</a></li>
+    <li><a href="#p10">Verification</a></li>
+    <li><a href="#ref">Spec / plan header template</a></li>
+    <li><a href="#anti">What is <em>not</em> on this list</a></li>
+  </ol>
+</nav>
+
+<section class="phase" id="p1">
+  <h2><span class="num">1</span> Interpret the request</h2>
+  <p>The first decision is <strong>what artifact to produce</strong>, not what code to write.</p>
+  <table>
+    <thead><tr><th>Request signal</th><th>Artifact path</th></tr></thead>
+    <tbody>
+      <tr><td>&lt;10 LoC, &lt;3 files, no API change</td><td>Edit directly. Skip both spec and plan.</td></tr>
+      <tr><td>Multi-file feature inside one subsystem</td><td><strong>Plan only</strong> (no spec) &mdash; refinements table, file structure, TDD tasks.</td></tr>
+      <tr><td>Cross-cutting feature, new ABI, multiple subsystems</td><td><strong>Spec &rarr; plan(s) &rarr; PR(s).</strong> One spec, often N plans (one per phase).</td></tr>
+      <tr><td>"Like in OpenHarness&hellip;" / "compare X to Y"</td><td><strong>Brainstorm artifact first</strong> (HTML comparison doc), spec second.</td></tr>
+      <tr><td>"Rebuild Y" / "redesign Z"</td><td><strong>Multi-phase spec</strong> (P1 &hellip; P5), each phase its own plan.</td></tr>
+    </tbody>
+  </table>
+  <h3>Pin upfront, before writing anything</h3>
+  <ul>
+    <li><strong>Status line.</strong> <code>Draft (awaiting user review)</code> or <code>pinned &lt;date&gt;</code>. Never implement from a draft.</li>
+    <li><strong>Goals AND non-goals.</strong> Non-goals are load-bearing &mdash; they're the contract that prevents scope creep.</li>
+    <li><strong>Companion documents.</strong> Link the brainstorm artifact and any assessment doc so the rationale chain survives.</li>
+  </ul>
+  <div class="callout good">
+    <strong>Example</strong>
+    <code>2026-05-18-harness-cross-cutting-expansion-design.md</code> lists 4 explicit goals, 6 non-goals, plus a 7th deferred-with-reason (MCP transport: "no external tool consumer exists; building it speculatively would be scaffolding without callers").
+  </div>
+</section>
+
+<section class="phase" id="p2">
+  <h2><span class="num">2</span> Analyze the complexity</h2>
+  <h3>2.1 Tier the work</h3>
+  <table>
+    <thead><tr><th>Tier</th><th>Trigger</th><th>Discipline</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill tier-l">LIGHT</span></td><td>Trivial seam, single file</td><td>Edit + verify. Skip Pre-Impl &sect;1, &sect;4.</td></tr>
+      <tr><td><span class="pill tier-s">STANDARD</span></td><td>Multi-file, single subsystem</td><td>Plan with refinements + TDD tasks.</td></tr>
+      <tr><td><span class="pill tier-h">HEAVY</span></td><td>Cross-cutting, new ABI</td><td>Spec + per-phase plan + preconditions gate.</td></tr>
+    </tbody>
+  </table>
+  <h3>2.2 Find the load-bearing assumption</h3>
+  <p>For every task, ask: <em>"What single decision, if it broke, would invalidate this whole design?"</em></p>
+  <p>That decision needs a <strong>pinned answer with rationale</strong> in the spec &mdash; never a future-tense "we'll figure it out." When the spec leaves N decisions open, write a <strong>design-choices supplement</strong> with a numbered register (DC1, DC2, &hellip;) &mdash; that's how P5b's auto-promote pinned its 5 open questions and how P4 SOTB pinned DC1&ndash;DC6.</p>
+
+  <h3>2.3 Map the seams in three columns</h3>
+  <pre><code>Created   | File | Purpose
+Modified  | File | Change
+Untouched | File | Reason  &larr; the column that prevents scope creep</code></pre>
+</section>
+
+<section class="phase" id="p3">
+  <h2><span class="num">3</span> Design the architecture</h2>
+  <h3>3.1 Required sections of a spec</h3>
+<pre><code>1. Context &amp; motivation       &mdash; WHY this matters now
+2. Goals &amp; non-goals          &mdash; explicit boundaries
+3. Architecture overview      &mdash; diagram + new-components table + file tree
+4. Phase N (one per subsystem) &mdash; Public API &middot; Checks &middot; Integration &middot; Failure modes
+5. Cross-cutting: ledger      &mdash; observability writes for tuner consumption
+6. Testing strategy           &mdash; mocked default, live only on consent
+7. PR decomposition           &mdash; independently shippable, LoC est., sequencing
+8. Out of scope (explicit)    &mdash; with reasons
++ Open questions              &mdash; under-specified items deferred to plan</code></pre>
+
+  <h3>3.2 Architectural defaults (chosen ~25/25 plans)</h3>
+  <table>
+    <thead><tr><th>Default</th><th>Rationale</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Additive over restructuring</td><td>Existing public APIs unchanged &rarr; reviewable in isolation</td><td><code>read_sotb</code> kept; <code>read_sotb_governed</code> added</td></tr>
+      <tr><td>One seam, not two</td><td>Avoid dual call-site drift</td><td><code>_query_member</code> over editing both <code>format_stage1</code> and <code>format_stage2</code></td></tr>
+      <tr><td>Frozen dataclasses for ABIs</td><td>Compile-time guardrail on mutation</td><td><code>HookContext</code> / <code>HookVerdict</code> / <code>ValidationIssue</code></td></tr>
+      <tr><td>Plain dicts for one-consumer persistence</td><td>Mirrors <code>session.contradictions</code>; trivial JSON round-trip</td><td><code>session.tool_call_results: list[dict]</code></td></tr>
+      <tr><td>Per-instance cache, not module-global</td><td>Test isolation, instance lifecycle</td><td><code>self._skill_cache</code></td></tr>
+      <tr><td>Auto-import discovery for plugins</td><td>Drop-in extension without registration code</td><td><code>_bundled/</code> + <code>_project/</code> (gitignored)</td></tr>
+      <tr><td>Dark-launch flag for behavior changes</td><td>Ship cheap orchestration; flip flag once calibrated</td><td><code>auto_promote_enabled: False</code></td></tr>
+      <tr><td>Multi-layer gating</td><td>Decouple shipping the cheap part from paying for the expensive part</td><td><code>tier == HEAVY AND sotb_judge_enabled</code></td></tr>
+      <tr><td>Lazy schema bootstrap</td><td>No one-shot migration script; first read does it</td><td>SOTB sidecar lazy-created</td></tr>
+      <tr><td>Atomic file writes</td><td><code>tmp + fsync + rename</code> for any sidecar</td><td>All ledger / sotb_index writes</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.3 The "one module per new concept" rule</h3>
+  <p>SOTB governance got its own <code>server/memory/sotb_governance.py</code> even though <code>server/memory/sotb.py</code> existed. Folding governance into <code>sotb.py</code> would couple six unrelated callers (<code>cli.py</code>, <code>api/routes/memory.py</code>, <code>harness/replay.py</code>, <code>projection.py</code>&hellip;) to a new return shape.</p>
+  <div class="callout good">
+    <strong>Rule</strong>
+    When in doubt, a new module beats touching an existing one. Blast radius stays small, test mocks stay clean.
+  </div>
+</section>
+
+<section class="phase" id="p4">
+  <h2><span class="num">4</span> From spec to plan</h2>
+  <h3>4.1 Three required leading tables</h3>
+  <table>
+    <thead><tr><th>Table</th><th>Columns</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>Refinements over spec defaults</td><td>Topic &middot; Na&iuml;ve &middot; This plan &middot; Why</td><td>Every divergence with rationale</td></tr>
+      <tr><td>Spec &harr; Plan crosswalk</td><td>Spec &sect; &middot; Requirement &middot; Plan task ID</td><td>Every spec sentence mapped to a task</td></tr>
+      <tr><td>Design choices (pinned)</td><td>Topic &middot; Pinned answer &middot; Code-facing rule</td><td>Exact <code>cfg.x.get("y", default)</code> form</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.2 The preconditions gate</h3>
+<pre><code>grep -q "auto_promote_enabled" server/harness/config.py \
+  &amp;&amp; echo "ALREADY PRESENT &mdash; stop" \
+  || (grep -q "expand_peer_max" server/board/deliberation/orchestrator.py \
+      &amp;&amp; echo "P5a present, P5b not yet &mdash; OK to proceed" \
+      || echo "MISSING precursor &mdash; stop and wait")</code></pre>
+  <div class="callout warn">
+    <strong>Three outcomes, one command.</strong> If <code>MISSING</code> or <code>ALREADY PRESENT</code>, the implementer stops &mdash; no partial work, no force-overwriting another branch.
+  </div>
+
+  <h3>4.3 The optional BRAINSTORM-FIRST GATE</h3>
+  <p>For plans whose design choices have real downside risk (destructive writes, auto-resolution), the plan adds a callout box <strong>before</strong> the tasks begin:</p>
+  <div class="callout bad">
+    <strong>Example from P4 SOTB</strong>
+    "Recommendation: proceed to execution. DC2 (log-only) and DC6 (judge-disabled by default) are conservative pinned choices&hellip; <strong>However, if the user wants to revisit DC2 or DC3</strong>, a short brainstorming pass would be cheap insurance before T1 lands."
+  </div>
+
+  <h3>4.4 PR decomposition rules</h3>
+  <table>
+    <thead><tr><th>Rule</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Each PR independently shippable &amp; reversible</td><td>PR2 (hooks infra) useful on its own with web_search; PR3 wires into tasks.py separately</td></tr>
+      <tr><td>LoC budget per PR (~200&ndash;500)</td><td>Mechanical reviewability ceiling</td></tr>
+      <tr><td>Split "infrastructure exists" from "infrastructure is used"</td><td>PR4 = skills loader; PR5 = skills injected into Board prompt</td></tr>
+      <tr><td>Sequence by dependency chain, document the why</td><td>"PRs 2 and 3 are split because the hook infra is a self-contained landing zone"</td></tr>
+      <tr><td><strong>Defer destructive ops to a follow-up PR</strong></td><td>P4 ships log-only conflict detection; P4.1 ships auto-resolution</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="phase" id="p5">
+  <h2><span class="num">5</span> Task-level TDD loop</h2>
+  <p>Every task &mdash; without exception &mdash; has the same five steps and commit cadence:</p>
+<pre><code>Step 1: Write the failing test
+Step 2: Run the failing test (assert specific error message &mdash; this IS the contract)
+Step 3: Write the minimal implementation (only what the test exercises)
+Step 4: Run the test (assert PASS)
+Step 5: Commit (HEREDOC commit message + Co-Authored-By footer)</code></pre>
+  <div class="grid-2">
+    <div class="card"><h4>Why Step 2 matters</h4>The "expected error" line is the test's contract. If the actual error differs, the test isn't testing what you think.</div>
+    <div class="card"><h4>Why Step 3 says <em>minimal</em></h4>YAGNI &mdash; no fields the test doesn't exercise. The next test will demand them, with a reason.</div>
+  </div>
+  <div class="callout good">
+    <strong>One commit per task, not per PR.</strong> Each commit is a green-tests checkpoint that can be reverted individually.
+  </div>
+<pre><code>git commit -m "$(cat &lt;&lt;'EOF'
+&lt;scope&gt;(&lt;phase&gt;): &lt;short imperative sentence&gt;
+
+&lt;paragraph: what changed and why; reference spec &sect; if relevant&gt;
+
+Co-Authored-By: Claude Opus 4.7 (1M context) &lt;noreply@anthropic.com&gt;
+EOF
+)"</code></pre>
+</section>
+
+<section class="phase" id="p6">
+  <h2><span class="num">6</span> Tool-calling patterns</h2>
+  <h3>6.1 The pre/post-hook contract</h3>
+<pre><code>@dataclass(frozen=True)
+class HookContext:
+    tool_name: str
+    stage: int
+    session_id: str
+    member_id: str | None
+    request: dict          # read-only by convention
+
+@dataclass(frozen=True)
+class HookVerdict:
+    action: Literal["allow", "deny"]
+    reason: str | None     # required when deny
+    metadata: dict         # logged to ledger</code></pre>
+
+  <h3>6.2 Dispatch semantics &mdash; all pinned, no implementer choice</h3>
+  <table>
+    <thead><tr><th>Rule</th><th>Code shape</th></tr></thead>
+    <tbody>
+      <tr><td>Pre-hooks fire in registration order</td><td>List append, iterate in order</td></tr>
+      <tr><td>First <code>deny</code> short-circuits</td><td><code>if v.action == "deny": return v</code></td></tr>
+      <tr><td>All-allow merges metadata</td><td><code>{**v1.metadata, **v2.metadata}</code> &mdash; last writer wins, documented</td></tr>
+      <tr><td>Post-hooks all fire, log-not-raise</td><td>Wrap each in try/except, <code>logging.exception</code></td></tr>
+      <tr><td>Hook crash &rarr; deny</td><td><code>HookVerdict("deny", reason=f"hook crashed: {type(exc).__name__}", metadata={})</code></td></tr>
+      <tr><td>Hook timeout &rarr; deny</td><td><code>asyncio.wait_for(..., timeout=5.0)</code> &rarr; <code>TimeoutError</code> &rarr; deny</td></tr>
+      <tr><td>Async/sync coercion</td><td><code>if inspect.isawaitable(r): r = await asyncio.wait_for(r, 5.0)</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.3 What tools may NOT do in V1</h3>
+  <ul>
+    <li>Mutate the request or the result (observe + block only).</li>
+    <li>Maintain in-process counters (read from <code>hook_events</code> table &mdash; restart-safe).</li>
+    <li>Configure their own timeout (single <code>_HOOK_TIMEOUT_SECONDS = 5.0</code> constant).</li>
+    <li>Auto-discover (members declare; system doesn't infer).</li>
+  </ul>
+
+  <h3>6.4 The agentic tool-use loop pattern</h3>
+  <ul>
+    <li><strong>Wrap, don't replace.</strong> <code>agentic_member_turn</code> wraps <code>query_llm</code>; the legacy single-call path stays for fast-mode.</li>
+    <li><strong>Budget every loop.</strong> <code>ToolBudget</code> per stage per member; sub-caps per tool.</li>
+    <li><strong>Tool registry shape.</strong> <code>(name, description, parameters_schema, handler)</code> &mdash; provider-agnostic JSON schema.</li>
+    <li><strong>One new ABI seam.</strong> <code>LLMResponse.tool_calls</code>, <code>query_llm(tools=, tool_choice=)</code>. Every provider adapter handles translation.</li>
+  </ul>
+</section>
+
+<section class="phase" id="p7">
+  <h2><span class="num">7</span> Sub-agent / skill build</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Default answer</th></tr></thead>
+    <tbody>
+      <tr><td>Model-invoked or member-declared?</td><td><strong>Member-declared.</strong> Static YAML frontmatter.</td></tr>
+      <tr><td>Auto-discover or registered?</td><td><strong>Registered.</strong> <code>_bundled/</code> ships, <code>_project/</code> gitignored.</td></tr>
+      <tr><td>Per-query filtering?</td><td><strong>No &mdash; member declares, period.</strong> Add classifier filtering only if "member-declared proves too coarse."</td></tr>
+      <tr><td>Skill body cap?</td><td><strong>8000 chars + truncation marker <code>[&hellip;truncated&hellip;]</code>.</strong> Per-skill, not aggregate.</td></tr>
+      <tr><td>Cache scope?</td><td><strong>Per-orchestrator-instance dict</strong>, loaded once in <code>__init__</code>.</td></tr>
+      <tr><td>Description injected into prompt?</td><td><strong>No</strong> &mdash; descriptions are for <code>list_skills()</code> and operator readability. Body only.</td></tr>
+      <tr><td>Missing skill behavior?</td><td><strong>Warn + skip + persist to session JSON</strong>, never crash.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout good">
+    <strong>Subagent execution rule</strong> (user memory): multi-task plans &rarr; subagents, fresh context per task, <strong>no mid-stream check-ins</strong>. The TDD-per-task loop above is the unit of subagent work.
+  </div>
+</section>
+
+<section class="phase" id="p8">
+  <h2><span class="num">8</span> Error handling</h2>
+  <p>Recurring discipline across all 24 plans: <strong>degrade, don't crash; observe, don't propagate.</strong></p>
+  <table>
+    <thead><tr><th>Failure</th><th>Treatment</th></tr></thead>
+    <tbody>
+      <tr><td>Validator crash on bad input</td><td>Convert to a <code>HarnessRecommendation</code> with category <code>validation</code>, summary <code>"validation check failed"</code>. <strong>Never block the review pipeline.</strong></td></tr>
+      <tr><td>Missing skill file</td><td><code>logging.warning</code> + recorded in session JSON. Member proceeds without it.</td></tr>
+      <tr><td>Malformed frontmatter</td><td>Same &mdash; warn + skip + persist.</td></tr>
+      <tr><td>Body exceeds cap</td><td>Warn + truncate with explicit marker.</td></tr>
+      <tr><td>Hook raises</td><td>Treated as <code>deny</code> with reason <code>"hook crashed: &lt;ExceptionType&gt;"</code>. Logged via <code>logging.exception</code>, never propagated.</td></tr>
+      <tr><td>Hook times out</td><td>Same &mdash; <code>deny</code> with reason <code>"hook timeout"</code>.</td></tr>
+      <tr><td>Tool returns CONTRADICTED</td><td><code>ToolResult.triggers_revision = True</code>; forces a revision turn rather than silently ignoring.</td></tr>
+      <tr><td>Session lacks new field</td><td><code>hasattr(session, "tool_call_results")</code> guard. Back-compat without migration.</td></tr>
+      <tr><td>Schema-shape collision</td><td>Use existing <code>_ensure_columns</code> pattern &mdash; additive column adds, no migrations.</td></tr>
+      <tr><td>Hand-edited markdown drift</td><td>Lazy reconcile on every read &mdash; markdown is source of truth, sidecar regenerable.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>Rule of thumb</strong>: every failure mode produces a <strong>named entry</strong> somewhere observable (ledger row, session JSON, log line). Never a silent skip.
+  </div>
+</section>
+
+<section class="phase" id="p9">
+  <h2><span class="num">9</span> Observability (ledger discipline)</h2>
+  <p>Every subsystem writes to <code>server/harness/ledger.py</code> so future tuners can learn from its behavior. <strong>This is what enables the meta-learning loop</strong> &mdash; without it, the project is just code, not a self-improving system.</p>
+  <table>
+    <thead><tr><th>Pattern</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>New column on existing table</td><td><code>validation_warnings TEXT DEFAULT '[]'</code>, <code>skills_used TEXT</code> &mdash; additive via <code>_ensure_columns</code>.</td></tr>
+      <tr><td>New append-only table</td><td><code>hook_events(session_id, tool_name, action, reason, metadata, ts)</code> &mdash; no FK, recordable from any layer.</td></tr>
+      <tr><td>Per-session JSON</td><td>Richer detail (full transcripts, missing-skill lists) &mdash; round-trips via <code>BoardSession.to_dict()</code>.</td></tr>
+      <tr><td>Eval signal addition</td><td><code>ObservedSignals.sotb_health_warnings: int = 0</code> &mdash; additive observability; no eval-corpus checker required.</td></tr>
+      <tr><td>Always compute, even when dark</td><td><code>session.disagreement_score</code> always populated even when <code>auto_promote_enabled = False</code>. Telemetry for "would have fired."</td></tr>
+    </tbody>
+  </table>
+  <div class="callout good">
+    <strong>The dark-launch + always-compute pair</strong> is the calibration engine: ship a behavior cold, watch the signal it would have produced, then flip the flag once the data justifies it.
+  </div>
+</section>
+
+<section class="phase" id="p10">
+  <h2><span class="num">10</span> Verification</h2>
+  <h3>10.1 Per-task verification</h3>
+  <p>Every task ends with a bash command and its <strong>exact expected output</strong>:</p>
+<pre><code>uv run python -c "from server.harness.skills import list_skills; print([s.name for s in list_skills()])"
+# Expected (exact): ['jtbd_interview', 'pricing_research']</code></pre>
+
+  <h3>10.2 Per-PR verification sweep</h3>
+  <ol>
+    <li>Full new test surface (the PR's own tests).</li>
+    <li>Broader contract suites that touch the changed files.</li>
+    <li>Manual CLI smoke (<code>uv run python -m server.cli --list-members</code>).</li>
+    <li>Public-surface invariants (no <code>_</code>-prefix regression, no <code>__all__</code> regression).</li>
+  </ol>
+
+  <h3>10.3 Testing discipline (non-negotiable)</h3>
+  <table>
+    <thead><tr><th>Rule</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Mocked by default.</strong> Live LLM only with explicit consent &mdash; cost is the reason.</td><td>User memory <code>feedback_mock_tests_default.md</code></td></tr>
+      <tr><td><code>unittest.mock.AsyncMock</code> for every <code>query_llm</code>, <code>execute_tool</code></td><td>Plan boilerplate</td></tr>
+      <tr><td><code>caplog</code> for logger assertions</td><td>Hook tests, skill tests</td></tr>
+      <tr><td><code>tempfile.TemporaryDirectory + monkeypatch</code> for filesystem isolation</td><td>Skill loader tests</td></tr>
+      <tr><td>Verify intent, not just green</td><td>TDD step 2 asserts the <em>specific</em> error message</td></tr>
+    </tbody>
+  </table>
+
+  <h3>10.4 Risks &amp; mitigations table</h3>
+  <p>Every plan closes with <code>Risk | Likelihood | Impact | Mitigation</code>. These are the failure modes the implementer can't fix in-PR but the operator should know exist &mdash; a contract between author and future debuggers.</p>
+</section>
+
+<section class="phase" id="ref">
+  <h2><span class="num">+</span> Quick reference: spec/plan headers</h2>
+<pre><code># &lt;Title&gt;
+
+- **Status**: Draft (awaiting user review before implementation planning)
+- **Date**: 2026-MM-DD
+- **Owner**: Peng
+- **Drives**: &lt;one sentence on the outcome this unlocks&gt;
+- **Branch**: TBD (work to be planned in writing-plans phase)
+- **Companion documents**:
+  - &lt;link to brainstorm artifact&gt;
+  - &lt;link to assessment doc&gt;
+
+## 1. Context &amp; motivation
+## 2. Goals &amp; non-goals
+## 3. Architecture
+## 4&ndash;N. Phase N &mdash; &lt;name&gt;
+   ### N.1 Public API / ABI
+   ### N.2 Checks / behavior
+   ### N.3 Integration (call sites)
+   ### N.4 Failure modes
+## Cross-cutting: ledger integration
+## Testing strategy
+## PR decomposition
+## Out of scope (explicitly)
+## Open questions</code></pre>
+  <p>For plans, swap the structure after <code>## File structure</code> for the per-task TDD body, and end with <code>## Post-merge cleanup</code> + <code>## Risks and mitigations</code>.</p>
+</section>
+
+<section class="phase" id="anti">
+  <h2><span class="num">&minus;</span> What is <em>not</em> on this list (and why)</h2>
+  <table>
+    <thead><tr><th>Anti-pattern</th><th>Why rejected</th></tr></thead>
+    <tbody>
+      <tr><td>"YOLO it" shortcut tier</td><td>Even the smallest unblocker (<code>tool-call-persistence</code>, ~3 modified files) gets a full plan with preconditions, refinements, TDD steps.</td></tr>
+      <tr><td>Designing for hypothetical callers</td><td>MCP transport explicitly deferred &mdash; "no external tool consumer exists; building speculatively would be scaffolding without callers."</td></tr>
+      <tr><td>Inline migration scripts</td><td>All schema growth is additive via <code>_ensure_columns</code> &mdash; no Alembic, no version bumps.</td></tr>
+      <tr><td>Mutation hooks / model-invoked skills</td><td>Explicitly out-of-scope in V1; deferred until observe-only / member-declared proves insufficient.</td></tr>
+      <tr><td>"While I'm in there&hellip;" refactors</td><td>The <code>Untouched (out of scope)</code> table actively prevents it.</td></tr>
+      <tr><td>Mid-stream check-ins from subagents</td><td>User-pinned: fresh context per task, no progress reports &mdash; finish or fail.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Derived from 5 specs and 24 plans in <code>docs/superpowers/specs/</code> and <code>docs/superpowers/plans/</code>.<br>
+  Sample sources: <code>2026-05-18-harness-cross-cutting-expansion-design.md</code>, <code>2026-05-18-harness-hooks.md</code>, <code>2026-05-18-harness-skills.md</code>, <code>2026-05-18-harness-validate.md</code>, <code>2026-05-17-auto-promote-p5b.md</code>, <code>2026-05-17-p5b-auto-promote-design-choices.md</code>, <code>2026-05-17-sotb-governance-p4.md</code>, <code>2026-05-17-contradiction-detector-p2.md</code>, <code>2026-05-15-board-hardening-design.md</code>, <code>2026-05-07-agentic-research-loop-design.md</code>.
+</footer>
+
+</div>
+</body>
+</html>
