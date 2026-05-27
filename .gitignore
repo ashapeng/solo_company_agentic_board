@@ -35,7 +35,7 @@ business_ideas/
 .pdf_img/
 pdf-pages/
 body.json
-docs/Singapore_Hackathon_ParticipantsRubric*.pdf
+docs/
 pitch/
 
 # Hook plugins are auto-loaded from these dirs; site-specific must not commit

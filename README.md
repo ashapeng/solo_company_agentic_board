@@ -5,7 +5,7 @@ A council of world-expert AI agents that deliberate as a company board of direct
 ## Project Structure
 
 ```text
-/home/apeng/projects/solo_company_agentic_board/
+solo_company_agentic_board/
 ├── server/                  # Backend service and board runtime
 │   ├── api/                 # FastAPI app and HTTP routes
 │   ├── board/               # Core deliberation engine and board contracts
@@ -134,4 +134,3 @@ local CLI skill
   -> remote/gateway usage only after auth and approval gates
 ```
 
-See `docs/architecture/README.md`, `docs/AGENTIC_BOARD_V2_GUIDEBOOK.md`, and `docs/HERMES_INTEGRATION_GUIDEBOOK.md` for the deeper design rationale.
