@@ -4,8 +4,10 @@ import {
   Activity,
   AudioLines,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   FileText,
   MoreHorizontal,
   Pin,
@@ -18,7 +20,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AgentExecutionPanel } from '../execution';
-import { FeedbackWidget, SotbCard } from '../memory';
+import { FeedbackWidget, SotbCard, SotbMemoryPanel } from '../memory';
 import {
   ErrorMessage,
   Fact,
@@ -668,6 +670,8 @@ function LeftInsights({
   liveFeed: LiveFeedItem[];
   sotb: { content?: string; path?: string };
 }) {
+  const [auditOpen, setAuditOpen] = useState(false);
+
   return (
     <>
       <div>
@@ -684,6 +688,24 @@ function LeftInsights({
         <div className="rounded-lg bg-surface-container-lowest p-4">
           <SotbCard sotb={sotb} />
         </div>
+        <button
+          type="button"
+          onClick={() => setAuditOpen((v) => !v)}
+          aria-expanded={auditOpen}
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-surface-container-high px-3 py-2 text-xs font-body font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest hover:text-on-surface"
+        >
+          {auditOpen ? (
+            <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {auditOpen ? 'Hide memory audit' : 'Open memory audit'}
+        </button>
+        {auditOpen && (
+          <div className="mt-2">
+            <SotbMemoryPanel ventureId="default" />
+          </div>
+        )}
       </div>
     </>
   );

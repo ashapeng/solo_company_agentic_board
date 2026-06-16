@@ -1,4 +1,15 @@
-import type { BoardMember, BoardSession, DelegatedTask, ExecutionAgent, SessionMetrics, StreamEvent } from './types';
+import type {
+  BoardMember,
+  BoardSession,
+  ConsolidationResult,
+  DelegatedTask,
+  ExecutionAgent,
+  RollbackResult,
+  SessionMetrics,
+  SotbEntry,
+  SotbSnapshot,
+  StreamEvent,
+} from './types';
 
 export const API = '';
 
@@ -18,6 +29,57 @@ export async function loadSotb(): Promise<{ content?: string; path?: string }> {
   const response = await fetch(`${API}/sotb`);
   if (!response.ok) throw new Error('Failed to load SOTB.');
   return response.json();
+}
+
+// ─── SOTB memory audit (white-box) ──────────────────────────────────────────
+
+export async function getSotbEntries(
+  ventureId = 'default',
+): Promise<SotbEntry[]> {
+  const response = await fetch(`${API}/sotb/entries?venture_id=${encodeURIComponent(ventureId)}`);
+  if (!response.ok) throw new Error('Failed to load SOTB entries.');
+  const data: { venture_id: string; entries: SotbEntry[] } = await response.json();
+  return data.entries ?? [];
+}
+
+export async function getSotbSnapshots(
+  ventureId = 'default',
+  limit = 20,
+): Promise<SotbSnapshot[]> {
+  const response = await fetch(
+    `${API}/sotb/snapshots?venture_id=${encodeURIComponent(ventureId)}&limit=${limit}`,
+  );
+  if (!response.ok) throw new Error('Failed to load SOTB snapshots.');
+  const data: { venture_id: string; snapshots: SotbSnapshot[] } = await response.json();
+  return data.snapshots ?? [];
+}
+
+export async function rollbackSnapshot(snapshotId: string): Promise<RollbackResult> {
+  const response = await fetch(
+    `${API}/sotb/snapshots/${encodeURIComponent(snapshotId)}/rollback`,
+    { method: 'POST' },
+  );
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || 'Failed to roll back snapshot.');
+  }
+  return data as RollbackResult;
+}
+
+export async function consolidateMemory(
+  ventureId = 'default',
+  verify = false,
+): Promise<ConsolidationResult> {
+  const response = await fetch(`${API}/sotb/consolidate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ venture_id: ventureId, verify }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || 'Failed to consolidate memory.');
+  }
+  return data as ConsolidationResult;
 }
 
 export async function loadExecutionAgents(): Promise<ExecutionAgent[]> {
