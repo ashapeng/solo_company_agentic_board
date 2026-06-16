@@ -573,6 +573,36 @@ async def interactive_mode(venture: str = "default"):
         await run_board(query, verbose=verbose, verify=verify, budget=budget, venture_id=venture)
 
 
+def serve_channels(venture: str = "default"):
+    """Serve enabled reach channels. Safe no-op when no tokens are configured."""
+    from server.channels import ChannelDeps, load_enabled_channels, render_brief
+
+    channels = load_enabled_channels()
+    if not channels:
+        console.print(
+            "[yellow]No reach channels configured.[/yellow] "
+            "Set e.g. TELEGRAM_BOT_TOKEN to enable a channel."
+        )
+        return
+
+    async def _deliberate(query: str):
+        orchestrator = BoardOrchestrator()
+        return await orchestrator.deliberate(query, venture_id=venture)
+
+    deps = ChannelDeps(deliberate=_deliberate, render=render_brief)
+
+    names = ", ".join(getattr(c, "channel_key", "?") for c in channels)
+    console.print(f"[green]Serving channels:[/green] {names} (Ctrl-C to stop)")
+
+    async def _serve():
+        await asyncio.gather(*(channel.start(deps) for channel in channels))
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        console.print("[dim]Channels stopped.[/dim]")
+
+
 def cli():
     parser = argparse.ArgumentParser(description="Agentic Board — LLM Council")
     parser.add_argument("query", nargs="?", help="Question for the board")
@@ -658,6 +688,10 @@ def cli():
     parser.add_argument(
         "--always-on", action="store_true",
         help="Run the execution scheduler loop continuously (Ctrl-C to stop).",
+    )
+    parser.add_argument(
+        "--serve-channels", action="store_true",
+        help="Serve enabled reach channels (e.g. Telegram). No-op without tokens.",
     )
     args = parser.parse_args()
 
@@ -796,6 +830,10 @@ def cli():
 
     if args.list_members:
         show_members()
+        return
+
+    if args.serve_channels:
+        serve_channels()
         return
 
     if args.always_on:
