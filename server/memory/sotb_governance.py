@@ -35,6 +35,40 @@ logger = logging.getLogger(__name__)
 _SOTB_PATH = Path(__file__).resolve().parent / "sotb.md"
 _INDEX_PATH = Path(__file__).resolve().parent / "sotb_index.jsonl"
 
+DEFAULT_VENTURE_ID = "default"
+_VENTURES_DIR = Path(__file__).resolve().parent / "ventures"
+
+
+def _safe_slug(venture_id: str) -> str:
+    """Filesystem-safe fallback slug: lowercase alnum + hyphen, no path
+    separators or `..`. Collapses runs of unsafe chars to a single hyphen."""
+    raw = (venture_id or "").strip().lower()
+    # Strip anything that could escape the ventures dir.
+    raw = raw.replace("/", "-").replace("\\", "-").replace("..", "-")
+    slug = re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
+    slug = re.sub(r"-{2,}", "-", slug)
+    return slug or "venture"
+
+
+def venture_memory_paths(venture_id: str = "default") -> tuple[Path, Path]:
+    """Return (md_path, index_path) for a venture. The default venture keeps
+    the legacy global files for zero-migration back-compat; other ventures
+    get server/memory/ventures/<slug>/{sotb.md,sotb_index.jsonl}.
+
+    The directory is NOT created here (create lazily on write).
+    """
+    if not venture_id or venture_id == DEFAULT_VENTURE_ID:
+        return _SOTB_PATH, _INDEX_PATH
+    try:
+        from server.ventures.models import venture_slug  # lazy, optional dep
+        slug = venture_slug(venture_id)
+    except Exception:  # noqa: BLE001 — defensive: ventures package optional
+        slug = _safe_slug(venture_id)
+    if not slug:
+        slug = _safe_slug(venture_id)
+    base = _VENTURES_DIR / slug
+    return base / "sotb.md", base / "sotb_index.jsonl"
+
 # §8.4 — default expiration days per section. `None` = never expires.
 SECTION_DEFAULTS: dict[str, int | None] = {
     "Active Decisions": None,
@@ -594,6 +628,7 @@ async def _detect_query_conflicts(
 
 async def read_sotb_governed(
     query: str, *, verify: bool,
+    venture_id: str = "default",
     md_path: Path | None = None,
     index_path: Path | None = None,
 ) -> tuple[str, SotbHealth]:
@@ -607,8 +642,9 @@ async def read_sotb_governed(
     Returns `(md, health)`. The markdown has expired entries removed.
     Never raises — provider errors in the judge return empty conflict lists.
     """
-    mp = md_path or _SOTB_PATH
-    ip = index_path or _INDEX_PATH
+    _md_default, _idx_default = venture_memory_paths(venture_id)
+    mp = md_path or _md_default
+    ip = index_path or _idx_default
 
     md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
     entries = read_sotb_index(md_path=mp, index_path=ip)
@@ -702,6 +738,7 @@ async def _contradiction_judge(
 async def apply_sotb_update_governed(
     *, update_text: str, session_id: str, verify: bool,
     source_member: str = "chairperson",
+    venture_id: str = "default",
     md_path: Path | None = None,
     index_path: Path | None = None,
 ) -> SotbHealth:
@@ -721,8 +758,9 @@ async def apply_sotb_update_governed(
     if not new_entries:
         return health
 
-    mp = md_path or _SOTB_PATH
-    ip = index_path or _INDEX_PATH
+    _md_default, _idx_default = venture_memory_paths(venture_id)
+    mp = md_path or _md_default
+    ip = index_path or _idx_default
 
     existing = read_sotb_index(md_path=mp, index_path=ip)
     cfg = get_config()
@@ -766,6 +804,7 @@ async def apply_sotb_update_governed(
     md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
     new_md = _append_entries_to_md(md_text, new_entries)
     if new_md != md_text:
+        mp.parent.mkdir(parents=True, exist_ok=True)
         mp.write_text(new_md, encoding="utf-8")
 
     write_sotb_index(existing + new_entries, path=ip)

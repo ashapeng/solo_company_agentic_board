@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS initiatives (
     timebox_start    TEXT NOT NULL,
     timebox_end      TEXT NOT NULL,
     source_session_id TEXT,
+    venture_id       TEXT NOT NULL DEFAULT 'default',
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
@@ -91,6 +92,7 @@ def create_initiative(
     timebox_end: str | None = None,
     created_from: str = "manual",
     source_session_id: str | None = None,
+    venture_id: str = "default",
     db_path: Path | None = None,
 ) -> dict[str, Any]:
     title = _required_text(title, "Title")
@@ -110,6 +112,7 @@ def create_initiative(
         approval_state="draft",
         created_from=created_from,
         source_session_id=source_session_id,
+        venture_id=str(venture_id or "default"),
         created_at=now,
         updated_at=now,
     )
@@ -120,8 +123,8 @@ def create_initiative(
             """INSERT INTO initiatives (
                 initiative_id, title, objective, status, approval_state,
                 created_from, success_criteria, departments, timebox_start,
-                timebox_end, source_session_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                timebox_end, source_session_id, venture_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             _initiative_values(initiative),
         )
         conn.commit()
@@ -148,14 +151,20 @@ def get_initiative(initiative_id: str, *, db_path: Path | None = None) -> dict[s
 def list_initiatives(
     *,
     status: str | None = None,
+    venture_id: str | None = None,
     db_path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    params: tuple[Any, ...] = ()
-    where = ""
+    clauses: list[str] = []
+    params_list: list[Any] = []
     if status is not None:
         status = _validate_choice(status, INITIATIVE_STATUSES, "status")
-        where = "WHERE status = ?"
-        params = (status,)
+        clauses.append("status = ?")
+        params_list.append(status)
+    if venture_id is not None:
+        clauses.append("venture_id = ?")
+        params_list.append(venture_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params: tuple[Any, ...] = tuple(params_list)
     conn = _connect(db_path)
     try:
         rows = conn.execute(
@@ -396,6 +405,10 @@ def _ensure_schema_migrations(conn: sqlite3.Connection) -> None:
     }
     if "source_session_id" not in initiative_columns:
         conn.execute("ALTER TABLE initiatives ADD COLUMN source_session_id TEXT")
+    if "venture_id" not in initiative_columns:
+        conn.execute(
+            "ALTER TABLE initiatives ADD COLUMN venture_id TEXT NOT NULL DEFAULT 'default'"
+        )
 
     _recover_legacy_closeouts(conn)
 
@@ -468,6 +481,7 @@ def _initiative_values(initiative: Initiative) -> tuple[Any, ...]:
         initiative.timebox_start,
         initiative.timebox_end,
         initiative.source_session_id,
+        initiative.venture_id,
         initiative.created_at,
         initiative.updated_at,
     )
@@ -486,6 +500,7 @@ def _initiative_from_row(
         approval_state=row["approval_state"],
         created_from=row["created_from"],
         source_session_id=row["source_session_id"],
+        venture_id=(row["venture_id"] if "venture_id" in row.keys() else "default") or "default",
         success_criteria=_string_list(parse_json_list(row["success_criteria"])),
         departments=_string_list(parse_json_list(row["departments"])),
         timebox_start=row["timebox_start"],

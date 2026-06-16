@@ -66,6 +66,7 @@ class Initiative:
     approval_state: ApprovalState = "draft"
     created_from: CreatedFrom = "manual"
     source_session_id: str | None = None
+    venture_id: str = "default"
     created_at: str = ""
     updated_at: str = ""
     closeout: dict[str, Any] | None = None

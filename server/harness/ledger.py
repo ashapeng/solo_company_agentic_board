@@ -152,6 +152,8 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
     skills_record = getattr(session, "skills", None) or {}
     skills_used_map = skills_record.get("used", {}) if isinstance(skills_record, dict) else {}
 
+    venture_id = getattr(session, "venture_id", None) or "default"
+
     conn = _connect(db_path)
     try:
         conn.execute(
@@ -171,8 +173,8 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 delegation_task_count,
                 harness_config_version,
                 verifier_model, verifier_provider, chairman_provider, applied_review_id,
-                skills_used
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                skills_used, venture_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -209,6 +211,7 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 verification.get("chairman_provider"),
                 _active_review_id(conn),
                 json.dumps(skills_used_map),
+                venture_id,
             ),
         )
         conn.commit()
@@ -296,6 +299,7 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "routing_misses": "TEXT",
         "validation_warnings": "TEXT DEFAULT '[]'",
         "skills_used": "TEXT",
+        "venture_id": "TEXT DEFAULT 'default'",
     }
     for column, column_type in additions.items():
         if column not in existing:
@@ -335,6 +339,7 @@ def query_outcomes(
     complexity: str | None = None,
     since: str | None = None,
     limit: int | None = None,
+    venture_id: str | None = None,
     db_path: Path | None = None,
 ) -> list[dict]:
     """Query session outcomes with optional filters."""
@@ -352,6 +357,9 @@ def query_outcomes(
         if since is not None:
             sql += " AND timestamp >= ?"
             params.append(since)
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
 
         sql += " ORDER BY timestamp DESC"
 
@@ -373,6 +381,7 @@ def aggregate(
     complexity: str | None = None,
     since: str | None = None,
     limit: int | None = None,
+    venture_id: str | None = None,
     db_path: Path | None = None,
 ) -> dict[str, float]:
     """Grouped average aggregation for tuner consumption."""
@@ -396,6 +405,9 @@ def aggregate(
         if since is not None:
             sql += " AND timestamp >= ?"
             params.append(since)
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
 
         sql += f" GROUP BY {group_by}"
 

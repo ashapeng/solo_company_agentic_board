@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS delegated_tasks (
     status             TEXT NOT NULL,
     payload            TEXT NOT NULL,
     created_at         TEXT NOT NULL,
-    updated_at         TEXT NOT NULL
+    updated_at         TEXT NOT NULL,
+    venture_id         TEXT DEFAULT 'default'
 );
 CREATE INDEX IF NOT EXISTS idx_delegated_tasks_session_id
 ON delegated_tasks(session_id);
@@ -336,9 +337,11 @@ def save_delegated_task(task: dict[str, Any], *, db_path: Path | None = None) ->
     )
 
     now = _utc_now()
+    venture_id = str(task.get("venture_id") or "default")
     payload = dict(task)
     payload["id"] = task_id
     payload["status"] = status
+    payload["venture_id"] = venture_id
     payload.setdefault("approval_required", True)
     payload.setdefault("artifacts", [])
 
@@ -352,8 +355,8 @@ def save_delegated_task(task: dict[str, Any], *, db_path: Path | None = None) ->
         conn.execute(
             """INSERT OR REPLACE INTO delegated_tasks (
                 task_id, session_id, manager_agent_id, execution_unit_id,
-                status, payload, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                status, payload, created_at, updated_at, venture_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task_id,
                 str(payload.get("session_id") or ""),
@@ -363,6 +366,7 @@ def save_delegated_task(task: dict[str, Any], *, db_path: Path | None = None) ->
                 json.dumps(payload, ensure_ascii=False),
                 created_at,
                 now,
+                venture_id,
             ),
         )
         conn.commit()
@@ -391,13 +395,21 @@ def get_delegated_task(task_id: str, *, db_path: Path | None = None) -> dict[str
     return json.loads(row["payload"])
 
 
-def get_delegation_plan(session_id: str, *, db_path: Path | None = None) -> dict[str, Any]:
+def get_delegation_plan(
+    session_id: str,
+    *,
+    venture_id: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, Any]:
     conn = _connect_tasks(db_path)
     try:
-        rows = conn.execute(
-            "SELECT payload FROM delegated_tasks WHERE session_id = ? ORDER BY created_at, task_id",
-            (session_id,),
-        ).fetchall()
+        sql = "SELECT payload FROM delegated_tasks WHERE session_id = ?"
+        params: list[Any] = [session_id]
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
+        sql += " ORDER BY created_at, task_id"
+        rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
     tasks = [json.loads(row["payload"]) for row in rows]
@@ -732,8 +744,21 @@ def _connect_tasks(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(TASK_SCHEMA)
+    _ensure_task_columns(conn)
     conn.commit()
     return conn
+
+
+def _ensure_task_columns(conn: sqlite3.Connection) -> None:
+    """Additive migration for legacy delegated_tasks tables."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(delegated_tasks)").fetchall()
+    }
+    if "venture_id" not in existing:
+        conn.execute(
+            "ALTER TABLE delegated_tasks ADD COLUMN venture_id TEXT DEFAULT 'default'"
+        )
 
 
 def _utc_now() -> str:
