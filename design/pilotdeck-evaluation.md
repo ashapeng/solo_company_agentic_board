@@ -132,6 +132,11 @@ Ranked by *impact for a solo founder × fit with current architecture*. Each ite
 
 ---
 
+> **Implementation plans:** see the companion `design/pilotdeck-adoption-implementation.md`
+> for file-level, implementation-ready plans for all seven items (grounded in the
+> actual code — note that the SOTB, initiatives, and execution subsystems are more
+> built-out than this evaluation's first pass suggested).
+
 ## 4. Recommended sequencing
 
 1. **Memory overhaul** (#1) — foundational; unblocks our own dark-launched governance.
