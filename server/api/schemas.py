@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None
+    venture_id: str | None = None
     initiative_id: str | None = None
     initiative_mode: Literal["ad_hoc", "attach", "create_draft"] = "ad_hoc"
     member_ids: list[str] | None = None

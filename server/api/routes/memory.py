@@ -14,11 +14,12 @@ router = APIRouter()
 
 
 @router.get("/sotb")
-async def get_sotb():
-    content = read_sotb()
-    return {"content": content, "path": str(SOTB_PATH)}
+async def get_sotb(venture_id: str = "default"):
+    content = read_sotb(venture_id=venture_id)
+    return {"content": content, "path": str(SOTB_PATH), "venture_id": venture_id}
 
 
+# NOTE: PUT /sotb and /sotb/review remain default-venture only for now.
 @router.post("/sotb/review")
 async def review_sotb(req: SotbReviewRequest):
     return review_sotb_update(
