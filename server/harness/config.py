@@ -102,6 +102,23 @@ class HarnessConfig:
         "auto_promote_enabled": False,
     })
 
+    # Bounded task executor (Plan 3a). always_on_enabled gates the
+    # always-on poll loop (dark-launch default OFF). The runner_* keys
+    # bound a single run_task invocation; RunnerBudget.from_config() reads them.
+    execution: dict = field(default_factory=lambda: {
+        "always_on_enabled": False,
+        "manager_model": "qwen/qwen3.6-plus-2026-04-02",
+        "subagent_model": "qwen/qwen3.6-flash",
+        "daily_budget_per_venture": 6,
+        "cooldown_seconds": 1800,
+        "max_concurrent_runs": 2,
+        "poll_interval_seconds": 300,
+        "runner_max_turns": 12,
+        "runner_max_tool_calls": 40,
+        "runner_wall_seconds_max": 1200,
+        "runner_max_parallel_subagents": 3,
+    })
+
     # Version tracking
     version: int = 1
     last_modified: str = ""

@@ -30,6 +30,19 @@
     "auto_promote_max_pairs": 2,
     "auto_promote_enabled": false
   },
+  "execution": {
+    "always_on_enabled": false,
+    "manager_model": "qwen/qwen3.6-plus-2026-04-02",
+    "subagent_model": "qwen/qwen3.6-flash",
+    "daily_budget_per_venture": 6,
+    "cooldown_seconds": 1800,
+    "max_concurrent_runs": 2,
+    "poll_interval_seconds": 300,
+    "runner_max_turns": 12,
+    "runner_max_tool_calls": 40,
+    "runner_wall_seconds_max": 1200,
+    "runner_max_parallel_subagents": 3
+  },
   "version": 3,
   "last_modified": "2026-05-20T11:07:46.383005+00:00"
 }
