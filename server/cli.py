@@ -655,6 +655,10 @@ def cli():
         "--consolidate-memory", action="store_true",
         help="Run LLM-assisted SOTB consolidation for the venture and exit.",
     )
+    parser.add_argument(
+        "--always-on", action="store_true",
+        help="Run the execution scheduler loop continuously (Ctrl-C to stop).",
+    )
     args = parser.parse_args()
 
     if args.live_research:
@@ -792,6 +796,17 @@ def cli():
 
     if args.list_members:
         show_members()
+        return
+
+    if args.always_on:
+        from server.execution.scheduler import run_forever
+
+        print("Starting always-on scheduler (Ctrl-C to stop)")
+        try:
+            asyncio.run(run_forever())
+        except KeyboardInterrupt:
+            print("stopped")
+            sys.exit(0)
         return
 
     if args.consolidate_memory:

@@ -422,6 +422,29 @@ def get_delegation_plan(
     }
 
 
+def list_tasks_by_status(
+    status: str,
+    *,
+    venture_id: str | None = None,
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return task payloads with the given status, optionally filtered by venture_id, ordered by created_at."""
+    if status not in TASK_STATUSES:
+        raise ExecutionError(f"Invalid task status: {status}")
+    conn = _connect_tasks(db_path)
+    try:
+        sql = "SELECT payload FROM delegated_tasks WHERE status = ?"
+        params: list[Any] = [status]
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
+        sql += " ORDER BY created_at, task_id"
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    return [json.loads(row["payload"]) for row in rows]
+
+
 def get_delegated_tasks_for_initiative(
     initiative_id: str,
     *,
