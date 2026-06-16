@@ -480,6 +480,7 @@ async def run_board(
     verify: bool = False,
     budget: bool = False,
     json_output: bool = False,
+    venture_id: str = "default",
 ):
     orchestrator = BoardOrchestrator(
         on_stage_start=None if json_output else on_stage_start,
@@ -500,6 +501,7 @@ async def run_board(
             member_ids=member_ids,
             skip_classify=full_board,
             verify=verify,
+            venture_id=venture_id,
         )
     except BoardDeliberationError as e:
         if json_output:
@@ -519,7 +521,7 @@ async def run_board(
     return session
 
 
-async def interactive_mode():
+async def interactive_mode(venture: str = "default"):
     console.print(Panel(
         "[bold]Agentic Board — Interactive Mode[/bold]\n"
         "Type your question and the board will deliberate.\n"
@@ -557,7 +559,7 @@ async def interactive_mode():
             console.print(f"[dim]Budget display: {'ON' if budget else 'OFF'}[/dim]")
             continue
         if query.lower() == "/sotb":
-            sotb = read_sotb()
+            sotb = read_sotb(venture)
             if sotb:
                 console.print(Panel(
                     Markdown(sotb),
@@ -568,7 +570,37 @@ async def interactive_mode():
                 console.print("[dim]No SOTB found. It will be created after the first deliberation.[/dim]")
             continue
 
-        await run_board(query, verbose=verbose, verify=verify, budget=budget)
+        await run_board(query, verbose=verbose, verify=verify, budget=budget, venture_id=venture)
+
+
+def serve_channels(venture: str = "default"):
+    """Serve enabled reach channels. Safe no-op when no tokens are configured."""
+    from server.channels import ChannelDeps, load_enabled_channels, render_brief
+
+    channels = load_enabled_channels()
+    if not channels:
+        console.print(
+            "[yellow]No reach channels configured.[/yellow] "
+            "Set e.g. TELEGRAM_BOT_TOKEN to enable a channel."
+        )
+        return
+
+    async def _deliberate(query: str):
+        orchestrator = BoardOrchestrator()
+        return await orchestrator.deliberate(query, venture_id=venture)
+
+    deps = ChannelDeps(deliberate=_deliberate, render=render_brief)
+
+    names = ", ".join(getattr(c, "channel_key", "?") for c in channels)
+    console.print(f"[green]Serving channels:[/green] {names} (Ctrl-C to stop)")
+
+    async def _serve():
+        await asyncio.gather(*(channel.start(deps) for channel in channels))
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        console.print("[dim]Channels stopped.[/dim]")
 
 
 def cli():
@@ -581,6 +613,7 @@ def cli():
     parser.add_argument("--full-board", "-f", action="store_true", help="Skip classifier, invoke all members")
     parser.add_argument("--verify", action="store_true", help="Enable Stage 4 verification on synthesis")
     parser.add_argument("--budget", action="store_true", help="Show token usage and cost breakdown")
+    parser.add_argument("--venture", dest="venture", default="default", help="Venture (workspace) ID to scope the deliberation")
     parser.add_argument("--json", action="store_true", help="Emit session JSON only")
     parser.add_argument("--tune", action="store_true", help="Run Phase B token budget tuner from the ledger")
     parser.add_argument("--tune-verification", action="store_true", help="Run Phase C verification threshold tuner")
@@ -647,6 +680,18 @@ def cli():
     parser.add_argument(
         "--intake-skip", action="store_true",
         help="Skip chair intake; use DEFAULT_ROUTING.",
+    )
+    parser.add_argument(
+        "--consolidate-memory", action="store_true",
+        help="Run LLM-assisted SOTB consolidation for the venture and exit.",
+    )
+    parser.add_argument(
+        "--always-on", action="store_true",
+        help="Run the execution scheduler loop continuously (Ctrl-C to stop).",
+    )
+    parser.add_argument(
+        "--serve-channels", action="store_true",
+        help="Serve enabled reach channels (e.g. Telegram). No-op without tokens.",
     )
     args = parser.parse_args()
 
@@ -787,8 +832,29 @@ def cli():
         show_members()
         return
 
+    if args.serve_channels:
+        serve_channels()
+        return
+
+    if args.always_on:
+        from server.execution.scheduler import run_forever
+
+        print("Starting always-on scheduler (Ctrl-C to stop)")
+        try:
+            asyncio.run(run_forever())
+        except KeyboardInterrupt:
+            print("stopped")
+            sys.exit(0)
+        return
+
+    if args.consolidate_memory:
+        from server.memory.sotb_consolidation import consolidate_sotb
+        result = asyncio.run(consolidate_sotb(venture_id=args.venture))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
     if args.interactive or not args.query:
-        asyncio.run(interactive_mode())
+        asyncio.run(interactive_mode(args.venture))
         return
 
     # Parse manual member override
@@ -804,6 +870,7 @@ def cli():
         verify=args.verify,
         budget=args.budget,
         json_output=args.json,
+        venture_id=args.venture,
     ))
 
 

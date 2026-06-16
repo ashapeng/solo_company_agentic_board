@@ -1,0 +1,8 @@
+name: example
+description: Example board profile
+members: [chairperson, strategist, product, researcher, critic, architect, builder]
+harness_overrides:
+  verification_threshold: 7.5
+roster_overlay: {}
+branding:
+  display_name: "Example Board"

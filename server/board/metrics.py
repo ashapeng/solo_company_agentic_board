@@ -119,6 +119,26 @@ class SessionMetrics:
             for c in self.calls
         )
 
+    def baseline_cost_estimate(self, baseline_model: str) -> float:
+        """Counterfactual cost if every call had run on `baseline_model`."""
+        return sum(
+            _estimate_cost(baseline_model, c.input_tokens, c.output_tokens)
+            for c in self.calls
+        )
+
+    def savings(self, baseline_model: str) -> dict:
+        """Cost savings of the actual routing vs. a single-baseline-model run."""
+        baseline = self.baseline_cost_estimate(baseline_model)
+        actual = self.total_cost_estimate()
+        return {
+            "baseline_cost_usd": round(baseline, 6),
+            "actual_cost_usd": round(actual, 6),
+            "cost_saved_usd": round(baseline - actual, 6),
+            "saved_pct": round(100 * (baseline - actual) / baseline, 2)
+            if baseline > 0
+            else 0.0,
+        }
+
     def by_stage(self, stage: int) -> list[CallMetrics]:
         """Return all call metrics for a given stage."""
         return [c for c in self.calls if c.stage == stage]
@@ -171,10 +191,15 @@ class SessionMetrics:
 
     def summary(self) -> dict:
         """Return a summary dictionary of session metrics."""
+        from server.board.config import get_chairman_model
+
+        baseline = self.baseline_cost_estimate(get_chairman_model())
         return {
             "total_calls": len(self.calls),
             "total_tokens": self.total_tokens(),
             "total_cost_estimate_usd": round(self.total_cost_estimate(), 4),
+            "baseline_cost_estimate_usd": round(baseline, 6),
+            "cost_saved_usd": round(baseline - self.total_cost_estimate(), 6),
             "calls": [
                 {
                     "member_id": c.member_id,

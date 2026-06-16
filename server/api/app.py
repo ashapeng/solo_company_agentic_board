@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
@@ -18,10 +20,28 @@ from .routes import board, execution, harness, initiatives, memory, system
 from .state import UI_DIST_ASSETS
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Register external MCP-server tools at startup.
+
+    No-op by default: with ``AGENTIC_BOARD_MCP_SERVERS`` unset (the case in all
+    tests), ``register_mcp_tools()`` returns ``[]`` without any network access.
+    Any failure is logged and swallowed so startup is never blocked.
+    """
+    try:
+        from server.board.mcp_client import register_mcp_tools
+
+        await register_mcp_tools()
+    except Exception as exc:  # noqa: BLE001 — never block startup on MCP issues
+        logging.getLogger(__name__).warning("MCP tool registration skipped: %s", exc)
+    yield
+
+
 app = FastAPI(
     title="Agentic Board API",
     description="A council of world-expert AI agents that deliberate as a company board",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(

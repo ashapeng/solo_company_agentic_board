@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "harness_config.json"
@@ -102,6 +105,33 @@ class HarnessConfig:
         "auto_promote_enabled": False,
     })
 
+    # Complexity-aware council model routing (Plan 4c). Config-gated,
+    # default OFF cost lever. When complexity_aware_models is True and a
+    # query is classified "simple", council members WITHOUT an explicit
+    # model_override are downshifted to simple_complexity_model. The
+    # chairman and any member with a model_override are never changed.
+    routing: dict = field(default_factory=lambda: {
+        "complexity_aware_models": False,
+        "simple_complexity_model": "qwen/qwen3.6-flash",
+    })
+
+    # Bounded task executor (Plan 3a). always_on_enabled gates the
+    # always-on poll loop (dark-launch default OFF). The runner_* keys
+    # bound a single run_task invocation; RunnerBudget.from_config() reads them.
+    execution: dict = field(default_factory=lambda: {
+        "always_on_enabled": False,
+        "manager_model": "qwen/qwen3.6-plus-2026-04-02",
+        "subagent_model": "qwen/qwen3.6-flash",
+        "daily_budget_per_venture": 6,
+        "cooldown_seconds": 1800,
+        "max_concurrent_runs": 2,
+        "poll_interval_seconds": 300,
+        "runner_max_turns": 12,
+        "runner_max_tool_calls": 40,
+        "runner_wall_seconds_max": 1200,
+        "runner_max_parallel_subagents": 3,
+    })
+
     # Version tracking
     version: int = 1
     last_modified: str = ""
@@ -116,7 +146,40 @@ def load_config(path: Path | None = None) -> HarnessConfig:
     data = json.loads(config_path.read_text(encoding="utf-8"))
     known_fields = {f.name for f in HarnessConfig.__dataclass_fields__.values()}
     filtered = {k: v for k, v in data.items() if k in known_fields}
-    return HarnessConfig(**filtered)
+    config = HarnessConfig(**filtered)
+    return _apply_active_profile_overrides(config)
+
+
+def _apply_active_profile_overrides(config: HarnessConfig) -> HarnessConfig:
+    """Overlay the active profile's harness_overrides onto ``config``.
+
+    GATED on the ``BOARD_PROFILE`` env var. When unset (the default, and what
+    the entire existing test suite runs under) this returns ``config``
+    unchanged. Any failure falls back to the un-overridden config so a broken
+    profile never bricks the harness. Imports are lazy to avoid import cycles.
+    """
+    try:
+        from server.profiles import (
+            apply_harness_overrides,
+            get_active_profile_name,
+            load_profile,
+        )
+
+        name = get_active_profile_name()
+        if not name:
+            return config
+
+        profile = load_profile(name)
+        merged = apply_harness_overrides(asdict(config), profile)
+        known_fields = {f.name for f in HarnessConfig.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in merged.items() if k in known_fields}
+        return HarnessConfig(**filtered)
+    except Exception:  # noqa: BLE001 - never let a profile break the harness
+        logger.warning(
+            "Failed to apply board profile overrides; using base config",
+            exc_info=True,
+        )
+        return config
 
 
 def save_config(config: HarnessConfig, path: Path | None = None) -> None:

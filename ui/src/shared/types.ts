@@ -351,3 +351,55 @@ export type TableStatus = {
   title: string;
   detail: string;
 };
+
+// ─── SOTB memory audit (white-box) ──────────────────────────────────────────
+
+export type SotbProvenance = {
+  session_id?: string;
+  source_member?: string;
+  merged_from?: string[];
+  [key: string]: unknown;
+};
+
+export type SotbEntry = {
+  entry_id: string;
+  section: string;
+  text: string;
+  created_at: string;
+  updated_at: string;
+  confidence: number;
+  expires_at?: string | null;
+  provenance: SotbProvenance;
+};
+
+export type SotbSnapshot = {
+  snapshot_id: string;
+  venture_id: string;
+  reason: string;
+  created_at: string;
+  session_id?: string | null;
+  md_sha256?: string | null;
+  index_sha256?: string | null;
+  post_md_sha256?: string | null;
+  post_index_sha256?: string | null;
+  has_payload?: boolean;
+};
+
+export type RollbackResult = {
+  restored: boolean;
+  venture_id?: string;
+  snapshot_id?: string;
+  manual_edits_since?: boolean;
+  restored_md_bytes?: number;
+  restored_index_rows?: number;
+  error?: string;
+};
+
+export type ConsolidationResult = {
+  venture_id?: string;
+  snapshot_id?: string | null;
+  merged: number;
+  superseded: number;
+  expired: number;
+  kept: number;
+};

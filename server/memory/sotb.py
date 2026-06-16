@@ -12,12 +12,25 @@ logger = logging.getLogger(__name__)
 SOTB_PATH = Path(__file__).resolve().parent.parent / "memory" / "sotb.md"
 MAX_SOTB_WORDS = 1000
 
+DEFAULT_VENTURE_ID = "default"
 
-def read_sotb() -> str:
+
+def sotb_md_path(venture_id: str = "default") -> Path:
+    """Return the sotb.md path for a venture. The default venture keeps the
+    legacy global file for zero-migration back-compat; other ventures get
+    server/memory/ventures/<slug>/sotb.md. Mirrors
+    `sotb_governance.venture_memory_paths`."""
+    from server.memory.sotb_governance import venture_memory_paths
+    md_path, _ = venture_memory_paths(venture_id)
+    return md_path
+
+
+def read_sotb(venture_id: str = "default") -> str:
     """Read the current State of the Board. Returns empty string if not found."""
-    if not SOTB_PATH.exists():
+    path = sotb_md_path(venture_id)
+    if not path.exists():
         return ""
-    return SOTB_PATH.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8")
 
 
 def generate_sotb_update(synthesis_content: str) -> str | None:

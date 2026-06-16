@@ -123,6 +123,27 @@ def _validate_session_id(session_id: str) -> None:
         )
 
 
+def _find_session_path(session_id: str) -> FilePath | None:
+    """Locate a session JSON, supporting venture-scoped subdirectories.
+
+    Flat-dir lookup (``data/sessions``, ``data/conversations``) is tried first
+    for back-compat (default venture). Venture-scoped sessions live one level
+    deeper (e.g. ``data/sessions/<venture-slug>/board_123.json``), so fall back
+    to a single level of subdirectory globbing under ``data/sessions``.
+    """
+    for dirname in ("data/sessions", "data/conversations"):
+        candidate = FilePath(f"{dirname}/{session_id}.json")
+        if candidate.exists():
+            return candidate
+    # Venture-scoped fallback: data/sessions/<venture-slug>/<session_id>.json
+    base = FilePath("data/sessions")
+    if base.exists():
+        for candidate in sorted(base.glob(f"*/{session_id}.json")):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 @router.get("/members")
 async def list_members() -> list[MemberInfo]:
     roster_members = load_roster().get("members", {})
@@ -153,6 +174,7 @@ async def deliberate(req: QueryRequest, request: Request):
                 skip_classify=req.full_board,
                 verify=req.verify,
                 session_id=req.session_id,
+                venture_id=req.venture_id,
                 initiative_id=req.initiative_id,
                 initiative_mode=req.initiative_mode,
                 clarification_answers=req.clarification_answers,
@@ -170,6 +192,7 @@ async def deliberate(req: QueryRequest, request: Request):
             skip_classify=req.full_board,
             verify=req.verify,
             session_id=req.session_id,
+            venture_id=req.venture_id,
             initiative_id=req.initiative_id,
             initiative_mode=req.initiative_mode,
             clarification_answers=req.clarification_answers,
@@ -264,6 +287,7 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                     skip_classify=req.full_board,
                     verify=req.verify,
                     session_id=req.session_id,
+                    venture_id=req.venture_id,
                     initiative_id=req.initiative_id,
                     initiative_mode=req.initiative_mode,
                     clarification_answers=req.clarification_answers,
@@ -290,6 +314,7 @@ async def deliberate_stream(req: QueryRequest, request: Request):
                     skip_classify=req.full_board,
                     verify=req.verify,
                     session_id=req.session_id,
+                    venture_id=req.venture_id,
                     initiative_id=req.initiative_id,
                     initiative_mode=req.initiative_mode,
                     clarification_answers=req.clarification_answers,
@@ -346,12 +371,7 @@ async def continue_meeting(
     if not req.user_input or not req.user_input.strip():
         raise HTTPException(400, detail="user_input must be non-empty")
 
-    session_path = None
-    for dirname in ("data/sessions", "data/conversations"):
-        candidate = FilePath(f"{dirname}/{session_id}.json")
-        if candidate.exists():
-            session_path = candidate
-            break
+    session_path = _find_session_path(session_id)
     if session_path is None:
         raise HTTPException(404, detail="Session not found")
 
@@ -374,6 +394,7 @@ async def continue_meeting(
         )
 
     session = BoardSession(session_id=data["session_id"], user_query=data["user_query"])
+    session.venture_id = data.get("venture_id") or "default"
     session.initiative_id = data.get("initiative_id")
     session.initiative_mode = data.get("initiative_mode", "ad_hoc")
     session.continuation_count = int(data.get("continuation_count", 0))
@@ -458,12 +479,7 @@ async def adjourn_meeting(
     """Mark a meeting adjourned. Idempotent."""
     _validate_session_id(session_id)
 
-    session_path = None
-    for dirname in ("data/sessions", "data/conversations"):
-        candidate = FilePath(f"{dirname}/{session_id}.json")
-        if candidate.exists():
-            session_path = candidate
-            break
+    session_path = _find_session_path(session_id)
     if session_path is None:
         raise HTTPException(404, detail="Session not found")
 
@@ -528,10 +544,9 @@ async def get_session_adapter(
     session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
 ):
     _validate_session_id(session_id)
-    for dirname in ("data/sessions", "data/conversations"):
-        filepath = FilePath(f"{dirname}/{session_id}.json")
-        if filepath.exists():
-            return adapt_session_record(json.loads(filepath.read_text()))
+    filepath = _find_session_path(session_id)
+    if filepath is not None:
+        return adapt_session_record(json.loads(filepath.read_text()))
     raise HTTPException(404, "Session not found")
 
 
@@ -544,18 +559,17 @@ async def get_session_delegation_plan(
     if persisted.get("tasks"):
         return persisted
 
-    for dirname in ("data/sessions", "data/conversations"):
-        filepath = FilePath(f"{dirname}/{session_id}.json")
-        if filepath.exists():
-            data = json.loads(filepath.read_text())
-            plan = data.get("delegation_plan") or {
-                "session_id": session_id,
-                "tasks": [],
-                "warnings": ["Session has no delegation plan."],
-                "requires_approval": True,
-            }
-            record_delegation_plan(plan)
-            return plan
+    filepath = _find_session_path(session_id)
+    if filepath is not None:
+        data = json.loads(filepath.read_text())
+        plan = data.get("delegation_plan") or {
+            "session_id": session_id,
+            "tasks": [],
+            "warnings": ["Session has no delegation plan."],
+            "requires_approval": True,
+        }
+        record_delegation_plan(plan)
+        return plan
     raise HTTPException(404, "Session not found")
 
 
@@ -616,10 +630,9 @@ async def get_session(
     session_id: str = Path(..., description="Board session id matching ^board_\\d+$"),
 ):
     _validate_session_id(session_id)
-    for dirname in ("data/sessions", "data/conversations"):
-        filepath = FilePath(f"{dirname}/{session_id}.json")
-        if filepath.exists():
-            return json.loads(filepath.read_text())
+    filepath = _find_session_path(session_id)
+    if filepath is not None:
+        return json.loads(filepath.read_text())
     raise HTTPException(404, "Session not found")
 
 

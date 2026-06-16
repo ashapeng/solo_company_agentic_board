@@ -463,6 +463,7 @@ class BoardSession:
     """Full record of a board deliberation session."""
     session_id: str
     user_query: str
+    venture_id: str = "default"
     initiative_id: str | None = None
     initiative_mode: str = "ad_hoc"
     stage1_responses: list[MemberResponse] = field(default_factory=list)
@@ -554,6 +555,7 @@ class BoardSession:
         result = {
             "session_id": self.session_id,
             "user_query": self.user_query,
+            "venture_id": self.venture_id,
             "initiative_id": self.initiative_id,
             "initiative_mode": self.initiative_mode,
             "stage1": [_resp(r) for r in self.stage1_responses],
@@ -591,6 +593,10 @@ class BoardSession:
 
     def save(self, directory: str = "data/sessions") -> Path:
         path = Path(directory)
+        venture_id = getattr(self, "venture_id", "default") or "default"
+        if venture_id and venture_id != "default":
+            from server.ventures import venture_slug
+            path = path / venture_slug(venture_id)
         path.mkdir(parents=True, exist_ok=True)
         filepath = path / f"{self.session_id}.json"
         filepath.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False))
@@ -601,9 +607,19 @@ def _assign_models(
     members: list[BoardMember],
     *,
     query_type: str | None = None,
+    complexity: str | None = None,
+    chairman_id: str | None = None,
     config=None,
 ) -> dict[str, str]:
-    """Assign an LLM model to each board member via override, tuning, or round-robin."""
+    """Assign an LLM model to each board member via override, tuning, or round-robin.
+
+    Plan 4c (complexity-aware routing): when the routing.complexity_aware_models
+    flag is enabled AND the query is classified "simple", council members that do
+    NOT carry an explicit model_override are downshifted to the cheaper
+    routing.simple_complexity_model. The chairman (chairman_id) and any member with
+    a model_override are never downshifted. Default behavior (flag off, or
+    complexity != "simple") is byte-for-byte unchanged.
+    """
     models = get_council_models()
     preferences = resolve_model_preferences(query_type=query_type, config=config)
     assignments: dict[str, str] = {}
@@ -614,6 +630,19 @@ def _assign_models(
             assignments[member.id] = preferences[member.id]
         else:
             assignments[member.id] = models[i % len(models)]
+
+    cfg = config or get_config()
+    routing = getattr(cfg, "routing", None) or {}
+    if routing.get("complexity_aware_models") and complexity == "simple":
+        simple_model = routing.get("simple_complexity_model")
+        if simple_model:
+            for member in members:
+                if member.id == chairman_id:
+                    continue
+                if member.model_override:
+                    continue
+                assignments[member.id] = simple_model
+
     return assignments
 
 
@@ -1444,6 +1473,7 @@ class BoardOrchestrator:
         user_query: str,
         *,
         session_id: str | None = None,
+        venture_id: str | None = None,
         initiative_id: str | None = None,
         initiative_mode: str = "ad_hoc",
     ) -> BoardSession:
@@ -1463,6 +1493,7 @@ class BoardOrchestrator:
             initiative_id=initiative_id,
             initiative_mode=initiative_mode,
         )
+        session.venture_id = venture_id or "default"
         session.metrics = self.metrics
         session.status = "completed"
 
@@ -1674,6 +1705,7 @@ class BoardOrchestrator:
         skip_classify: bool = False,
         verify: bool = False,
         session_id: str | None = None,
+        venture_id: str | None = None,
         initiative_id: str | None = None,
         initiative_mode: str = "ad_hoc",
         clarification_answers: dict[str, Any] | None = None,
@@ -1700,6 +1732,7 @@ class BoardOrchestrator:
             initiative_id=initiative_id,
             initiative_mode=initiative_mode,
         )
+        session.venture_id = venture_id or "default"
         session.metrics = self.metrics
 
         # ── Shortcut detection  (intent-based routing BEFORE full pipeline) ──
@@ -1720,6 +1753,7 @@ class BoardOrchestrator:
                 return await self.run_secretary_shortcut(
                     user_query,
                     session_id=session_id,
+                    venture_id=session.venture_id,
                     initiative_id=initiative_id,
                     initiative_mode=initiative_mode,
                 )
@@ -1730,7 +1764,10 @@ class BoardOrchestrator:
         if member_ids:
             # Manual override — use only the specified members
             self.council = [m for m in all_members if m.id in member_ids and m.id != self.chairman.id]
-            self.model_assignments = _assign_models(self.council + [self.chairman])
+            self.model_assignments = _assign_models(
+                self.council + [self.chairman],
+                chairman_id=self.chairman.id,
+            )
             logger.info("Manual member override. Selected: %s", [m.id for m in self.council])
         elif not skip_classify:
             from .classifier import classify_query
@@ -1748,6 +1785,8 @@ class BoardOrchestrator:
             self.model_assignments = _assign_models(
                 self.council + [self.chairman],
                 query_type=classification.query_type,
+                complexity=getattr(classification, "complexity", None),
+                chairman_id=self.chairman.id,
                 config=get_config(),
             )
             session.classification = {
@@ -1988,7 +2027,9 @@ class BoardOrchestrator:
 
         # Read institutional memory before synthesis (P4: governed read).
         # `verify=verify` is the HEAVY-tier proxy for judge gating.
-        sotb, sotb_health = await read_sotb_governed(effective_query, verify=verify)
+        sotb, sotb_health = await read_sotb_governed(
+            effective_query, verify=verify, venture_id=session.venture_id
+        )
         session.sotb_health = sotb_health.to_dict()
         # Append a SOTB HEALTH block to the chair context when warnings exist.
         warnings_count = session.sotb_health.get("warnings_count", 0)

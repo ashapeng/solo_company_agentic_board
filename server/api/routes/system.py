@@ -33,5 +33,20 @@ async def metrics_summary():
             return {
                 "session_id": data.get("session_id"),
                 "metrics": data.get("metrics", {}),
+                "cumulative_savings": _cumulative_savings(),
             }
-    return {"session_id": None, "metrics": {}}
+    return {
+        "session_id": None,
+        "metrics": {},
+        "cumulative_savings": _cumulative_savings(),
+    }
+
+
+def _cumulative_savings() -> dict:
+    """Read cumulative savings from the ledger, never raising on a fresh DB."""
+    try:
+        from server.harness import ledger
+
+        return ledger.cumulative_savings()
+    except Exception:
+        return {}

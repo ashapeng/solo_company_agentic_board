@@ -94,7 +94,38 @@ def get_board_members() -> list[BoardMember]:
     global _cached_members
     if _cached_members is None:
         _cached_members = _load_default_members()
-    return _cached_members
+    return _apply_active_profile_members(_cached_members)
+
+
+def _apply_active_profile_members(members: list[BoardMember]) -> list[BoardMember]:
+    """Restrict ``members`` to the active profile's id set, if one is selected.
+
+    GATED on the ``BOARD_PROFILE`` env var. When no profile is active (the
+    default, and what the existing test suite runs under) the full list is
+    returned unchanged. Existing order/priority is preserved. Never raises:
+    on any error or empty result we fall back to the full member set. Imports
+    are lazy to avoid import cycles.
+    """
+    try:
+        from server.profiles import (
+            get_active_profile_name,
+            load_profile,
+            profile_member_ids,
+        )
+
+        name = get_active_profile_name()
+        if not name:
+            return members
+
+        ids = profile_member_ids(load_profile(name))
+        if not ids:
+            return members
+
+        allowed = set(ids)
+        filtered = [m for m in members if m.id in allowed]
+        return filtered or members
+    except Exception:  # noqa: BLE001 - never let a profile break member loading
+        return members
 
 
 def get_members_by_id() -> dict[str, BoardMember]:

@@ -52,6 +52,7 @@ _NUMERIC_COLUMNS = {
     "stage1_tokens", "stage2_tokens", "stage3_tokens",
     "stage1_latency", "stage2_latency", "stage3_latency",
     "verification_score", "total_cost_usd",
+    "baseline_cost_usd", "cost_saved_usd",
 }
 _VALID_GROUP_COLUMNS = {"query_type", "complexity"}
 
@@ -152,6 +153,23 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
     skills_record = getattr(session, "skills", None) or {}
     skills_used_map = skills_record.get("used", {}) if isinstance(skills_record, dict) else {}
 
+    venture_id = getattr(session, "venture_id", None) or "default"
+
+    from server.board.config import get_chairman_model
+
+    # Defensive: tolerate metrics objects (incl. test stubs) that predate the
+    # baseline-cost API. Fall back to actual cost (saved=0) when unavailable.
+    actual_cost = metrics.total_cost_estimate()
+    baseline_fn = getattr(metrics, "baseline_cost_estimate", None)
+    if callable(baseline_fn):
+        try:
+            baseline = baseline_fn(get_chairman_model())
+        except Exception:
+            baseline = actual_cost
+    else:
+        baseline = actual_cost
+    saved = baseline - actual_cost
+
     conn = _connect(db_path)
     try:
         conn.execute(
@@ -162,7 +180,7 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 stage1_tokens, stage2_tokens, stage3_tokens,
                 stage1_latency, stage2_latency, stage3_latency,
                 verification_score, verification_passed, revision_needed,
-                total_cost_usd,
+                total_cost_usd, baseline_cost_usd, cost_saved_usd,
                 sotb_update_proposed, sotb_update_approved,
                 feedback_rating, feedback_note,
                 parse_warnings, structured_output_failed,
@@ -171,8 +189,8 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 delegation_task_count,
                 harness_config_version,
                 verifier_model, verifier_provider, chairman_provider, applied_review_id,
-                skills_used
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                skills_used, venture_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -192,6 +210,8 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 v_passed,
                 revision_needed,
                 metrics.total_cost_estimate(),
+                baseline,
+                saved,
                 sotb_proposed,
                 None,
                 None,
@@ -209,6 +229,7 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 verification.get("chairman_provider"),
                 _active_review_id(conn),
                 json.dumps(skills_used_map),
+                venture_id,
             ),
         )
         conn.commit()
@@ -296,6 +317,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "routing_misses": "TEXT",
         "validation_warnings": "TEXT DEFAULT '[]'",
         "skills_used": "TEXT",
+        "venture_id": "TEXT DEFAULT 'default'",
+        "baseline_cost_usd": "REAL",
+        "cost_saved_usd": "REAL",
     }
     for column, column_type in additions.items():
         if column not in existing:
@@ -335,6 +359,7 @@ def query_outcomes(
     complexity: str | None = None,
     since: str | None = None,
     limit: int | None = None,
+    venture_id: str | None = None,
     db_path: Path | None = None,
 ) -> list[dict]:
     """Query session outcomes with optional filters."""
@@ -352,6 +377,9 @@ def query_outcomes(
         if since is not None:
             sql += " AND timestamp >= ?"
             params.append(since)
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
 
         sql += " ORDER BY timestamp DESC"
 
@@ -365,6 +393,35 @@ def query_outcomes(
         conn.close()
 
 
+def cumulative_savings(*, db_path: Path | None = None) -> dict:
+    """Sum actual / baseline / saved cost across all session_outcomes rows.
+
+    NULL columns (legacy rows recorded before baseline tracking existed) are
+    treated as 0. `saved_pct` is the percentage of baseline spend avoided.
+    """
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT "
+            "COALESCE(SUM(total_cost_usd), 0), "
+            "COALESCE(SUM(baseline_cost_usd), 0), "
+            "COALESCE(SUM(cost_saved_usd), 0) "
+            "FROM session_outcomes"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    actual = float(row[0] or 0.0)
+    baseline = float(row[1] or 0.0)
+    saved = float(row[2] or 0.0)
+    return {
+        "total_actual_usd": round(actual, 6),
+        "total_baseline_usd": round(baseline, 6),
+        "total_saved_usd": round(saved, 6),
+        "saved_pct": round(100 * saved / baseline, 2) if baseline > 0 else 0.0,
+    }
+
+
 def aggregate(
     field: str,
     group_by: str,
@@ -373,6 +430,7 @@ def aggregate(
     complexity: str | None = None,
     since: str | None = None,
     limit: int | None = None,
+    venture_id: str | None = None,
     db_path: Path | None = None,
 ) -> dict[str, float]:
     """Grouped average aggregation for tuner consumption."""
@@ -396,6 +454,9 @@ def aggregate(
         if since is not None:
             sql += " AND timestamp >= ?"
             params.append(since)
+        if venture_id is not None:
+            sql += " AND venture_id = ?"
+            params.append(venture_id)
 
         sql += f" GROUP BY {group_by}"
 

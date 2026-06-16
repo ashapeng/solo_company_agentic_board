@@ -26,6 +26,9 @@ PROJECT_DESCRIPTION.md
 # Runtime SOTB sidecar (regenerated lazily; never commit)
 server/memory/sotb_index.jsonl
 
+# Per-venture SOTB memory (runtime/user data; default venture stays tracked)
+server/memory/ventures/
+
 .worktrees/
 .superpowers/
 .playwright-cli/

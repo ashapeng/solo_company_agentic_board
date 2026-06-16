@@ -62,6 +62,19 @@ async def delegated_task(task_id: str):
     return task
 
 
+@router.post("/delegated-tasks/{task_id}/run")
+async def run_task_endpoint(task_id: str):
+    from server.execution.runner import run_task
+
+    try:
+        result = await run_task(task_id)
+    except ExecutionError as e:
+        raise HTTPException(400, detail=str(e))
+    if result.get("status") == "not_found":
+        raise HTTPException(404, detail=f"Delegated task not found: {task_id}")
+    return result
+
+
 @router.post("/delegated-tasks/{task_id}/approve")
 async def approve_task(task_id: str, req: TaskApprovalRequest):
     try:
