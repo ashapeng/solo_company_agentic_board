@@ -803,9 +803,37 @@ async def apply_sotb_update_governed(
     # the log-only contract).
     md_text = mp.read_text(encoding="utf-8") if mp.exists() else ""
     new_md = _append_entries_to_md(md_text, new_entries)
+
+    # Best-effort pre-apply snapshot so a bad write can be rolled back. Lazy
+    # import avoids a circular import (sotb_snapshot imports this module). The
+    # whole snapshot dance is wrapped so it NEVER breaks the apply.
+    snapshot_id: str | None = None
+    try:
+        from server.memory.sotb_snapshot import capture_snapshot
+        snap = capture_snapshot(
+            venture_id=venture_id,
+            reason="pre_apply",
+            session_id=session_id,
+            md_path=mp,
+            index_path=ip,
+        )
+        snapshot_id = snap.get("snapshot_id")
+    except Exception as exc:  # noqa: BLE001 — snapshot is best-effort
+        logger.warning("sotb_governance: pre-apply snapshot failed: %s", exc)
+
     if new_md != md_text:
         mp.parent.mkdir(parents=True, exist_ok=True)
         mp.write_text(new_md, encoding="utf-8")
 
     write_sotb_index(existing + new_entries, path=ip)
+
+    if snapshot_id:
+        try:
+            from server.memory.sotb_snapshot import finalize_snapshot
+            finalize_snapshot(
+                snapshot_id, venture_id=venture_id, md_path=mp, index_path=ip,
+            )
+        except Exception as exc:  # noqa: BLE001 — snapshot is best-effort
+            logger.warning("sotb_governance: finalize snapshot failed: %s", exc)
+
     return health

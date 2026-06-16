@@ -146,6 +146,11 @@ class HarnessValidateRequest(BaseModel):
     candidate: dict | None = None
 
 
+class ConsolidateRequest(BaseModel):
+    venture_id: str = "default"
+    verify: bool = False
+
+
 class ContinueRequest(BaseModel):
     user_input: str
 

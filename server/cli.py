@@ -651,6 +651,10 @@ def cli():
         "--intake-skip", action="store_true",
         help="Skip chair intake; use DEFAULT_ROUTING.",
     )
+    parser.add_argument(
+        "--consolidate-memory", action="store_true",
+        help="Run LLM-assisted SOTB consolidation for the venture and exit.",
+    )
     args = parser.parse_args()
 
     if args.live_research:
@@ -788,6 +792,12 @@ def cli():
 
     if args.list_members:
         show_members()
+        return
+
+    if args.consolidate_memory:
+        from server.memory.sotb_consolidation import consolidate_sotb
+        result = asyncio.run(consolidate_sotb(venture_id=args.venture))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
         return
 
     if args.interactive or not args.query:
