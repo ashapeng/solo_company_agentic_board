@@ -63,6 +63,11 @@ class Tool:
 TOOLS: dict[str, Tool] = {}
 
 
+def register_tool(tool: Tool) -> None:
+    """Register (or overwrite) a tool in the global registry by its name."""
+    TOOLS[tool.name] = tool
+
+
 async def execute_tool(
     *,
     name: str,
