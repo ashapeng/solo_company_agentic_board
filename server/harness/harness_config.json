@@ -30,6 +30,10 @@
     "auto_promote_max_pairs": 2,
     "auto_promote_enabled": false
   },
+  "routing": {
+    "complexity_aware_models": false,
+    "simple_complexity_model": "qwen/qwen3.6-flash"
+  },
   "execution": {
     "always_on_enabled": false,
     "manager_model": "qwen/qwen3.6-plus-2026-04-02",

@@ -102,6 +102,16 @@ class HarnessConfig:
         "auto_promote_enabled": False,
     })
 
+    # Complexity-aware council model routing (Plan 4c). Config-gated,
+    # default OFF cost lever. When complexity_aware_models is True and a
+    # query is classified "simple", council members WITHOUT an explicit
+    # model_override are downshifted to simple_complexity_model. The
+    # chairman and any member with a model_override are never changed.
+    routing: dict = field(default_factory=lambda: {
+        "complexity_aware_models": False,
+        "simple_complexity_model": "qwen/qwen3.6-flash",
+    })
+
     # Bounded task executor (Plan 3a). always_on_enabled gates the
     # always-on poll loop (dark-launch default OFF). The runner_* keys
     # bound a single run_task invocation; RunnerBudget.from_config() reads them.
