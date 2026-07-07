@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,12 @@ from server.discovery.store import DiscoveryStore, iso_week
 from server.discovery.watchlist import load_watchlist
 
 DEFAULT_DATA_DIR = Path("data/discovery")
+
+
+def _redact(text: str) -> str:
+    """Error strings can embed full request URLs; strip credential query params
+    before they reach stdout or the manifest (later read by LLM sessions)."""
+    return re.sub(r"(api_key|apikey|token|key)=[^&'\"\s]+", r"\1=REDACTED", text)
 
 
 def _cmd_fetch(args: argparse.Namespace) -> int:
@@ -33,7 +40,7 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
                 store.mark_seen(new_posts)
                 entry.update(fetched=len(posts), new=len(new_posts), file=path.name)
             except Exception as exc:
-                entry["error"] = str(exc)
+                entry["error"] = _redact(str(exc))
             runs.append(entry)
             print(f"{channel_name}/{label}: fetched={entry['fetched']} new={entry['new']}"
                   + (f" ERROR: {entry['error']}" if entry["error"] else ""))

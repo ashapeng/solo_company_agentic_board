@@ -1,5 +1,7 @@
 import json
 
+from server.discovery.channels import CHANNELS
+from server.discovery.channels.base import ChannelHealth
 from server.discovery.cli import main
 
 
@@ -44,6 +46,32 @@ def test_fetch_channel_error_recorded_not_fatal(tmp_path):
     by_channel = {r["channel"]: r for r in manifest["runs"]}
     assert by_channel["agent_reach"]["error"] is not None
     assert by_channel["fake"]["error"] is None
+
+
+def test_fetch_error_redacts_secrets_in_manifest_and_stdout(tmp_path, monkeypatch, capsys):
+    class LeakyChannel:
+        name = "fake"
+
+        def fetch(self, item):
+            raise RuntimeError(
+                "Client error '401 Unauthorized' for url "
+                "'https://api.sam.gov/opportunities/v2/search?api_key=SECRET123&title=x'"
+            )
+
+        def health(self):
+            return ChannelHealth("fake", "ok")
+
+    monkeypatch.setitem(CHANNELS, "fake", LeakyChannel)
+    wl = _watchlist(tmp_path)
+    data = tmp_path / "data"
+    rc = main(["fetch", "--watchlist", str(wl), "--data-dir", str(data), "--week", "2026-W28"])
+    assert rc == 0
+    manifest = json.loads((data / "raw" / "2026-W28" / "manifest.json").read_text(encoding="utf-8"))
+    err = manifest["runs"][0]["error"]
+    assert "SECRET123" not in err
+    assert "api_key=REDACTED" in err
+    out = capsys.readouterr().out
+    assert "SECRET123" not in out
 
 
 def test_doctor_command_prints_channels(tmp_path, capsys):
