@@ -28,6 +28,7 @@ server/memory/sotb_index.jsonl
 
 .worktrees/
 .superpowers/
+.codebuddy/
 .playwright-cli/
 .business_ideas/
 business_ideas/
