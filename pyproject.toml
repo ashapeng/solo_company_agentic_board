@@ -11,6 +11,7 @@ dependencies = [
     "rich>=13.9",
     "pydantic>=2.10",
     "pyyaml>=6.0",
+    "feedparser>=6.0",
     "openai>=1.0",
     "dashscope>=1.20",
     "zai-sdk>=0.2.2",

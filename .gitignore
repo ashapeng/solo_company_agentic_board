@@ -31,6 +31,7 @@ server/memory/ventures/
 
 .worktrees/
 .superpowers/
+.codebuddy/
 .playwright-cli/
 .business_ideas/
 business_ideas/

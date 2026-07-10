@@ -1,0 +1,40 @@
+# Founder-maintained scan targets. Seeded with non-technical creative communities.
+reddit:
+  - sub: knitting
+  - sub: crochet
+  - sub: Etsy
+  - sub: ArtistLounge
+  - sub: somethingimade
+  - sub: crafts
+  - sub: EtsySellers
+  - sub: CraftFairs
+
+hackernews:
+  - query: "creator tools"
+  - query: "etsy"
+
+youtube:
+  - query: "etsy shop problems"
+    max_videos: 5
+    include_comments: true
+  - query: "craft business struggles"
+    max_videos: 5
+    include_comments: true
+
+github:
+  - query: "label:enhancement crafts inventory"
+    search: issues
+
+producthunt: []
+
+rss: []
+
+gov:
+  sam_gov:
+    - keywords: ["creative services"]
+  grants_gov:
+    - keywords: ["arts small business"]
+  canadabuys:
+    - keywords: ["design services"]
+
+agent_reach: []   # phase 2

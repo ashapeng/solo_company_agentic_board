@@ -18,6 +18,7 @@ A council of world-expert AI agents that deliberate as a company board of direct
 │   │   └── loader.py        Member markdown parser
 │   ├── harness/             Learning loop: config, ledger, tuners, reviews
 │   ├── execution/           Execution units, manager agents, delegated tasks
+│   ├── discovery/           Venture discovery: channel fetchers, watchlist, CLI (no LLM calls)
 │   ├── members/             Member definitions (*.md)
 │   ├── protocols/           Stage templates (*.md)
 │   └── memory/              SOTB (institutional memory)
@@ -79,6 +80,11 @@ uv run python -m server.cli --verify --budget "Question with verification"
 
 # API only
 uv run uvicorn server.api:app --reload --port 8000
+
+# Venture discovery (weekly scan; analysis runs in Claude Code via /venture-scan)
+uv run python -m server.discovery doctor          # channel health
+uv run python -m server.discovery fetch           # pull watchlist data for this week
+uv run python -m server.discovery status          # summarize last run
 ```
 
 ### CLI Flags
