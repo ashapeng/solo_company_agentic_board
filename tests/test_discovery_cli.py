@@ -34,7 +34,7 @@ def test_fetch_dedups_on_second_run(tmp_path):
     assert manifest["runs"][0]["new"] == 0
 
 
-def test_fetch_channel_error_recorded_not_fatal(tmp_path):
+def test_fetch_disabled_channel_recorded_not_fatal(tmp_path):
     wl = _watchlist(
         tmp_path,
         "agent_reach:\n  - channel: twitter\n    label: tw\nfake:\n  - query: pain\n    label: unit\n",
@@ -44,7 +44,8 @@ def test_fetch_channel_error_recorded_not_fatal(tmp_path):
     assert rc == 0
     manifest = json.loads((data / "raw" / "2026-W28" / "manifest.json").read_text(encoding="utf-8"))
     by_channel = {r["channel"]: r for r in manifest["runs"]}
-    assert by_channel["agent_reach"]["error"] is not None
+    assert by_channel["agent_reach"]["error"] is None
+    assert by_channel["agent_reach"]["state"] == "disabled"
     assert by_channel["fake"]["error"] is None
 
 

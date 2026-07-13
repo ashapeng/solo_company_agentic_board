@@ -466,6 +466,9 @@ class BoardSession:
     venture_id: str = "default"
     initiative_id: str | None = None
     initiative_mode: str = "ad_hoc"
+    discovery_candidate_id: str | None = None
+    discovery_promotion_id: str | None = None
+    evidence_packet_id: str | None = None
     stage1_responses: list[MemberResponse] = field(default_factory=list)
     stage2_responses: list[MemberResponse] = field(default_factory=list)
     stage3_synthesis: MemberResponse | None = None
@@ -558,6 +561,9 @@ class BoardSession:
             "venture_id": self.venture_id,
             "initiative_id": self.initiative_id,
             "initiative_mode": self.initiative_mode,
+            "discovery_candidate_id": self.discovery_candidate_id,
+            "discovery_promotion_id": self.discovery_promotion_id,
+            "evidence_packet_id": self.evidence_packet_id,
             "stage1": [_resp(r) for r in self.stage1_responses],
             "stage2": [_resp(r) for r in self.stage2_responses],
             "stage3": _resp(self.stage3_synthesis) if self.stage3_synthesis else None,

@@ -14,6 +14,7 @@ class RedditChannel:
     name = "reddit"
 
     def __init__(self, transport: httpx.BaseTransport | None = None, sleep=time.sleep):
+        self._fixture_mode = transport is not None
         self._client = httpx.Client(
             transport=transport,
             headers={"User-Agent": USER_AGENT},
@@ -23,6 +24,10 @@ class RedditChannel:
         self._sleep = sleep
 
     def fetch(self, item: dict) -> list[RawPost]:
+        if not self._fixture_mode:
+            raise RuntimeError(
+                "reddit adapter is held: approved OAuth/Data API replacement required"
+            )
         sub = item["sub"]
         url = f"https://www.reddit.com/r/{sub}/{item.get('sort', 'top')}.json"
         params = {"t": item.get("window", "week"), "limit": 50}
@@ -57,6 +62,13 @@ class RedditChannel:
         return posts
 
     def health(self) -> ChannelHealth:
+        if not self._fixture_mode:
+            return ChannelHealth(
+                self.name,
+                "held",
+                "approved OAuth/Data API replacement required",
+                posture="held",
+            )
         try:
             resp = self._client.get(
                 "https://www.reddit.com/r/all/top.json", params={"limit": 1}

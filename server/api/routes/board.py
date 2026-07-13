@@ -397,6 +397,9 @@ async def continue_meeting(
     session.venture_id = data.get("venture_id") or "default"
     session.initiative_id = data.get("initiative_id")
     session.initiative_mode = data.get("initiative_mode", "ad_hoc")
+    session.discovery_candidate_id = data.get("discovery_candidate_id")
+    session.discovery_promotion_id = data.get("discovery_promotion_id")
+    session.evidence_packet_id = data.get("evidence_packet_id")
     session.continuation_count = int(data.get("continuation_count", 0))
     session.secretary_briefs = [
         _resp_from_dict(b) for b in (data.get("secretary_briefs") or []) if b is not None

@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Interactive Slice A opportunity-to-validation architecture and founder experience explorer.">
+  <title>Opportunity-to-Validation Explorer</title>
+  <style>
+    :root {
+      --bg: #f4f6f3;
+      --surface: #fbfcfa;
+      --surface-strong: #ffffff;
+      --surface-muted: #e9ede8;
+      --ink: #142019;
+      --ink-soft: #526059;
+      --line: #cdd5ce;
+      --line-strong: #93a098;
+      --accent: #087d55;
+      --accent-strong: #056441;
+      --accent-soft: #d8eee5;
+      --danger: #a1392f;
+      --danger-soft: #f5ded9;
+      --warning: #8b5b00;
+      --warning-soft: #f3e8c9;
+      --focus: #0b6bff;
+      --shadow: 0 18px 48px rgb(30 54 40 / 0.10);
+      --radius: 14px;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: "Avenir Next", Avenir, "Segoe UI Variable", "Segoe UI", sans-serif;
+    }
+
+    [data-theme="dark"] {
+      --bg: #0e1411;
+      --surface: #141d18;
+      --surface-strong: #19251f;
+      --surface-muted: #202d26;
+      --ink: #edf5ef;
+      --ink-soft: #a9b8ae;
+      --line: #33443a;
+      --line-strong: #596c60;
+      --accent: #53d49e;
+      --accent-strong: #7fe4b8;
+      --accent-soft: #163d2d;
+      --danger: #ff9a8d;
+      --danger-soft: #4a2421;
+      --warning: #f3c96f;
+      --warning-soft: #443717;
+      --focus: #7bb1ff;
+      --shadow: 0 20px 60px rgb(0 0 0 / 0.32);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100dvh;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, transparent 0 49.8%, color-mix(in srgb, var(--line) 24%, transparent) 50%, transparent 50.2%) 0 0 / 56px 56px,
+        linear-gradient(0deg, transparent 0 49.8%, color-mix(in srgb, var(--line) 20%, transparent) 50%, transparent 50.2%) 0 0 / 56px 56px,
+        var(--bg);
+      font-family: var(--sans);
+      line-height: 1.5;
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, [tabindex="0"]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 55%, transparent);
+      outline-offset: 3px;
+    }
+
+    .shell { width: min(1560px, 100%); margin: 0 auto; padding: 18px; }
+    .topbar {
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: center;
+      min-height: 70px;
+      padding: 12px 14px 12px 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+    .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+    .brand strong { font-size: 15px; letter-spacing: -0.02em; white-space: nowrap; }
+    .brand span {
+      overflow: hidden;
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .top-actions { display: flex; gap: 8px; align-items: center; }
+    .icon-button, .plain-button, .tab-button, .filter-button {
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+    }
+    .icon-button:active, .plain-button:active, .tab-button:active, .filter-button:active { transform: translateY(1px); }
+    .icon-button { width: 42px; height: 42px; border-radius: 10px; font-family: var(--mono); font-size: 13px; }
+    .plain-button { min-height: 42px; padding: 0 14px; border-radius: 10px; font-weight: 650; white-space: nowrap; }
+    .plain-button.primary { border-color: var(--accent); color: var(--surface-strong); background: var(--accent-strong); }
+    [data-theme="dark"] .plain-button.primary { color: #08140e; }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.6fr);
+      gap: clamp(32px, 7vw, 110px);
+      align-items: end;
+      min-height: 430px;
+      padding: clamp(64px, 9vw, 118px) clamp(8px, 3vw, 44px) 54px;
+    }
+    .intro-copy { max-width: 850px; }
+    .kicker { margin: 0 0 16px; color: var(--accent); font-family: var(--mono); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; }
+    h1 { margin: 0; max-width: 16ch; font-size: clamp(44px, 7vw, 94px); font-weight: 620; letter-spacing: -0.065em; line-height: 0.93; }
+    .intro-copy > p:last-child { max-width: 58ch; margin: 28px 0 0; color: var(--ink-soft); font-size: clamp(16px, 2vw, 20px); }
+    .scope-note { align-self: end; padding: 24px 0 4px 24px; border-left: 2px solid var(--accent); }
+    .scope-note strong { display: block; margin-bottom: 8px; font-size: 18px; }
+    .scope-note p { margin: 0; color: var(--ink-soft); }
+
+    .control-deck {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .tabs, .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tab-button, .filter-button { min-height: 38px; padding: 0 13px; border-radius: 9px; color: var(--ink-soft); font-size: 13px; font-weight: 650; }
+    .tab-button[aria-selected="true"], .filter-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-soft); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 370px;
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+    .canvas, .inspector {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .canvas { min-height: 680px; overflow: hidden; }
+    .canvas-head { display: grid; grid-template-columns: 1fr auto; gap: 18px; padding: 22px 24px; border-bottom: 1px solid var(--line); }
+    .canvas-head h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: -0.02em; }
+    .canvas-head p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+    .legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 16px; color: var(--ink-soft); font-size: 11px; }
+    .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border: 2px solid currentColor; border-radius: 2px; vertical-align: -1px; }
+    .legend .operator { color: var(--accent); }
+    .legend .guardrail { color: var(--warning); }
+    .legend .record { color: var(--ink-soft); }
+
+    .view { display: none; padding: 26px; }
+    .view.active { display: block; animation: enter 220ms ease-out both; }
+    @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .journey-grid { display: grid; grid-template-columns: repeat(5, minmax(155px, 1fr)); gap: 34px 18px; align-items: stretch; }
+    .journey-stage { position: relative; min-width: 0; }
+    .journey-stage:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -18px;
+      width: 18px;
+      border-top: 1px solid var(--line-strong);
+    }
+    .journey-stage:not(:last-child)::before {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: calc(50% - 3px);
+      right: -19px;
+      border-width: 3px 0 3px 5px;
+      border-style: solid;
+      border-color: transparent transparent transparent var(--line-strong);
+    }
+
+    .node {
+      width: 100%;
+      min-height: 142px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--ink);
+      background: var(--surface-strong);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 170ms ease, border-color 170ms ease, opacity 170ms ease, box-shadow 170ms ease;
+    }
+    .node:hover { transform: translateY(-3px); border-color: var(--line-strong); box-shadow: 0 12px 28px rgb(25 52 36 / 0.10); }
+    .node.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .node.dimmed { opacity: 0.22; }
+    .node .type { display: block; margin-bottom: 18px; color: var(--ink-soft); font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .node strong { display: block; font-size: 15px; line-height: 1.22; }
+    .node small { display: block; margin-top: 8px; color: var(--ink-soft); line-height: 1.35; }
+    .node[data-layer="operator"] { border-top: 3px solid var(--accent); }
+    .node[data-layer="guardrail"] { border-top: 3px solid var(--warning); }
+    .node[data-layer="record"] { border-top: 3px solid var(--line-strong); }
+    .branch-row { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding-top: 12px; }
+    .branch-row .node { min-height: 122px; }
+    .branch-label { grid-column: 1 / -1; margin: 0; color: var(--ink-soft); font-size: 12px; font-family: var(--mono); }
+
+    .system-layout { display: grid; grid-template-columns: 0.8fr 1.15fr 0.8fr; gap: 20px; }
+    .zone { min-height: 520px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-muted); }
+    .zone h3 { margin: 0 0 16px; color: var(--ink-soft); font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .zone .node { min-height: 96px; margin-bottom: 12px; }
+    .zone .node:last-child { margin-bottom: 0; }
+    .system-core { background: color-mix(in srgb, var(--accent-soft) 54%, var(--surface)); }
+    .connection-list { display: grid; gap: 8px; margin-top: 20px; }
+    .connection { display: grid; grid-template-columns: minmax(120px, 0.7fr) auto minmax(180px, 1fr); gap: 10px; align-items: center; color: var(--ink-soft); font-family: var(--mono); font-size: 11px; }
+    .connection span:nth-child(2) { color: var(--accent); }
+
+    .state-lanes { display: grid; gap: 26px; }
+    .state-lane { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .state-lane h3 { margin: 10px 0 0; font-size: 14px; }
+    .state-track { display: flex; align-items: stretch; gap: 26px; overflow-x: auto; padding: 2px 4px 14px; }
+    .state-node { position: relative; flex: 0 0 180px; min-height: 88px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); cursor: pointer; }
+    .state-node:not(:last-child)::after { content: ""; position: absolute; top: 44px; right: -27px; width: 26px; border-top: 1px solid var(--line-strong); }
+    .state-node strong { font-family: var(--mono); font-size: 12px; }
+    .state-node small { display: block; margin-top: 8px; color: var(--ink-soft); }
+    .state-node.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .future-contract { opacity: 0.46; border-style: dashed; }
+
+    .contract-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .contract-block { padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-strong); }
+    .contract-block h3 { margin: 0 0 6px; font-size: 16px; }
+    .contract-block > p { margin: 0 0 18px; color: var(--ink-soft); font-size: 13px; }
+    .field-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .field-list button { min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-soft); background: var(--surface); font-family: var(--mono); font-size: 11px; text-align: left; cursor: pointer; }
+    .field-list button:hover { border-color: var(--accent); color: var(--ink); }
+
+    .inspector { position: sticky; top: 100px; overflow: hidden; }
+    .inspector-head { padding: 20px 22px; border-bottom: 1px solid var(--line); }
+    .inspector-head span { color: var(--accent); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
+    .inspector-head h2 { margin: 7px 0 0; font-size: 22px; line-height: 1.1; letter-spacing: -0.03em; }
+    .inspector-body { padding: 22px; }
+    .inspector-body > p { margin: 0 0 22px; color: var(--ink-soft); }
+    .detail-group { margin-top: 20px; }
+    .detail-group h3 { margin: 0 0 8px; font-size: 11px; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+    .detail-group p { margin: 0; font-size: 14px; }
+    .code-path { display: block; padding: 11px 12px; border-radius: 8px; overflow-wrap: anywhere; color: var(--accent-strong); background: var(--accent-soft); font-family: var(--mono); font-size: 11px; }
+    .status-box { padding: 13px; border-left: 3px solid var(--accent); background: var(--surface-muted); font-size: 13px; }
+    .status-box.warning { border-color: var(--warning); background: var(--warning-soft); }
+    .status-box.danger { border-color: var(--danger); background: var(--danger-soft); }
+
+    .walkthrough { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 16px 18px; border-top: 1px solid var(--line); background: var(--surface-muted); }
+    .walkthrough button { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-strong); cursor: pointer; }
+    .walkthrough button:disabled { opacity: 0.38; cursor: not-allowed; }
+    .walkthrough-status { min-width: 0; text-align: center; }
+    .walkthrough-status strong { display: block; font-size: 12px; }
+    .walkthrough-status span { display: block; overflow: hidden; color: var(--ink-soft); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .implementation-note { margin: 18px 0 2px; padding: 18px 4px 40px; color: var(--ink-soft); font-size: 13px; }
+    .implementation-note strong { color: var(--ink); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    @media (max-width: 1120px) {
+      .workspace { grid-template-columns: 1fr; }
+      .inspector { position: static; }
+      .journey-grid { grid-template-columns: repeat(3, minmax(155px, 1fr)); }
+      .journey-stage::after, .journey-stage::before { display: none; }
+      .system-layout { grid-template-columns: 1fr 1fr; }
+      .system-layout .zone:last-child { grid-column: 1 / -1; min-height: auto; }
+    }
+
+    @media (max-width: 760px) {
+      .shell { padding: 10px; }
+      .topbar { top: 6px; grid-template-columns: 1fr auto; min-height: 62px; padding-left: 14px; }
+      .brand span, .top-actions .plain-button { display: none; }
+      .intro { grid-template-columns: 1fr; min-height: auto; padding: 68px 8px 44px; gap: 34px; }
+      h1 { max-width: 11ch; font-size: clamp(42px, 14vw, 66px); }
+      .scope-note { padding-left: 18px; }
+      .control-deck { grid-template-columns: 1fr; }
+      .filters { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 3px; }
+      .filter-button { flex: 0 0 auto; }
+      .canvas-head { grid-template-columns: 1fr; }
+      .legend { justify-content: flex-start; }
+      .view { padding: 18px; }
+      .journey-grid, .branch-row, .system-layout, .contract-grid { grid-template-columns: 1fr; }
+      .branch-row { grid-column: auto; }
+      .zone, .system-layout .zone:last-child { grid-column: auto; min-height: auto; }
+      .connection { grid-template-columns: 1fr; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .state-lane { grid-template-columns: 1fr; gap: 10px; }
+      .field-list { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+      .topbar { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <strong>Agentic Board</strong>
+        <span>Opportunity-to-Validation / Slice A</span>
+      </div>
+      <div class="top-actions">
+        <button class="plain-button" id="resetView" type="button">Reset view</button>
+        <button class="icon-button" id="themeToggle" type="button" aria-label="Switch color theme" title="Switch color theme">Theme</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div class="intro-copy">
+          <p class="kicker">Interactive architecture explorer</p>
+          <h1 id="page-title">From evidence to a bounded test.</h1>
+          <p>Explore the founder journey, system boundaries, durable states, and contracts implemented in Slice A.</p>
+        </div>
+        <aside class="scope-note">
+          <strong>Local and reversible</strong>
+          <p>No real publishing, lead collection, paid action, or social posting exists in this slice.</p>
+        </aside>
+      </section>
+
+      <section class="control-deck" aria-label="Diagram controls">
+        <div class="tabs" role="tablist" aria-label="Architecture views">
+          <button class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="journeyView" data-view="journey">Founder journey</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="systemView" data-view="system">System map</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="statesView" data-view="states">Lifecycle states</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="contractsView" data-view="contracts">Contracts</button>
+        </div>
+        <div class="filters" aria-label="Journey layer filters">
+          <button class="filter-button" type="button" aria-pressed="true" data-filter="all">All layers</button>
+          <button class="filter-button" type="button" aria-pressed="false" data-filter="operator">Operator</button>
+          <button class="filter-button" type="button" aria-pressed="false" data-filter="guardrail">Guardrails</button>
+          <button class="filter-button" type="button" aria-pressed="false" data-filter="record">Records</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="canvas">
+          <div class="canvas-head">
+            <div>
+              <h2 id="canvasTitle">Founder journey</h2>
+              <p id="canvasDescription">Select any node to inspect its behavior, recovery path, and implementation seam.</p>
+            </div>
+            <div class="legend" aria-label="Diagram legend">
+              <span class="operator">Operator action</span>
+              <span class="guardrail">Guardrail</span>
+              <span class="record">Durable record</span>
+            </div>
+          </div>
+
+          <div class="view active" id="journeyView" role="tabpanel" data-panel="journey">
+            <div class="journey-grid" id="journeyGrid"></div>
+          </div>
+
+          <div class="view" id="systemView" role="tabpanel" data-panel="system" hidden>
+            <div class="system-layout" id="systemLayout"></div>
+            <div class="connection-list" id="connectionList" aria-label="System connections"></div>
+          </div>
+
+          <div class="view" id="statesView" role="tabpanel" data-panel="states" hidden>
+            <div class="state-lanes" id="stateLanes"></div>
+          </div>
+
+          <div class="view" id="contractsView" role="tabpanel" data-panel="contracts" hidden>
+            <div class="contract-grid" id="contractGrid"></div>
+          </div>
+        </div>
+
+        <aside class="inspector" aria-live="polite" aria-label="Selected architecture detail">
+          <div class="inspector-head">
+            <span id="detailType">Overview</span>
+            <h2 id="detailTitle">Select a node</h2>
+          </div>
+          <div class="inspector-body">
+            <p id="detailDescription">Choose a journey, system, state, or contract item to see its exact role in Slice A.</p>
+            <div class="detail-group">
+              <h3>Founder sees</h3>
+              <p id="detailExperience">The diagram remains fully navigable with keyboard or pointer input.</p>
+            </div>
+            <div class="detail-group">
+              <h3>Recovery and safety</h3>
+              <div class="status-box" id="detailSafety">No node selected.</div>
+            </div>
+            <div class="detail-group">
+              <h3>Implementation</h3>
+              <code class="code-path" id="detailPath">docs/architecture/opportunity-validation-user-experience.html</code>
+            </div>
+          </div>
+          <div class="walkthrough">
+            <button id="previousNode" type="button" disabled>Back</button>
+            <div class="walkthrough-status">
+              <strong id="walkthroughCount">0 of 0</strong>
+              <span id="walkthroughLabel">Founder journey</span>
+            </div>
+            <button id="nextNode" type="button">Next</button>
+          </div>
+        </aside>
+      </section>
+
+      <p class="implementation-note"><strong>Current boundary:</strong> the operator experience is CLI-first. The fake publisher is test-only, and dashboard, public landing, metrics, and distribution experiences are deferred.</p>
+    </main>
+  </div>
+
+  <script>
+    const details = {
+      migrate: { type: "Operator action", title: "Preview candidate migration", description: "Inspect every schema-v1 candidate and calculate deterministic schema-v2 mappings without writing files.", experience: "A count of inspected, migratable, and unchanged candidates. Dry-run is the default.", safety: "An ambiguous legacy status stops the operation before any candidate changes.", path: "server/discovery/lifecycle/migrate.py" },
+      backup: { type: "Durable record", title: "Create migration backups", description: "Apply mode copies legacy candidate files and the index into a timestamped backup directory before replacement.", experience: "The CLI prints the backup path after a successful apply.", safety: "Original evidence remains recoverable if a later local inspection finds a problem.", path: "server/discovery/lifecycle/migrate.py" },
+      discover: { type: "Operator action", title: "Collect and synthesize", description: "Approved-source records become a bounded coding-agent bundle, then deterministic validation produces evidence-backed candidates.", experience: "The operator uses fetch, prepare, synthesize, resume-run, candidates, and show commands.", safety: "Import verifies evidence against prepared records and never starts board deliberation.", path: "server/discovery/analyze/" },
+      candidates: { type: "Durable record", title: "Persist candidate schema v2", description: "Each candidate stores independent discovery, board, founder-disposition, and validation dimensions with append-only audit context.", experience: "Candidate files remain readable even after board rejection or founder disposal.", safety: "Founder disposal is soft and reversible. Source evidence is never unlinked.", path: "server/discovery/lifecycle/models.py" },
+      review: { type: "Operator action", title: "Review the weekly portfolio", description: "The explicit command compares 5-10 eligible candidates in one board session and defaults to selecting three.", experience: "One stable CLI summary reports review ID, decisions, selected candidates, and created experiments.", safety: "The active hard maximum is five. Import alone cannot trigger this action.", path: "server/discovery/cli.py" },
+      eligibility: { type: "Guardrail", title: "Enforce portfolio eligibility", description: "Only active, evidence-backed, ready-for-board candidates from the requested week enter the review.", experience: "An actionable error includes the actual eligible count when it falls outside 5-10.", safety: "No board call and no candidate mutation occurs when the count is invalid.", path: "server/discovery/portfolio_review.py" },
+      capacity: { type: "Guardrail", title: "Resolve experiment capacity", description: "The request includes remaining active capacity before the board selects validation work.", experience: "Selection cannot exceed the configured default or the available capacity.", safety: "The maximum active capacity is validated between one and five.", path: "server/experiments/store.py" },
+      board: { type: "System action", title: "Compare opportunity cost", description: "The board receives bounded summaries and exact excerpts, then ranks the whole portfolio instead of evaluating candidates in isolation.", experience: "Every candidate receives rank, label, confidence, rationale, assumption, cheapest test, signals, stop conditions, and exposure.", safety: "Raw discovery corpora are excluded from the board prompt.", path: "server/board/portfolio.py" },
+      validate: { type: "Guardrail", title: "Validate the complete result", description: "The parser rejects missing, duplicate, invented IDs, non-contiguous ranks, invalid labels, and excessive selections.", experience: "The review either succeeds as a complete portfolio or fails as a whole.", safety: "Partial chair output can never partially update candidate files.", path: "server/board/portfolio.py" },
+      repair: { type: "Guardrail", title: "Repair once", description: "A malformed chair response receives one bounded retry that includes the validation error.", experience: "The operator does not need to manually clean partially written candidate state.", safety: "A second failure records the attempt and leaves candidates unchanged.", path: "server/discovery/portfolio_review.py" },
+      decisions: { type: "Durable record", title: "Apply decisions atomically", description: "All ranks, labels, rationales, and validation selections are written only after full validation.", experience: "Candidate show output and the review record explain every portfolio decision.", safety: "If any write fails, already written candidates are restored from in-memory originals.", path: "server/discovery/portfolio_review.py" },
+      create: { type: "System action", title: "Create bounded validation work", description: "Each selected candidate receives an idempotent venture, activated validation initiative, and typed experiment.", experience: "The initiative objective is to falsify the critical assumption, not build a product.", safety: "Candidate plus review uniqueness prevents duplicate experiments on retry.", path: "server/experiments/service.py" },
+      experiment: { type: "Durable record", title: "Store the validation experiment", description: "SQLite stores the typed aggregate, day-7 review, day-14 expiry, current status, and transition events.", experience: "Slice A records can be inspected locally. A dedicated experiment UI is not implemented yet.", safety: "Transition rules and one-extension limits live in the experiment domain.", path: "server/experiments/store.py" },
+      retry: { type: "Guardrail", title: "Retry without duplicates", description: "A repeated completed review loads the persisted result, while venture, initiative, and experiment creation reuse deterministic identities.", experience: "Running the same logical weekly review again returns the same work instead of creating copies.", safety: "Idempotency applies at review and candidate-plus-review experiment boundaries.", path: "server/discovery/portfolio_review.py" },
+      fake: { type: "Test boundary", title: "Keep publishing fake-only", description: "The included publisher returns deterministic example.invalid deployments for service tests.", experience: "There is no operator command for real publication in Slice A.", safety: "The Slice A service rejects any publisher whose adapter declares itself external.", path: "server/experiments/landing/publisher.py" },
+
+      founder: { type: "Actor", title: "Founder", description: "Runs explicit migration and portfolio commands, inspects durable results, and retains final disposal authority.", experience: "The weekly decision flow stays visible and reversible.", safety: "No import, board opinion, or fake publisher can delete candidate history.", path: "server/discovery/cli.py" },
+      cli: { type: "Inbound adapter", title: "Discovery CLI", description: "Coordinates local operator commands and crosses into board review only through the explicit review-portfolio action.", experience: "A single local entrypoint exposes migration, review, disposition, and compatibility commands.", safety: "Legacy single-candidate promotion is explicitly named as a compatibility path.", path: "server/discovery/cli.py" },
+      discovery: { type: "Domain", title: "Discovery", description: "Owns source policy, prepared bundles, candidate lifecycle, portfolio review persistence, and application coordination.", experience: "Evidence production and board judgment remain separate steps.", safety: "Collection and import do not invoke board models.", path: "server/discovery/" },
+      boardDomain: { type: "Domain", title: "Board governance", description: "Owns strict portfolio input, decision, result, and prompt contracts.", experience: "The founder receives a decision for every candidate rather than a single promoted idea.", safety: "The contract validates selection limits and evidence-bounded tests.", path: "server/board/portfolio.py" },
+      experiments: { type: "Domain", title: "Experiments", description: "Owns validation aggregate state, capacity, events, creation service, and landing publisher port.", experience: "Selected ideas become falsifiable validation work with fixed timing.", safety: "General always-on execution remains disabled.", path: "server/experiments/" },
+      ventures: { type: "Domain", title: "Ventures and initiatives", description: "Provide candidate-scoped identity and an activated seven-day validation objective.", experience: "Validation work appears as operating work, not a product build mandate.", safety: "Deterministic IDs make retries safe.", path: "server/ventures/ and server/initiatives/" },
+      candidateFiles: { type: "Persistence", title: "Candidate and review files", description: "Local JSON holds candidate evidence, audit events, and portfolio request/result history.", experience: "Records are directly inspectable without a remote service.", safety: "Migration backups and atomic writes protect local evidence.", path: "data/discovery/candidates and data/discovery/portfolio-reviews" },
+      sqlite: { type: "Persistence", title: "Local SQLite", description: "Ventures, initiatives, validation experiments, and transition audit rows share the existing local database boundary.", experience: "Experiment creation survives process restarts.", safety: "Unique constraints enforce candidate plus review idempotency.", path: "data/harness_ledger.db" },
+
+      ready: { type: "Discovery state", title: "ready_for_board", description: "A deterministically validated import is eligible for explicit portfolio review.", experience: "The candidate appears in the weekly ready set.", safety: "Evidence is required before eligibility.", path: "server/discovery/lifecycle/models.py" },
+      reviewed: { type: "Discovery state", title: "reviewed", description: "A complete valid portfolio result has been atomically applied.", experience: "Rank, label, rationale, and selection are now durable.", safety: "Malformed output never reaches this state.", path: "server/discovery/lifecycle/models.py" },
+      unlabeled: { type: "Board state", title: "No board label", description: "The board has not yet evaluated the candidate as part of a portfolio.", experience: "No board opinion is implied by import order or signal score.", safety: "Discovery ranking does not masquerade as board judgment.", path: "server/discovery/lifecycle/models.py" },
+      prioritize: { type: "Board state", title: "prioritize", description: "The candidate has enough relative evidence to lead the validation queue.", experience: "Only prioritized candidates may be selected for validation.", safety: "Selection still respects default and active capacity.", path: "server/board/portfolio.py" },
+      investigate: { type: "Board state", title: "investigate", description: "The opportunity needs stronger evidence before validation selection.", experience: "The gap remains explicit in the stored board rationale.", safety: "Insufficient evidence is not promoted to fill capacity.", path: "server/board/portfolio.py" },
+      defer: { type: "Board state", title: "defer", description: "The candidate remains active but loses current portfolio priority.", experience: "History and evidence remain readable for later reconsideration.", safety: "Deferral never deletes the candidate.", path: "server/board/portfolio.py" },
+      reject: { type: "Board state", title: "reject", description: "The board records a negative portfolio opinion while retaining the candidate.", experience: "The founder can inspect the reason and all original evidence.", safety: "Board rejection does not equal founder disposal.", path: "server/discovery/lifecycle/models.py" },
+      active: { type: "Founder state", title: "active", description: "The candidate remains available to the founder regardless of board label.", experience: "Rejected and deferred records remain queryable.", safety: "Only explicit founder action changes disposition.", path: "server/discovery/lifecycle/models.py" },
+      disposed: { type: "Founder state", title: "disposed", description: "The founder soft-disposes the candidate with a recorded reason.", experience: "The record leaves active consideration but remains readable.", safety: "No file or evidence is unlinked.", path: "server/discovery/lifecycle/store.py" },
+      restored: { type: "Founder state", title: "restored to active", description: "The founder reverses disposal with another audited reason.", experience: "The candidate re-enters active founder consideration.", safety: "Historical disposal and restore events remain append-only.", path: "server/discovery/lifecycle/store.py" },
+      notSelected: { type: "Validation state", title: "not_selected", description: "The candidate has no active validation experiment from this review.", experience: "Its board decision remains available without consuming capacity.", safety: "Non-selection never deletes or rejects evidence.", path: "server/discovery/lifecycle/models.py" },
+      queued: { type: "Validation state", title: "queued", description: "The valid board result selected the candidate for bounded validation.", experience: "Creation begins in rank order.", safety: "Selection is constrained before mutation.", path: "server/discovery/portfolio_review.py" },
+      validating: { type: "Validation state", title: "validating", description: "The linked venture, initiative, and experiment have been created.", experience: "The candidate now has an experiment audit context.", safety: "Experiment uniqueness makes creation retry-safe.", path: "server/experiments/service.py" },
+      future: { type: "Reserved contract", title: "Later validation outcomes", description: "validated, iterate, inconclusive, and rejected are reserved schema outcomes for later review services.", experience: "These are not exposed as Slice A operator commands.", safety: "The explorer marks them as future contract states, not current UX.", path: "server/discovery/lifecycle/models.py" },
+
+      candidateContract: { type: "Contract", title: "Candidate lifecycle", description: "Four independent lifecycle dimensions prevent discovery, board opinion, founder authority, and validation progress from collapsing into one status.", experience: "A candidate can be board-rejected, founder-active, and retained at the same time.", safety: "Every change includes actor, old and new values, reason, timestamp, and related IDs.", path: "server/discovery/lifecycle/models.py" },
+      portfolioContract: { type: "Contract", title: "Portfolio decision", description: "One validated decision is required for every input candidate with complete ranks and falsifiable validation guidance.", experience: "The founder sees relative priority and the cheapest credible test for each opportunity.", safety: "Missing or invented candidates invalidate the entire result.", path: "server/board/portfolio.py" },
+      experimentContract: { type: "Contract", title: "Validation experiment", description: "The aggregate links candidate, review, board session, venture, initiative, timing, hypothesis, exposure, and transition history.", experience: "Selected opportunities become time-bounded validation records.", safety: "Status transitions and capacity are domain-enforced.", path: "server/experiments/models.py" },
+      publisherContract: { type: "Contract", title: "Landing publisher", description: "The port separates an experiment artifact from provider-specific deployment behavior.", experience: "Slice A demonstrates deterministic fake deployment only.", safety: "External adapters are refused by the Slice A publish service.", path: "server/experiments/landing/publisher.py" }
+    };
+
+    const journey = [
+      ["migrate", "operator", "Preview migration", "Dry-run before any legacy write"],
+      ["discover", "operator", "Produce evidence", "Collect, prepare, synthesize, import"],
+      ["review", "operator", "Review portfolio", "Compare 5-10 candidates"],
+      ["board", "guardrail", "Rank and test", "One decision per candidate"],
+      ["create", "operator", "Create validation work", "Top candidates within capacity"]
+    ];
+
+    const branches = [
+      ["eligibility", "guardrail", "Eligibility check", "Stop outside 5-10"],
+      ["validate", "guardrail", "Full validation", "No partial decisions"],
+      ["repair", "guardrail", "One repair", "Then fail unchanged"],
+      ["backup", "record", "Migration backup", "Timestamped legacy copy"],
+      ["decisions", "record", "Portfolio record", "Atomic candidate updates"],
+      ["experiment", "record", "Experiment record", "Day 7 and day 14 timing"],
+      ["capacity", "guardrail", "Capacity limit", "Default 3, hard max 5"],
+      ["retry", "guardrail", "Idempotent retry", "No duplicate work"],
+      ["fake", "guardrail", "Fake publisher", "External publishing refused"]
+    ];
+
+    const systemZones = [
+      { title: "Operator boundary", className: "", nodes: [["founder", "Founder"], ["cli", "Discovery CLI"]] },
+      { title: "Governance and operations", className: "system-core", nodes: [["discovery", "Discovery"], ["boardDomain", "Board governance"], ["experiments", "Experiments"], ["ventures", "Ventures and initiatives"]] },
+      { title: "Local persistence", className: "", nodes: [["candidateFiles", "Candidate and review files"], ["sqlite", "Local SQLite"]] }
+    ];
+
+    const connections = [
+      ["Founder", "calls", "Discovery CLI"],
+      ["Discovery CLI", "coordinates", "Discovery application services"],
+      ["Discovery", "submits bounded input", "Board portfolio contract"],
+      ["Discovery", "creates selected work", "Experiment service"],
+      ["Experiments", "gets or creates", "Ventures and initiatives"],
+      ["Discovery", "persists", "Candidate and review JSON"],
+      ["Experiments", "persists", "Local SQLite"]
+    ];
+
+    const stateLanes = [
+      { title: "Discovery status", nodes: [["ready", "ready_for_board", "Validated import"], ["reviewed", "reviewed", "Portfolio applied"]] },
+      { title: "Board label", nodes: [["unlabeled", "unlabeled", "Before review"], ["prioritize", "prioritize", "Can be selected"], ["investigate", "investigate", "Needs evidence"], ["defer", "defer", "Not current priority"], ["reject", "reject", "Retained opinion"]] },
+      { title: "Founder disposition", nodes: [["active", "active", "Default"], ["disposed", "disposed", "Soft disposition"], ["restored", "active", "Explicit restore"]] },
+      { title: "Validation state", nodes: [["notSelected", "not_selected", "No experiment"], ["queued", "queued", "Board selected"], ["validating", "validating", "Experiment created"], ["future", "later outcomes", "Reserved for later slices", true]] }
+    ];
+
+    const contracts = [
+      { id: "candidateContract", title: "Candidate lifecycle", description: "Independent authority and progress dimensions", fields: ["discovery_status", "board_label", "founder_disposition", "validation_state", "audit_events"] },
+      { id: "portfolioContract", title: "Portfolio decision", description: "Complete machine-readable board judgment", fields: ["rank", "label", "rationale", "critical_assumption", "cheapest_credible_test", "minimum_exposure"] },
+      { id: "experimentContract", title: "Validation experiment", description: "Time-bounded falsification aggregate", fields: ["candidate_id", "portfolio_review_id", "initiative_id", "review_at", "expires_at", "status"] },
+      { id: "publisherContract", title: "Landing publisher", description: "Test-only deployment port in Slice A", fields: ["artifact", "idempotency_key", "deployment_result", "is_external"] }
+    ];
+
+    const viewMeta = {
+      journey: ["Founder journey", "Select any node to inspect its behavior, recovery path, and implementation seam."],
+      system: ["System map", "Trace the explicit operator boundary, domain calls, and local persistence ownership."],
+      states: ["Lifecycle states", "Compare independent candidate dimensions and distinguish current transitions from reserved outcomes."],
+      contracts: ["Core contracts", "Inspect the stable fields that hold Slice A together across files, board output, and SQLite."]
+    };
+
+    let activeView = "journey";
+    let activeFilter = "all";
+    let selectedId = null;
+    let activeSequence = [];
+    let sequenceIndex = -1;
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+    function makeNode(id, layer, title, subtitle, className = "node") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.dataset.detail = id;
+      button.dataset.layer = layer;
+      button.innerHTML = `<span class="type">${layer}</span><strong>${title}</strong><small>${subtitle}</small>`;
+      return button;
+    }
+
+    function renderJourney() {
+      const grid = $("#journeyGrid");
+      grid.replaceChildren();
+      journey.forEach(([id, layer, title, subtitle]) => {
+        const wrap = document.createElement("div");
+        wrap.className = "journey-stage";
+        wrap.append(makeNode(id, layer, title, subtitle));
+        grid.append(wrap);
+      });
+      const label = document.createElement("p");
+      label.className = "branch-label";
+      label.textContent = "Guardrails and durable outputs attached to the main journey";
+      grid.append(label);
+      const branch = document.createElement("div");
+      branch.className = "branch-row";
+      branches.forEach(([id, layer, title, subtitle]) => branch.append(makeNode(id, layer, title, subtitle)));
+      grid.append(branch);
+    }
+
+    function renderSystem() {
+      const layout = $("#systemLayout");
+      layout.replaceChildren();
+      systemZones.forEach(zoneData => {
+        const zone = document.createElement("section");
+        zone.className = `zone ${zoneData.className}`;
+        zone.innerHTML = `<h3>${zoneData.title}</h3>`;
+        zoneData.nodes.forEach(([id, title]) => zone.append(makeNode(id, "system", title, details[id].description)));
+        layout.append(zone);
+      });
+      const list = $("#connectionList");
+      list.replaceChildren();
+      connections.forEach(([from, verb, to]) => {
+        const item = document.createElement("div");
+        item.className = "connection";
+        item.innerHTML = `<span>${from}</span><span>${verb} →</span><span>${to}</span>`;
+        list.append(item);
+      });
+    }
+
+    function renderStates() {
+      const lanes = $("#stateLanes");
+      lanes.replaceChildren();
+      stateLanes.forEach(laneData => {
+        const lane = document.createElement("section");
+        lane.className = "state-lane";
+        const heading = document.createElement("h3");
+        heading.textContent = laneData.title;
+        const track = document.createElement("div");
+        track.className = "state-track";
+        laneData.nodes.forEach(([id, title, subtitle, future]) => {
+          const node = document.createElement("button");
+          node.type = "button";
+          node.className = `state-node${future ? " future-contract" : ""}`;
+          node.dataset.detail = id;
+          node.innerHTML = `<strong>${title}</strong><small>${subtitle}</small>`;
+          track.append(node);
+        });
+        lane.append(heading, track);
+        lanes.append(lane);
+      });
+    }
+
+    function renderContracts() {
+      const grid = $("#contractGrid");
+      grid.replaceChildren();
+      contracts.forEach(contract => {
+        const block = document.createElement("section");
+        block.className = "contract-block";
+        block.innerHTML = `<h3>${contract.title}</h3><p>${contract.description}</p>`;
+        const fields = document.createElement("div");
+        fields.className = "field-list";
+        contract.fields.forEach(field => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.detail = contract.id;
+          button.textContent = field;
+          fields.append(button);
+        });
+        block.append(fields);
+        block.addEventListener("click", event => {
+          if (event.target.closest("button")) selectDetail(contract.id);
+        });
+        grid.append(block);
+      });
+    }
+
+    function selectDetail(id, options = {}) {
+      const detail = details[id];
+      if (!detail) return;
+      selectedId = id;
+      $$("[data-detail]").forEach(node => node.classList.toggle("selected", node.dataset.detail === id));
+      $("#detailType").textContent = detail.type;
+      $("#detailTitle").textContent = detail.title;
+      $("#detailDescription").textContent = detail.description;
+      $("#detailExperience").textContent = detail.experience;
+      $("#detailSafety").textContent = detail.safety;
+      $("#detailPath").textContent = detail.path;
+      $("#detailSafety").className = `status-box${detail.type === "Guardrail" ? " warning" : detail.type === "Test boundary" ? " danger" : ""}`;
+      activeSequence = $$(".view.active [data-detail]").map(node => node.dataset.detail).filter((value, index, list) => list.indexOf(value) === index);
+      sequenceIndex = activeSequence.indexOf(id);
+      updateWalkthrough();
+      if (options.focusInspector && window.matchMedia("(max-width: 1120px)").matches) {
+        $(".inspector").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    function updateWalkthrough() {
+      const total = activeSequence.length;
+      $("#walkthroughCount").textContent = sequenceIndex >= 0 ? `${sequenceIndex + 1} of ${total}` : `0 of ${total}`;
+      $("#walkthroughLabel").textContent = selectedId ? details[selectedId].title : viewMeta[activeView][0];
+      $("#previousNode").disabled = sequenceIndex <= 0;
+      $("#nextNode").disabled = total === 0 || sequenceIndex >= total - 1;
+    }
+
+    function setView(view) {
+      activeView = view;
+      $$(".tab-button").forEach(button => button.setAttribute("aria-selected", String(button.dataset.view === view)));
+      $$(".view").forEach(panel => {
+        const active = panel.dataset.panel === view;
+        panel.classList.toggle("active", active);
+        panel.hidden = !active;
+      });
+      $("#canvasTitle").textContent = viewMeta[view][0];
+      $("#canvasDescription").textContent = viewMeta[view][1];
+      $(".filters").hidden = view !== "journey";
+      selectedId = null;
+      activeSequence = $$(".view.active [data-detail]").map(node => node.dataset.detail).filter((value, index, list) => list.indexOf(value) === index);
+      sequenceIndex = -1;
+      updateWalkthrough();
+      if (activeSequence.length) selectDetail(activeSequence[0]);
+    }
+
+    function setFilter(filter) {
+      activeFilter = filter;
+      $$(".filter-button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.filter === filter)));
+      $$("#journeyView .node").forEach(node => node.classList.toggle("dimmed", filter !== "all" && node.dataset.layer !== filter));
+    }
+
+    function resetView() {
+      setFilter("all");
+      setView("journey");
+      selectDetail("migrate");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem("architecture-theme", theme);
+      $("#themeToggle").textContent = theme === "dark" ? "Light" : "Dark";
+      $("#themeToggle").setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} theme`);
+    }
+
+    renderJourney();
+    renderSystem();
+    renderStates();
+    renderContracts();
+
+    document.addEventListener("click", event => {
+      const detailNode = event.target.closest("[data-detail]");
+      if (detailNode) selectDetail(detailNode.dataset.detail, { focusInspector: true });
+      const tab = event.target.closest(".tab-button");
+      if (tab) setView(tab.dataset.view);
+      const filter = event.target.closest(".filter-button");
+      if (filter) setFilter(filter.dataset.filter);
+    });
+
+    $("#previousNode").addEventListener("click", () => {
+      if (sequenceIndex > 0) selectDetail(activeSequence[sequenceIndex - 1]);
+    });
+    $("#nextNode").addEventListener("click", () => {
+      if (sequenceIndex < activeSequence.length - 1) selectDetail(activeSequence[sequenceIndex + 1]);
+    });
+    $("#resetView").addEventListener("click", resetView);
+    $("#themeToggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+    document.addEventListener("keydown", event => {
+      if (event.altKey && event.key === "ArrowRight" && sequenceIndex < activeSequence.length - 1) selectDetail(activeSequence[sequenceIndex + 1]);
+      if (event.altKey && event.key === "ArrowLeft" && sequenceIndex > 0) selectDetail(activeSequence[sequenceIndex - 1]);
+    });
+
+    const storedTheme = localStorage.getItem("architecture-theme");
+    const preferredTheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    applyTheme(storedTheme || preferredTheme);
+    setView("journey");
+  </script>
+</body>
+</html>

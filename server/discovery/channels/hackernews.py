@@ -5,6 +5,7 @@ import time
 import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 API = "https://hn.algolia.com/api/v1/search"
 
@@ -13,7 +14,7 @@ class HackerNewsChannel:
     name = "hackernews"
 
     def __init__(self, transport: httpx.BaseTransport | None = None):
-        self._client = httpx.Client(transport=transport, timeout=20)
+        self._client = SafeHttpClient(transport=transport, timeout=20)
 
     def fetch(self, item: dict) -> list[RawPost]:
         week_ago = int(time.time()) - 7 * 86400

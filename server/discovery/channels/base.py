@@ -27,8 +27,11 @@ class RawPost:
 @dataclass
 class ChannelHealth:
     channel: str
-    status: str  # "ok" | "unconfigured" | "error"
+    status: str  # "ok" | "unconfigured" | "error" | "held" | "disabled"
     detail: str = ""
+    posture: str = "allowed"
+    configured: bool = False
+    policy_reason: str = ""
 
 
 class Channel(Protocol):

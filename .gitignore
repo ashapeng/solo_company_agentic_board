@@ -39,9 +39,14 @@ business_ideas/
 .pdf_img/
 pdf-pages/
 body.json
+# Documentation is generated/ignored by default; architecture is maintained as
+# a versioned source of truth and checked by the test suite.
 docs/
+!docs/
+docs/*
+!docs/architecture/
+!docs/architecture/**
 pitch/
 
 # Hook plugins are auto-loaded from these dirs; site-specific must not commit
 server/harness/hooks/_project/
-
