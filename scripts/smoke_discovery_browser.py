@@ -9,12 +9,20 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from server.discovery.channels.browser import BrowserChannel
 
 
 def main() -> int:
     os.environ.setdefault("AGENTIC_BOARD_BROWSER_HEADED", "0")
+    # Isolated profile avoids SingletonLock hangs against the system Chrome
+    # profile in CI/cloud. For logged-in capture, set
+    # AGENTIC_BOARD_CHROME_USER_DATA_DIR to the real profile instead.
+    os.environ.setdefault(
+        "AGENTIC_BOARD_CHROME_USER_DATA_DIR",
+        str(Path.home() / ".cache" / "agentic-board" / "chrome-profile"),
+    )
     ch = BrowserChannel()
     health = ch.health()
     print(f"health: {health.status} — {health.detail}")

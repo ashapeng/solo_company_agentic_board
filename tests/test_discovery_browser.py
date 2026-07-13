@@ -277,3 +277,21 @@ def test_import_browser_capture_script(tmp_path, monkeypatch):
 
 def test_iso_week_helper_available():
     assert iso_week()  # smoke — format covered in store tests
+
+
+def test_launch_user_data_dir_headless_is_isolated(monkeypatch, tmp_path):
+    from server.discovery import browser_session as bs
+
+    monkeypatch.delenv("AGENTIC_BOARD_CHROME_USER_DATA_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = bs.resolve_launch_user_data_dir(headed=False)
+    assert path.endswith("agentic-board/chrome-profile")
+    assert Path(path).is_dir()
+
+
+def test_launch_user_data_dir_override_wins(monkeypatch, tmp_path):
+    from server.discovery import browser_session as bs
+
+    monkeypatch.setenv("AGENTIC_BOARD_CHROME_USER_DATA_DIR", str(tmp_path / "custom"))
+    assert bs.resolve_launch_user_data_dir(headed=False) == str(tmp_path / "custom")
+    assert bs.resolve_launch_user_data_dir(headed=True) == str(tmp_path / "custom")
