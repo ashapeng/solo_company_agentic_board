@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from server.discovery.channels.agent_reach import AgentReachChannel
 from server.discovery.channels.base import Channel
+from server.discovery.channels.browser import BrowserChannel
 from server.discovery.channels.canadabuys import CanadaBuysChannel
 from server.discovery.channels.fake import FakeChannel
 from server.discovery.channels.github import GitHubChannel
@@ -27,6 +28,7 @@ CHANNELS: dict[str, type] = {
         CanadaBuysChannel,
         FakeChannel,
         AgentReachChannel,
+        BrowserChannel,
     )
 }
 

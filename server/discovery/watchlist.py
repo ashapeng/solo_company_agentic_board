@@ -20,6 +20,7 @@ _REQUIRED_FIELD = {
     "canadabuys": "keywords",
     "agent_reach": "channel",
     "fake": "query",
+    "browser": "url",
 }
 GOV_CHANNELS = ("sam_gov", "grants_gov", "canadabuys")
 KNOWN_SECTIONS = set(_REQUIRED_FIELD) - set(GOV_CHANNELS) | {"gov"}
