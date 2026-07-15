@@ -30,6 +30,9 @@ def _candidate(bundle):
                 "who": "Independent makers",
                 "pain_class": "important",
                 "signal_strength": 0.8,
+                "competition_level": "moderate",
+                "existing_solutions": "Generic spreadsheets and marketplace seller tools",
+                "competition_rationale": "Maker audience; few specialized inventory launches in-bundle",
                 "evidence": [
                     {"post_key": "fake:fake-1", "quote": "Spreadsheets keep breaking"},
                     {"post_key": "fake:fake-2", "quote": "No idea if I'm undercharging"},

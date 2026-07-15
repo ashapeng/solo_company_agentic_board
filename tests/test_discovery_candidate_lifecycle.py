@@ -25,6 +25,9 @@ def _report(*, title="Maker inventory", generated_at="2026-07-10T00:00:00+00:00"
                 who="Independent makers",
                 pain_class="important",
                 signal_strength=0.8,
+                competition_level="moderate",
+                existing_solutions="Generic spreadsheets and marketplace seller tools",
+                competition_rationale="Maker audience; few specialized inventory launches in-bundle",
                 engagement_score=0.7,
                 evidence=[
                     Evidence(

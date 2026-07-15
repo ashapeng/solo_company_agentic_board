@@ -41,7 +41,10 @@ to founder-selected `candidate_topics.json` path.
 ## 3. Candidate example
 
 Copy actual week and `records_digest` from bundle. Use only supplied post keys
-and exact short title/body quotes.
+and exact short title/body quotes. Score `signal_strength` as venture
+opportunity **after** competition — not raw pain. Discard crowded
+engineer-daily AI/devtools topics unless a sharp non-engineer wedge is
+evidenced. Every topic must include competition fields.
 
 ```json
 {
@@ -61,6 +64,9 @@ and exact short title/body quotes.
       "who": "Independent makers and small craft sellers",
       "pain_class": "important",
       "signal_strength": 0.8,
+      "competition_level": "moderate",
+      "existing_solutions": "Generic spreadsheets and marketplace seller dashboards",
+      "competition_rationale": "Non-engineer maker audience; few specialized launches in-bundle",
       "evidence": [
         {
           "post_key": "fake:fake-1",
@@ -78,7 +84,8 @@ and exact short title/body quotes.
 ```
 
 Allowed pain classes: `hair_on_fire`, `important`, `nice_to_solve`, and
-`opportunity`. Topic ID must exactly equal lowercase slug derived from title.
+`opportunity`. Allowed competition levels: `low`, `moderate`, `high`,
+`saturated`. Topic ID must exactly equal lowercase slug derived from title.
 
 ## 4. Validate and import
 
@@ -105,7 +112,10 @@ Outputs:
 
 - Open source links; verify quotes and summaries represent evidence.
 - Check topic merges do not erase meaningful disagreement.
-- Confirm pain class, affected group, signal strength, and ranking make sense.
+- Confirm pain class, affected group, signal strength, competition level,
+  existing-solutions note, and ranking make sense.
+- Prefer topics with lower competition for non-engineer operators over
+  saturated engineer-daily AI/devtools pains.
 - Check report contains no personal contact data or sensitive inference.
 - Confirm every source posture and use fits current collection policy.
 - Dry-run and apply schema migration when legacy candidate files exist.
