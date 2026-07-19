@@ -45,3 +45,24 @@ def test_default_seed_file_loads():
     wl = load_watchlist()
     assert len(wl["reddit"]) >= 6
     assert "sam_gov" in wl
+
+
+def test_browser_section_accepted(tmp_path):
+    p = _write(
+        tmp_path,
+        "browser:\n"
+        "  - platform: xiaohongshu\n"
+        "    url: https://www.xiaohongshu.com/search_result?keyword=test\n"
+        "    query: test\n",
+    )
+    wl = load_watchlist(p)
+    item = wl["browser"][0]
+    assert item["platform"] == "xiaohongshu"
+    assert item["url"].startswith("https://")
+    assert item["label"]  # auto-slug from url
+
+
+def test_browser_missing_url_rejected(tmp_path):
+    p = _write(tmp_path, "browser:\n  - platform: tiktok\n    query: etsy\n")
+    with pytest.raises(WatchlistError, match="url"):
+        load_watchlist(p)

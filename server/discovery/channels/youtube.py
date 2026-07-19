@@ -18,16 +18,21 @@ class YouTubeChannel:
     name = "youtube"
 
     def __init__(self, runner=None):
+        self._fixture_mode = runner is not None
         self._run = runner or _default_runner
 
     def fetch(self, item: dict) -> list[RawPost]:
+        if not self._fixture_mode:
+            raise RuntimeError(
+                "youtube adapter is held: approved YouTube Data API replacement required"
+            )
         max_videos = int(item.get("max_videos", 5))
         try:
             stdout = self._run(
                 [f"ytsearch{max_videos}:{item['query']}", "--dump-json", "--flat-playlist", "--no-download"]
             )
         except FileNotFoundError as exc:
-            raise RuntimeError("yt-dlp binary not installed (uv tool install yt-dlp)") from exc
+            raise RuntimeError("legacy held yt-dlp fixture runner is unavailable") from exc
         videos = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         posts = []
         for vid in videos:
@@ -82,12 +87,19 @@ class YouTubeChannel:
         return posts
 
     def health(self) -> ChannelHealth:
+        if not self._fixture_mode:
+            return ChannelHealth(
+                self.name,
+                "held",
+                "approved YouTube Data API replacement required",
+                posture="held",
+            )
         try:
             version = self._run(["--version"]).strip()
             return ChannelHealth(self.name, "ok", f"yt-dlp {version}")
         except FileNotFoundError:
             return ChannelHealth(
-                self.name, "unconfigured", "yt-dlp binary missing (uv tool install yt-dlp)"
+                self.name, "unconfigured", "legacy held yt-dlp fixture runner unavailable"
             )
         except Exception as exc:
             return ChannelHealth(self.name, "error", str(exc))

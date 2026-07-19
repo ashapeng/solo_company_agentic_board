@@ -6,6 +6,7 @@ import io
 import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 CSV_URL = (
     "https://canadabuys.canada.ca/opendata/pub/"
@@ -25,7 +26,9 @@ class CanadaBuysChannel:
     name = "canadabuys"
 
     def __init__(self, transport: httpx.BaseTransport | None = None):
-        self._client = httpx.Client(transport=transport, timeout=60, follow_redirects=True)
+        self._client = SafeHttpClient(
+            transport=transport, timeout=60, follow_redirects=True
+        )
 
     def fetch(self, item: dict) -> list[RawPost]:
         resp = self._client.get(CSV_URL)

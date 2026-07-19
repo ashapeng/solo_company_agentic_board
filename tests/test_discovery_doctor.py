@@ -6,7 +6,8 @@ def test_doctor_subset_never_raises():
     results = run_doctor(["fake", "agent_reach"])
     by_name = {h.channel: h for h in results}
     assert by_name["fake"].status == "ok"
-    assert by_name["agent_reach"].status == "unconfigured"
+    assert by_name["agent_reach"].status == "disabled"
+    assert by_name["agent_reach"].posture == "disabled"
 
 
 def test_doctor_handles_crashing_health(monkeypatch):

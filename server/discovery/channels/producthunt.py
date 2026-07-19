@@ -5,6 +5,7 @@ import os
 import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 API = "https://api.producthunt.com/v2/api/graphql"
 QUERY = """
@@ -21,7 +22,7 @@ class ProductHuntChannel:
 
     def __init__(self, transport: httpx.BaseTransport | None = None, token: str | None = None):
         self._token = token or os.environ.get("PRODUCTHUNT_TOKEN")
-        self._client = httpx.Client(transport=transport, timeout=30)
+        self._client = SafeHttpClient(transport=transport, timeout=30)
 
     def fetch(self, item: dict) -> list[RawPost]:
         if not self._token:

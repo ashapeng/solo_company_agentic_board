@@ -93,6 +93,7 @@ def create_initiative(
     created_from: str = "manual",
     source_session_id: str | None = None,
     venture_id: str = "default",
+    initiative_id: str | None = None,
     db_path: Path | None = None,
 ) -> dict[str, Any]:
     title = _required_text(title, "Title")
@@ -101,7 +102,7 @@ def create_initiative(
     start, end = _resolve_timebox(timebox_start, timebox_end)
     now = utc_now()
     initiative = Initiative(
-        id=_new_id("init"),
+        id=str(initiative_id).strip() if initiative_id else _new_id("init"),
         title=title,
         objective=objective,
         success_criteria=_string_list(success_criteria),
@@ -119,6 +120,14 @@ def create_initiative(
 
     conn = _connect(db_path)
     try:
+        existing = conn.execute(
+            "SELECT * FROM initiatives WHERE initiative_id = ?", (initiative.id,)
+        ).fetchone()
+        if existing is not None:
+            current = _initiative_from_row(existing, closeout=_get_closeout(conn, initiative.id)).to_dict()
+            if current["venture_id"] != venture_id or current["source_session_id"] != source_session_id:
+                raise InitiativeError(f"Initiative id already exists with different provenance: {initiative.id}")
+            return current
         conn.execute(
             """INSERT INTO initiatives (
                 initiative_id, title, objective, status, approval_state,

@@ -81,11 +81,29 @@ uv run python -m server.cli --verify --budget "Question with verification"
 # API only
 uv run uvicorn server.api:app --reload --port 8000
 
-# Venture discovery (weekly scan; analysis runs in Claude Code via /venture-scan)
+# Venture discovery (weekly scan; analysis runs in the IDE coding agent, never project LLMs)
 uv run python -m server.discovery doctor          # channel health
 uv run python -m server.discovery fetch           # pull watchlist data for this week
+uv run python -m server.discovery prepare         # write bounded agent bundle + instructions
+uv run python -m server.discovery import-topics candidate_topics.json  # validate + persist agent output
+uv run python -m server.discovery migrate-candidates --dry-run
+uv run python -m server.discovery review-portfolio --week 2026-W29 --default-select 3 --max-active 5 --verify
 uv run python -m server.discovery status          # summarize last run
 ```
+
+The IDE coding agent is the semantic producer: it reads
+`prepared/{week}/AGENT_INSTRUCTIONS.md` and `agent_bundle.json`, then writes a
+candidate JSON file. Project discovery code is the deterministic gatekeeper;
+it validates, enriches, ranks, renders, and persists that file without calling
+any model provider. Import never starts a board session. The explicit portfolio
+review command compares 5-10 validated candidates, records every board decision,
+and creates bounded validation experiments for selected candidates. The legacy
+single-candidate promotion path is compatibility-only.
+
+Discovery collection and browser rules are defined in
+`design/discovery-agent-browser-policy.md`. In particular, do not use an
+authenticated browser to bypass an unavailable API, platform restrictions,
+rate limits, CAPTCHA, or access controls.
 
 ### CLI Flags
 

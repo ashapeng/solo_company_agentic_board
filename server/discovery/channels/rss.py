@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import feedparser
+import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 
 class RssChannel:
     name = "rss"
 
-    def __init__(self, parse=feedparser.parse):
+    def __init__(
+        self,
+        parse=None,
+        transport: httpx.BaseTransport | None = None,
+    ):
         self._parse = parse
+        self._client = SafeHttpClient(transport=transport, timeout=30, follow_redirects=True)
 
     def fetch(self, item: dict) -> list[RawPost]:
-        feed = self._parse(item["url"])
+        if self._parse is not None:
+            feed = self._parse(item["url"])
+        else:
+            response = self._client.get(item["url"])
+            response.raise_for_status()
+            feed = feedparser.parse(response.content)
         if feed.get("bozo") and not feed.get("entries"):
             raise ValueError(f"unparseable feed: {item['url']}: {feed.get('bozo_exception')}")
         posts = []

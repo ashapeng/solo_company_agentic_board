@@ -1,44 +1,49 @@
-# AGENTS.md
+# Agentic Board — Agent Notes
+
+Project overview, architecture, run/CLI/API reference: see `CLAUDE.md` and `README.md`.
 
 ## Cursor Cloud specific instructions
 
-Agentic Board is a Python (FastAPI + `uv`) backend plus a React/Vite frontend in `ui/`.
-See `README.md` and `CLAUDE.md` for architecture, CLI flags, API endpoints, and model routing.
+Dependencies (Python via `uv`, UI via `npm`) are installed by the startup update
+script, so you normally don't need to reinstall them. The notes below are the
+non-obvious, durable gotchas for running/testing this repo.
 
-### Services
+### Services & how to run them
+- **Web app (API + built UI, single origin):** `./start.sh` → `http://127.0.0.1:8000`.
+  `start.sh` rebuilds the UI (`ui/dist`) on every start, then runs uvicorn with
+  `--reload` scoped to `server/`. This is the simplest way to exercise the full
+  product. Override host/port with `HOST` / `PORT` env vars.
+- **API only:** `uv run uvicorn server.api:app --reload --port 8000`.
+- **CLI (same deliberation engine, no UI/server):** `uv run python -m server.cli ...`
+  (e.g. `--list-members`, `--full-board "..."`). See `CLAUDE.md` for all flags.
+- **UI hot-reload dev (optional, two processes):** backend on 8000 +
+  `npm --prefix ui run dev` (Vite on 5173). Caveat: the Vite dev proxy in
+  `ui/vite.config.ts` does **not** proxy `/initiatives`, so initiative features
+  break in pure Vite-dev mode. Use `./start.sh` (single origin :8000) to test
+  initiatives end-to-end.
 
-| Service | How to run | Port | Notes |
-|---|---|---|---|
-| Backend API + built UI | `./start.sh` | 8000 | Builds `ui/` then runs `uvicorn server.api:app --reload`. Serves the React build and the API from one origin. |
-| Backend API only | `uv run uvicorn server.api:app --reload --port 8000` | 8000 | Frontend uses relative URLs, so this alone serves everything once `ui/dist` exists. |
-| Frontend dev (hot reload) | `cd ui && npm run dev` | 5173 | Vite proxies API routes to `127.0.0.1:8000`, so the backend must also be running. |
-| CLI | `uv run python -m server.cli --list-members` (etc.) | — | Headless deliberation; same key requirements as the backend. |
+### LLM keys are required for real deliberation
+- No provider keys are set by default. The core board deliberation (Stage 1–4)
+  and the live "secretary brief" make **real** provider calls and will fail
+  without keys (`DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, `GEMINI_API_KEY`,
+  `ZAI_API_KEY`, `DASHSCOPE_API_KEY` — see `.env.example` / `CLAUDE.md`).
+- Flows that work **without** any keys: listing members, initiatives
+  (create/activate/close, persisted to SQLite), SOTB memory read/write, and
+  session listing. Use these for smoke-testing the environment.
 
-- `uv` installs to `~/.local/bin` (already on `PATH` after the update script). `start.sh` auto-discovers `.venv/bin/uvicorn`.
-- The API is **localhost-only** by default; it rejects non-local requests unless `AGENTIC_BOARD_ALLOW_REMOTE=1`. When testing from the VM browser, use `http://127.0.0.1:8000`.
-- Persistence is fully local (SQLite ledger at `data/harness_ledger.db` + session JSON under `data/`). No Postgres/Redis or other external datastore is needed. `data/` is gitignored.
+### Testing / lint / build
+- **Tests:** `uv run pytest`. Live provider tests are deselected by default via
+  `addopts = -m 'not live'` in `pyproject.toml`; `pytest -m live` needs real keys.
+- **UI typecheck + build (closest thing to a lint):** `npm --prefix ui run check`
+  (`tsc --noEmit && vite build`). There is **no** Python linter configured
+  (no ruff/flake8/black/mypy).
+- **Known pre-existing failures with no keys / fresh checkout** (not caused by
+  setup, do not "fix" by editing code):
+  - `tests/test_replay_contract.py::CliFlagExistsTest::test_cli_accepts_replay_flag`
+    hardcodes a former developer's absolute venv path (`/home/apeng/...`).
+  - `tests/test_harness_integration_contract.py::LedgerWiringAsyncContractTest`
+    (2 tests) invoke the secretary-brief LLM and require `ZAI_API_KEY`.
 
-### Provider API keys (required for real deliberation only)
-
-The server **boots, serves the UI, `/members`, and the CLI roster without any keys**, but any actual
-deliberation (`POST /deliberate`, CLI questions) calls external LLM providers and fails with
-`0/N members responded` when keys are missing. Set keys in a `.env` file (copy `.env.example`).
-Default models span 5 providers (`DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, `GEMINI_API_KEY`,
-`ZAI_API_KEY`, `DASHSCOPE_API_KEY`).
-
-To drive a full deliberation from a **single** key (e.g. Gemini free tier), override every model role
-and allow same-provider verification:
-
-```bash
-CHAIRMAN_MODEL=gemini/gemini-2.5-flash
-COUNCIL_MODELS=gemini/gemini-2.5-flash
-CLASSIFIER_MODEL=gemini/gemini-2.5-flash
-VERIFICATION_MODEL=gemini/gemini-2.5-flash
-AGENTIC_BOARD_ALLOW_SAME_VERIFIER=1
-```
-
-### Tests / lint / build
-
-- Backend tests: `uv run pytest` (config uses `-m 'not live'`, so `live` provider-hitting tests are skipped by default).
-- Frontend type-check + build: `cd ui && npm run check` (`tsc --noEmit && vite build`).
-- Known pre-existing failures unrelated to setup: `tests/test_replay_contract.py::CliFlagExistsTest::test_cli_accepts_replay_flag` hardcodes an absolute `.venv` path from the original author's machine, and two `tests/test_harness_integration_contract.py` cases require a real `ZAI_API_KEY`.
+### Runtime data
+- All state is local: `data/sessions/` (JSON), SQLite ledgers/stores under
+  `data/`, and `server/memory/sotb.md`. Created on first use; no DB service needed.

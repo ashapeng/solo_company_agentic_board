@@ -17,6 +17,7 @@ EXPECTED = {
     "canadabuys",
     "fake",
     "agent_reach",
+    "browser",
 }
 
 PH_FIXTURE = {

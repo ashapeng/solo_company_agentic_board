@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 API = "https://api.sam.gov/opportunities/v2/search"
 
@@ -14,7 +15,7 @@ class SamGovChannel:
     name = "sam_gov"
 
     def __init__(self, transport: httpx.BaseTransport | None = None, api_key: str | None = None):
-        self._client = httpx.Client(transport=transport, timeout=30)
+        self._client = SafeHttpClient(transport=transport, timeout=30)
         self._api_key = api_key or os.environ.get("SAM_GOV_API_KEY")
 
     def fetch(self, item: dict) -> list[RawPost]:

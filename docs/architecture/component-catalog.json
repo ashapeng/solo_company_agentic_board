@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "components": [
+    {"id": "api", "path": "server/api", "kind": "inbound"},
+    {"id": "board", "path": "server/board", "kind": "domain"},
+    {"id": "channels", "path": "server/channels", "kind": "integration"},
+    {"id": "discovery", "path": "server/discovery", "kind": "domain"},
+    {"id": "execution", "path": "server/execution", "kind": "domain"},
+    {"id": "experiments", "path": "server/experiments", "kind": "domain"},
+    {"id": "harness", "path": "server/harness", "kind": "domain"},
+    {"id": "initiatives", "path": "server/initiatives", "kind": "domain"},
+    {"id": "memory", "path": "server/memory", "kind": "domain"},
+    {"id": "profiles", "path": "server/profiles", "kind": "configuration"},
+    {"id": "ventures", "path": "server/ventures", "kind": "domain"},
+    {"id": "ui-board", "path": "ui/src/domains/board", "kind": "frontend"},
+    {"id": "ui-execution", "path": "ui/src/domains/execution", "kind": "frontend"},
+    {"id": "ui-harness", "path": "ui/src/domains/harness", "kind": "frontend"},
+    {"id": "ui-initiatives", "path": "ui/src/domains/initiatives", "kind": "frontend"},
+    {"id": "ui-memory", "path": "ui/src/domains/memory", "kind": "frontend"},
+    {"id": "evals", "path": "evals", "kind": "quality"},
+    {"id": "hermes", "path": "hermes", "kind": "integration"}
+  ],
+  "api_route_modules": ["board", "execution", "harness", "initiatives", "memory", "system"],
+  "ignored_server_directories": ["__pycache__", "members", "protocols"]
+}

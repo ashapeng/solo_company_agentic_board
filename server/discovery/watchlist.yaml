@@ -38,3 +38,18 @@ gov:
     - keywords: ["design services"]
 
 agent_reach: []   # phase 2
+
+# Browser channel: opens logged-in Chrome on the URL and parses the DOM.
+# Best run on a local machine with real social-session cookies.
+# Cloud VMs without logins will only work for public/anonymous pages.
+browser:
+  - platform: xiaohongshu
+    query: "手作 卖不出去"
+    url: "https://www.xiaohongshu.com/search_result?keyword=%E6%89%8B%E4%BD%9C%20%E5%8D%96%E4%B8%8D%E5%87%BA%E5%8E%BB"
+    max_items: 20
+    wait_for: ".note-item"
+  - platform: tiktok
+    query: "etsy shop struggles"
+    url: "https://www.tiktok.com/search?q=etsy%20shop%20struggles"
+    max_items: 20
+    wait_for: '[data-e2e="search-card-item"]'

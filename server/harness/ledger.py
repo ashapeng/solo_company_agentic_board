@@ -189,8 +189,9 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 delegation_task_count,
                 harness_config_version,
                 verifier_model, verifier_provider, chairman_provider, applied_review_id,
-                skills_used, venture_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                skills_used, venture_id, discovery_candidate_id,
+                discovery_promotion_id, evidence_packet_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.session_id,
                 datetime.now(timezone.utc).isoformat(),
@@ -230,11 +231,39 @@ def record_session(session: Any, config_version: int, db_path: Path | None = Non
                 _active_review_id(conn),
                 json.dumps(skills_used_map),
                 venture_id,
+                getattr(session, "discovery_candidate_id", None),
+                getattr(session, "discovery_promotion_id", None),
+                getattr(session, "evidence_packet_id", None),
             ),
         )
         conn.commit()
     except sqlite3.IntegrityError as e:
         raise LedgerError(f"Duplicate session_id: {session.session_id}") from e
+    finally:
+        conn.close()
+
+
+def record_discovery_provenance(session: Any, db_path: Path | None = None) -> None:
+    """Attach discovery provenance after an orchestrator has recorded its outcome.
+
+    Discovery fields are assigned by the explicit start-board boundary after
+    deliberation returns, so this small additive update avoids inserting a
+    duplicate ledger outcome.
+    """
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            """UPDATE session_outcomes SET
+                discovery_candidate_id = ?, discovery_promotion_id = ?,
+                evidence_packet_id = ? WHERE session_id = ?""",
+            (
+                getattr(session, "discovery_candidate_id", None),
+                getattr(session, "discovery_promotion_id", None),
+                getattr(session, "evidence_packet_id", None),
+                session.session_id,
+            ),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -320,6 +349,9 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         "venture_id": "TEXT DEFAULT 'default'",
         "baseline_cost_usd": "REAL",
         "cost_saved_usd": "REAL",
+        "discovery_candidate_id": "TEXT",
+        "discovery_promotion_id": "TEXT",
+        "evidence_packet_id": "TEXT",
     }
     for column, column_type in additions.items():
         if column not in existing:

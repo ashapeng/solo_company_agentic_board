@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from server.discovery.channels.base import ChannelHealth, RawPost
+from server.discovery.http_safety import SafeHttpClient
 
 API = "https://api.grants.gov/v1/api/search2"
 
@@ -11,7 +12,7 @@ class GrantsGovChannel:
     name = "grants_gov"
 
     def __init__(self, transport: httpx.BaseTransport | None = None):
-        self._client = httpx.Client(transport=transport, timeout=30)
+        self._client = SafeHttpClient(transport=transport, timeout=30)
 
     def fetch(self, item: dict) -> list[RawPost]:
         posts: list[RawPost] = []
