@@ -29,6 +29,9 @@ def _report():
                 who="Independent makers",
                 pain_class="hair_on_fire",
                 signal_strength=0.9,
+                competition_level="moderate",
+                existing_solutions="Some spreadsheet templates and generic inventory apps",
+                competition_rationale="Niche maker audience; few specialized launches in-bundle",
                 engagement_score=1.5,
                 evidence=[
                     Evidence(
@@ -62,6 +65,7 @@ def test_topic_report_round_trip_is_strict():
         (lambda d: d.update(producer={"kind": "model", "name": "x", "run_id": "1"}), "producer.kind"),
         (lambda d: d["topics"][0].update(signal_strength=math.inf), "finite"),
         (lambda d: d["topics"][0].update(pain_class="urgent"), "pain_class"),
+        (lambda d: d["topics"][0].update(competition_level="crowded"), "competition_level"),
         (lambda d: d.update(topics={}), "must be a list"),
         (lambda d: d["topics"][0].update(evidence={}), "must be a list"),
     ],

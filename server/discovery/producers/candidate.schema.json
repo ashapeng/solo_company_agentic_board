@@ -31,6 +31,7 @@
         "additionalProperties": false,
         "required": [
           "id", "title", "summary", "who", "pain_class", "signal_strength",
+          "competition_level", "existing_solutions", "competition_rationale",
           "evidence"
         ],
         "properties": {
@@ -42,6 +43,11 @@
             "enum": ["hair_on_fire", "important", "nice_to_solve", "opportunity"]
           },
           "signal_strength": {"type": "number", "minimum": 0, "maximum": 1},
+          "competition_level": {
+            "enum": ["low", "moderate", "high", "saturated"]
+          },
+          "existing_solutions": {"type": "string", "minLength": 1, "maxLength": 500},
+          "competition_rationale": {"type": "string", "minLength": 1, "maxLength": 1000},
           "evidence": {
             "type": "array",
             "maxItems": 12,

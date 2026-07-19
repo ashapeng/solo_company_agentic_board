@@ -9,6 +9,7 @@ from typing import Any
 PAIN_CLASSES = frozenset(
     {"hair_on_fire", "important", "nice_to_solve", "opportunity"}
 )
+COMPETITION_LEVELS = frozenset({"low", "moderate", "high", "saturated"})
 RESOURCE_KINDS = frozenset(
     {"discussion", "video", "issue", "opportunity", "article", "other"}
 )
@@ -195,16 +196,33 @@ class CandidateTopic:
     who: str
     pain_class: str
     signal_strength: float
+    competition_level: str
+    existing_solutions: str
+    competition_rationale: str
     evidence: list[CandidateEvidence]
 
     @classmethod
     def from_dict(cls, value: Any, path: str = "topic") -> CandidateTopic:
         data = _object(value, path)
-        required = {"id", "title", "summary", "who", "pain_class", "signal_strength", "evidence"}
+        required = {
+            "id",
+            "title",
+            "summary",
+            "who",
+            "pain_class",
+            "signal_strength",
+            "competition_level",
+            "existing_solutions",
+            "competition_rationale",
+            "evidence",
+        }
         _exact_fields(data, required, set(), path)
         pain_class = _string(data["pain_class"], f"{path}.pain_class")
         if pain_class not in PAIN_CLASSES:
             raise ContractError(f"{path}.pain_class is unknown: {pain_class}")
+        competition_level = _string(data["competition_level"], f"{path}.competition_level")
+        if competition_level not in COMPETITION_LEVELS:
+            raise ContractError(f"{path}.competition_level is unknown: {competition_level}")
         strength = _number(data["signal_strength"], f"{path}.signal_strength")
         if not 0 <= strength <= 1:
             raise ContractError(f"{path}.signal_strength must be between 0 and 1")
@@ -216,6 +234,13 @@ class CandidateTopic:
             who=_string(data["who"], f"{path}.who"),
             pain_class=pain_class,
             signal_strength=strength,
+            competition_level=competition_level,
+            existing_solutions=_string(
+                data["existing_solutions"], f"{path}.existing_solutions"
+            ),
+            competition_rationale=_string(
+                data["competition_rationale"], f"{path}.competition_rationale"
+            ),
             evidence=[CandidateEvidence.from_dict(e, f"{path}.evidence[{i}]") for i, e in enumerate(raw_evidence)],
         )
 
@@ -298,6 +323,9 @@ class Topic:
     who: str
     pain_class: str
     signal_strength: float
+    competition_level: str
+    existing_solutions: str
+    competition_rationale: str
     engagement_score: float
     evidence: list[Evidence] = field(default_factory=list)
     resources: list[Resource] = field(default_factory=list)
@@ -307,12 +335,16 @@ class Topic:
         data = _object(value, path)
         required = {
             "id", "title", "summary", "who", "pain_class", "signal_strength",
+            "competition_level", "existing_solutions", "competition_rationale",
             "engagement_score", "evidence", "resources",
         }
         _exact_fields(data, required, set(), path)
         pain = _string(data["pain_class"], f"{path}.pain_class")
         if pain not in PAIN_CLASSES:
             raise ContractError(f"{path}.pain_class is unknown: {pain}")
+        competition = _string(data["competition_level"], f"{path}.competition_level")
+        if competition not in COMPETITION_LEVELS:
+            raise ContractError(f"{path}.competition_level is unknown: {competition}")
         evidence = _list(data["evidence"], f"{path}.evidence")
         resources = _list(data["resources"], f"{path}.resources")
         strength = _number(data["signal_strength"], f"{path}.signal_strength")
@@ -328,6 +360,13 @@ class Topic:
             who=_string(data["who"], f"{path}.who"),
             pain_class=pain,
             signal_strength=strength,
+            competition_level=competition,
+            existing_solutions=_string(
+                data["existing_solutions"], f"{path}.existing_solutions"
+            ),
+            competition_rationale=_string(
+                data["competition_rationale"], f"{path}.competition_rationale"
+            ),
             engagement_score=engagement_score,
             evidence=[Evidence.from_dict(e, f"{path}.evidence[{i}]") for i, e in enumerate(evidence)],
             resources=[Resource.from_dict(r, f"{path}.resources[{i}]") for i, r in enumerate(resources)],
